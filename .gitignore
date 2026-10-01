@@ -1,0 +1,9 @@
+# .NET build output
+**/bin/
+**/obj/
+Source/artifacts/
+.vs/
+
+# Local editor and OS files
+.DS_Store
+Thumbs.db

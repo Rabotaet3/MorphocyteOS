@@ -1,0 +1,26 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net10.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>MorphocyteOS</AssemblyName>
+    <RootNamespace>MorphocyteRouter</RootNamespace>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+    <ApplicationIcon>Assets\morphocyte.ico</ApplicationIcon>
+    <Version>1.0.0-rc.5</Version>
+    <Authors>MorphocyteOS</Authors>
+    <Product>MorphocyteOS Router</Product>
+    <Description>Локальный менеджер маршрутов Mihomo/Clash</Description>
+    <PublishSingleFile>true</PublishSingleFile>
+    <IncludeNativeLibrariesForSelfExtract>true</IncludeNativeLibrariesForSelfExtract>
+    <DebugType>embedded</DebugType>
+  </PropertyGroup>
+  <ItemGroup>
+    <PackageReference Include="YamlDotNet" Version="18.1.0" />
+    <Resource Include="Assets\morphocyte-icon.png" />
+    <Resource Include="Assets\morphocyte.ico" />
+    <EmbeddedResource Include="Assets\profile-template.yaml" LogicalName="MorphocyteOS.profile-template.yaml" />
+  </ItemGroup>
+</Project>
