@@ -10,6 +10,7 @@ public sealed class CoreProcessManager
     private readonly Func<Process, Task> _terminate;
     private readonly TimeSpan _stopTimeout;
     private Process? _process;
+    private ProcessLifetimeJob? _processLifetimeJob;
     private Task? _pendingStop;
     private string? _startupFailure;
     private readonly object _failureStateGate = new();
@@ -19,6 +20,7 @@ public sealed class CoreProcessManager
     public event Action? Exited;
     public event Action<string>? StartupFailed;
     public bool HasTrackedProcess => _process is not null;
+    public int? TrackedProcessId => _process?.Id;
     public bool IsRunning
     {
         get
@@ -64,6 +66,25 @@ public sealed class CoreProcessManager
             }
             catch { process.Dispose(); throw; }
             _process = process;
+            try
+            {
+                _processLifetimeJob = ProcessLifetimeJob.Attach(process);
+            }
+            catch (Exception attachError)
+            {
+                _pendingStop ??= _terminate(process);
+                try
+                {
+                    await _pendingStop.WaitAsync(_stopTimeout);
+                    ReapExited();
+                }
+                catch (Exception stopError)
+                {
+                    Output?.Invoke("Windows не смог привязать Mihomo к жизненному циклу приложения, а завершение процесса пока не подтверждено: " + stopError.Message);
+                    _pendingStop = null;
+                }
+                throw new IOException("Не удалось включить безопасную очистку ядра при аварийном закрытии приложения. Mihomo не оставлен работать намеренно; проверь статус ядра и журнал.", attachError);
+            }
             if (info.RedirectStandardOutput) process.BeginOutputReadLine();
             if (info.RedirectStandardError) process.BeginErrorReadLine();
             await Task.Delay(TimeSpan.FromMilliseconds(1400), cancellationToken);
@@ -151,6 +172,8 @@ public sealed class CoreProcessManager
         process.ErrorDataReceived -= HandleOutput;
         process.Exited -= HandleExit;
         process.Dispose();
+        _processLifetimeJob?.Dispose();
+        _processLifetimeJob = null;
     }
 
     private void HandleOutput(object sender, DataReceivedEventArgs e)
@@ -221,11 +244,10 @@ public sealed class CoreProcessManager
             || (text.Contains("listen tcp") && (text.Contains("address already in use") || text.Contains("only one usage of each socket address")));
     }
 
-    public static IReadOnlyList<(int ProcessId, string ExecutablePath)> FindOtherInstances(string executablePath)
+    public static IReadOnlyList<(int ProcessId, string? ExecutablePath)> FindOtherInstances(string executablePath)
     {
-        var expectedPath = Path.GetFullPath(executablePath);
-        var processName = Path.GetFileNameWithoutExtension(expectedPath);
-        var matches = new List<(int, string)>();
+        var processName = Path.GetFileNameWithoutExtension(Path.GetFullPath(executablePath));
+        var matches = new List<(int, string?)>();
         foreach (var candidate in Process.GetProcessesByName(processName))
         {
             using (candidate)
@@ -234,34 +256,39 @@ public sealed class CoreProcessManager
                 try
                 {
                     var actualPath = candidate.MainModule?.FileName;
-                    if (actualPath is not null && string.Equals(Path.GetFullPath(actualPath), expectedPath, StringComparison.OrdinalIgnoreCase))
-                        matches.Add((candidate.Id, actualPath));
+                    if (actualPath is not null)
+                        matches.Add((candidate.Id, Path.GetFullPath(actualPath)));
                 }
-                catch { /* Inaccessible unrelated processes are not killed by name alone. */ }
+                catch { matches.Add((candidate.Id, null)); }
             }
         }
-        return matches;
+        return matches.OrderBy(instance => instance.Item1).ToArray();
     }
 
-    public static async Task StopOtherInstancesAsync(string executablePath, IEnumerable<int> processIds, CancellationToken cancellationToken = default)
+    public static async Task StopOtherInstancesAsync(string executablePath,
+        IEnumerable<(int ProcessId, string? ExecutablePath)> instances, CancellationToken cancellationToken = default)
     {
-        var expectedPath = Path.GetFullPath(executablePath);
-        foreach (var processId in processIds.Distinct())
+        var expectedName = Path.GetFileNameWithoutExtension(Path.GetFullPath(executablePath));
+        foreach (var instance in instances.DistinctBy(instance => instance.ProcessId))
         {
             cancellationToken.ThrowIfCancellationRequested();
             Process candidate;
-            try { candidate = Process.GetProcessById(processId); }
+            try { candidate = Process.GetProcessById(instance.ProcessId); }
             catch (ArgumentException) { continue; }
             using (candidate)
             {
                 string? actualPath;
+                if (string.IsNullOrWhiteSpace(instance.ExecutablePath))
+                    throw new IOException($"Путь Mihomo PID {instance.ProcessId} недоступен. Для безопасности процесс не остановлен и запуск нового ядра отменён.");
                 try { actualPath = candidate.MainModule?.FileName; }
-                catch (Exception ex) { throw new IOException($"Нельзя проверить путь процесса PID {processId}; он не был остановлен.", ex); }
-                if (actualPath is null || !string.Equals(Path.GetFullPath(actualPath), expectedPath, StringComparison.OrdinalIgnoreCase))
-                    throw new IOException($"Процесс PID {processId} уже не является выбранным mihomo.exe. Запусти проверку ещё раз.");
+                catch (Exception ex) { throw new IOException($"Не удалось повторно проверить путь Mihomo PID {instance.ProcessId}; процесс не остановлен.", ex); }
+                if (actualPath is null || !string.Equals(Path.GetFullPath(actualPath), instance.ExecutablePath, StringComparison.OrdinalIgnoreCase)
+                    || !string.Equals(Path.GetFileNameWithoutExtension(actualPath), expectedName, StringComparison.OrdinalIgnoreCase))
+                    throw new IOException($"Процесс PID {instance.ProcessId} изменился после проверки; для безопасности он не был остановлен. Повтори запуск ядра.");
                 if (candidate.HasExited) continue;
                 candidate.Kill(entireProcessTree: true);
-                await candidate.WaitForExitAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(6), cancellationToken);
+                try { await candidate.WaitForExitAsync(cancellationToken).WaitAsync(TimeSpan.FromSeconds(6), cancellationToken); }
+                catch (TimeoutException ex) { throw new IOException($"Mihomo PID {instance.ProcessId} не завершился в течение 6 секунд и мог оставить TUN включённым.", ex); }
             }
         }
     }

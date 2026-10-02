@@ -11,6 +11,22 @@ if (args.Length == 3 && args[0] == "--copy-profile")
     return;
 }
 
+// Parent regression tests terminate this owner process abruptly to verify that
+// the Windows kill-on-close job also cleans up its detached fake core.
+if (args.Length == 1 && args[0] == "--job-owner")
+{
+    var host = Environment.ProcessPath ?? throw new InvalidOperationException("Cannot identify the regression-test host.");
+    var coreInfo = new ProcessStartInfo(host) { UseShellExecute = false, CreateNoWindow = true, RedirectStandardOutput = true, RedirectStandardError = true };
+    if (Path.GetFileNameWithoutExtension(host).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+        coreInfo.ArgumentList.Add(typeof(ClashConfigDocument).Assembly.Location);
+    coreInfo.ArgumentList.Add("--fake-core");
+    var owner = new CoreProcessManager();
+    await owner.StartAsync(coreInfo);
+    Console.WriteLine(owner.TrackedProcessId);
+    await Task.Delay(TimeSpan.FromMinutes(2));
+    return;
+}
+
 // The same tiny executable acts as an inert fake core for process-lifecycle tests.
 if (args.Contains("--fake-core"))
 {
@@ -73,6 +89,58 @@ Check(startupArguments.WorkingDirectory == scratch
 var candidateArguments = CoreProcessManager.CreateStartInfo("mihomo.exe", Path.Combine(scratch, ".morphocyte-check-candidate.yaml"));
 Check(candidateArguments.ArgumentList[1] == startupArguments.ArgumentList[1],
     "candidate validation resolves providers and data from the same profile folder");
+if (OperatingSystem.IsWindows())
+{
+    var systemShell = Path.Combine(Environment.SystemDirectory, "cmd.exe");
+    if (File.Exists(systemShell))
+    {
+        var copiedCoreDirectory = Path.Combine(scratch, "copied-core");
+        Directory.CreateDirectory(copiedCoreDirectory);
+        var copiedCore = Path.Combine(copiedCoreDirectory, "mihomo.exe");
+        File.Copy(systemShell, copiedCore);
+        var duplicateInfo = new ProcessStartInfo(copiedCore) { UseShellExecute = false, CreateNoWindow = true };
+        duplicateInfo.ArgumentList.Add("/c");
+        duplicateInfo.ArgumentList.Add("ping -n 30 127.0.0.1 > nul");
+        using var duplicate = Process.Start(duplicateInfo) ?? throw new InvalidOperationException("Could not start the inert duplicate-process fixture.");
+        var selectedCoreInAnotherFolder = Path.Combine(scratch, "selected-core", "mihomo.exe");
+        var duplicates = CoreProcessManager.FindOtherInstances(selectedCoreInAnotherFolder);
+        var detectedCopy = duplicates.SingleOrDefault(instance => instance.ProcessId == duplicate.Id);
+        Check(detectedCopy.ProcessId == duplicate.Id && detectedCopy.ExecutablePath == Path.GetFullPath(copiedCore),
+            "duplicate Mihomo detection also finds a same-named executable from another folder");
+        await CoreProcessManager.StopOtherInstancesAsync(selectedCoreInAnotherFolder, new[] { detectedCopy });
+        Check(duplicate.HasExited, "duplicate shutdown revalidates the executable path before stopping the PID");
+    }
+
+    var testHost = Environment.ProcessPath ?? throw new InvalidOperationException("Cannot identify the regression-test host.");
+    var ownerInfo = new ProcessStartInfo(testHost)
+    {
+        UseShellExecute = false,
+        CreateNoWindow = true,
+        RedirectStandardOutput = true,
+        RedirectStandardError = true
+    };
+    if (Path.GetFileNameWithoutExtension(testHost).Equals("dotnet", StringComparison.OrdinalIgnoreCase))
+        ownerInfo.ArgumentList.Add(typeof(ClashConfigDocument).Assembly.Location);
+    ownerInfo.ArgumentList.Add("--job-owner");
+    using var ownerProcess = Process.Start(ownerInfo) ?? throw new InvalidOperationException("Could not start the process-lifetime test owner.");
+    var corePidText = await ownerProcess.StandardOutput.ReadLineAsync().WaitAsync(TimeSpan.FromSeconds(12));
+    if (!int.TryParse(corePidText, out var orphanCandidatePid)) throw new InvalidOperationException("The job-owner process did not report its fake core PID.");
+    ownerProcess.Kill();
+    await ownerProcess.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(8));
+    var orphanCoreExited = false;
+    for (var wait = 0; wait < 40; wait++)
+    {
+        try { using var orphanCandidate = Process.GetProcessById(orphanCandidatePid); orphanCoreExited = orphanCandidate.HasExited; }
+        catch (ArgumentException) { orphanCoreExited = true; }
+        if (orphanCoreExited) break;
+        await Task.Delay(100);
+    }
+    if (!orphanCoreExited)
+    {
+        try { using var orphanCandidate = Process.GetProcessById(orphanCandidatePid); orphanCandidate.Kill(true); } catch { }
+    }
+    Check(orphanCoreExited, "Windows closes Mihomo when the app process is terminated unexpectedly");
+}
 Check(document.Rules.Count == 3, "quoted YAML and named route parsed");
 Check(document.HttpProxyPort == 7890, "HTTP mixed-port is available for profile-bound tests");
 Check(document.Routes.Single() == "VPN NODE", "route names with spaces intact");

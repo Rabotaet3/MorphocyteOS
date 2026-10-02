@@ -135,7 +135,9 @@ internal partial class Program
             cancelTimer.Stop();
             Check(settings.ConfigPath == savedPath && window.IsVisible && window.WindowState != WindowState.Minimized, "cancelled import does not switch profiles or minimize the app");
             var settingsSeen = false;
+            var settingsDialogStayedOpenAfterSave = false;
             var settingsTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+            DispatcherTimer? closeSettingsAfterSave = null;
             settingsTimer.Tick += (_, _) =>
             {
                 var dialog = window.OwnedWindows.Cast<Window>().FirstOrDefault(value => value.Title == "НАСТРОЙКИ");
@@ -150,11 +152,20 @@ internal partial class Program
                 CaptureInteraction(dialog, Path.Combine(scratch, "profile-settings-dialog.png"));
                 Descendants<Button>(dialog).Single(value => Equals(value.Content, "Создать шаблон")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 Descendants<Button>(dialog).Single(value => Equals(value.Content, "СОХРАНИТЬ")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                settingsDialogStayedOpenAfterSave = dialog.IsVisible;
+                closeSettingsAfterSave = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
+                closeSettingsAfterSave.Tick += (_, _) =>
+                {
+                    if (gate.CurrentCount == 0) return;
+                    closeSettingsAfterSave.Stop();
+                    if (dialog.IsVisible) dialog.Close();
+                };
+                closeSettingsAfterSave.Start();
             };
             settingsTimer.Start();
             typeof(MainWindow).GetMethod("SettingsButton_Click", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, new object[] { window, new RoutedEventArgs() });
-            await gate.WaitAsync(); gate.Release(); settingsTimer.Stop();
-            Check(settingsSeen && settings.ConfigPath != savedPath && File.Exists(savedPath) && !ClashConfigDocument.Load(settings.ConfigPath).HasVpnConnection,
+            await gate.WaitAsync(); gate.Release(); settingsTimer.Stop(); closeSettingsAfterSave?.Stop();
+            Check(settingsSeen && settingsDialogStayedOpenAfterSave && settings.ConfigPath != savedPath && File.Exists(savedPath) && !ClashConfigDocument.Load(settings.ConfigPath).HasVpnConnection,
                 "saving a new template from settings preserves the existing connected profile");
         }
         finally { typeof(MainWindow).GetField("_allowClose", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, true); window.Close(); }

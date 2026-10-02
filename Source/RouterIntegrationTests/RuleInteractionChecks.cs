@@ -45,10 +45,23 @@ internal partial class Program
         {
             window.Show();
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            count += RunRuleBadgeAlignmentChecks(window, scratch);
+            Check(window.AllowsTransparency && window.Background is SolidColorBrush { Color.A: 0 },
+                "the native window background is transparent outside the rounded WPF frame");
+            var rulesListAppearance = (ListView)Field("RulesList");
+            Check(rulesListAppearance.Background is SolidColorBrush { Color.A: 0 }
+                && Descendants<Border>(window).Any(border => border.CornerRadius.TopLeft == 15),
+                "the rule list reveals its rounded parent surface instead of painting a square dark rectangle");
             var sidebar = Descendants<Border>(window).Single(border => border.CornerRadius.TopLeft == 18 && border.Padding.Left == 20);
             Check(sidebar.Effect is null, "sidebar frame no longer applies a blurred drop shadow to its contents");
+            var powerButton = (Button)Field("PowerButton");
+            powerButton.ApplyTemplate();
+            var powerSurface = powerButton.Template.FindName("B", powerButton) as Border;
+            Check(powerSurface is { Margin.Left: >= 3, Margin.Right: >= 3, Margin.Top: >= 3, Margin.Bottom: >= 3 }
+                && powerSurface.RenderTransform is ScaleTransform,
+                "main buttons keep their hover-scale animation inside reserved paint bounds");
             await (Task)Invoke("LoadConfigAsync", configPath)!;
-            void SmokeModal(string title, string method, object?[] arguments, string screenshot)
+            async Task SmokeModal(string title, string method, object?[] arguments, string screenshot)
             {
                 var utilityDialogs = typeof(MainWindow).Assembly.GetType("MorphocyteRouter.UtilityDialogs")!;
                 var show = utilityDialogs.GetMethod(method, BindingFlags.Static | BindingFlags.Public)!;
@@ -56,6 +69,7 @@ internal partial class Program
                 var blurred = false;
                 var roundedClip = false;
                 var themedFrame = false;
+                var openingAnimated = false;
                 var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
                 timer.Tick += (_, _) =>
                 {
@@ -65,18 +79,30 @@ internal partial class Program
                     timer.Stop();
                     seen = true;
                     var windowContent = (FrameworkElement)Field("WindowContent");
+                    var frameContent = (FrameworkElement)Field("FrameContent");
                     blurred = windowContent.Effect is BlurEffect;
-                    roundedClip = windowContent.Clip is RectangleGeometry { RadiusX: >= 19, RadiusY: >= 19 };
+                    roundedClip = frameContent.Clip is RectangleGeometry { RadiusX: >= 19, RadiusY: >= 19 };
                     themedFrame = dialog.Content is Border frame && frame.CornerRadius.TopLeft >= 14
                         && frame.BorderThickness.Left > 0 && frame.Background is not null;
+                    openingAnimated = dialog.Content is FrameworkElement animatedContent
+                        && animatedContent.RenderTransform is ScaleTransform openingScale
+                        && (openingScale.ScaleX < 1 || animatedContent.Opacity < 1);
                     if (title == "НАСТРОЙКИ")
                     {
+                        var saveButton = Descendants<Button>(dialog).Single(button => Equals(button.Content, "СОХРАНИТЬ"));
+                        saveButton.ApplyTemplate();
+                        var saveSurface = saveButton.Template.FindName("B", saveButton) as Border;
+                        Check(saveSurface is { Margin.Left: >= 3, Margin.Right: >= 3, Margin.Top: >= 3, Margin.Bottom: >= 3 }
+                            && saveSurface.RenderTransform is ScaleTransform,
+                            "settings buttons keep the hover texture animation within their reserved bounds");
                         var picker = Descendants<ComboBox>(dialog).Single(combo => combo.Items.Cast<object>().Contains("Аврора"));
                         Check(picker.Items.Count == 9 && picker.Items.Cast<string>().Contains("Светлая морфоцитная")
                             && picker.Items.Cast<string>().Contains("Аврора") && picker.Items.Cast<string>().Contains("Космический градиент"),
                             "settings expose nine dark, light and gradient themes");
                         Check(Descendants<ComboBox>(dialog).Any(combo => combo.Items.Cast<object>().Contains("125%")),
                             "settings expose interface scaling including font scaling");
+                        Check(picker.Template.FindName("PART_Popup", picker) is Popup { PopupAnimation: PopupAnimation.Fade },
+                            "theme, scale and route selectors use a fade-in dropdown without extending their layout bounds");
                         CaptureInteraction(dialog, Path.Combine(scratch, "appearance-" + screenshot));
                         var updatesTab = Descendants<Button>(dialog).Single(button => Equals(button.Content, "Обновления"));
                         updatesTab.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -84,6 +110,8 @@ internal partial class Program
                         Check(Descendants<CheckBox>(dialog).Single().IsVisible
                             && Descendants<Button>(dialog).Single(button => Equals(button.Content, "Проверить актуальный релиз")).IsVisible,
                             "settings expose automatic and manual release checks");
+                        Check(Descendants<ScrollViewer>(dialog).Any(page => page.Visibility == Visibility.Visible
+                            && page.RenderTransform is TranslateTransform), "switching settings pages keeps its slide transition within an inset page viewport");
                     }
                     if (title == "ЧАСТЫЕ ВОПРОСЫ") CaptureInteraction(window, Path.Combine(scratch, "rounded-blurred-window.png"));
                     CaptureInteraction(dialog, Path.Combine(scratch, screenshot));
@@ -92,12 +120,13 @@ internal partial class Program
                 timer.Start();
                 _ = show.Invoke(null, arguments);
                 timer.Stop();
-                Check(seen && blurred && roundedClip && themedFrame && ((FrameworkElement)Field("WindowContent")).Effect is null,
+                await Task.Delay(240);
+                Check(seen && blurred && roundedClip && themedFrame && openingAnimated && ((FrameworkElement)Field("WindowContent")).Effect is null,
                     $"{title} opens with the themed frame and rounded, clipped blur, then restores the main window");
             }
-            SmokeModal("ЧАСТЫЕ ВОПРОСЫ", "ShowFaq", new object?[] { window }, "faq-1.17.0-test.png");
-            SmokeModal("НАСТРОЙКИ", "ShowSettings", new object?[] { window, configPath, fakeExe, "Тёмная морфоцитная", false, 1d, false }, "settings-release.png");
-            SmokeModal("ПРОВЕРКА ОКНА", "ShowNotice", new object?[] { window, "ПРОВЕРКА ОКНА", "Короткое тестовое сообщение.", "ПОНЯТНО" }, "notice-dialog.png");
+            await SmokeModal("ЧАСТЫЕ ВОПРОСЫ", "ShowFaq", new object?[] { window }, "faq-1.17.0-test.png");
+            await SmokeModal("НАСТРОЙКИ", "ShowSettings", new object?[] { window, configPath, fakeExe, "Тёмная морфоцитная", false, 1d, false, null }, "settings-release.png");
+            await SmokeModal("ПРОВЕРКА ОКНА", "ShowNotice", new object?[] { window, "ПРОВЕРКА ОКНА", "Короткое тестовое сообщение.", "ПОНЯТНО" }, "notice-dialog.png");
             var themeManager = typeof(MainWindow).Assembly.GetType("MorphocyteRouter.ThemeManager")!;
             var themeNames = (string[])themeManager.GetField("ThemeNames", BindingFlags.Static | BindingFlags.NonPublic)!.GetValue(null)!;
             var applyTheme = themeManager.GetMethod("Apply", BindingFlags.Static | BindingFlags.NonPublic)!;
@@ -112,7 +141,7 @@ internal partial class Program
                 sampledAccents.Add(accent.Color);
                 CaptureInteraction(window, Path.Combine(scratch, "theme-" + themeNames.ToList().IndexOf(theme) + ".png"));
                 if (theme is "Светлая морфоцитная" or "Космический градиент")
-                    SmokeModal("НАСТРОЙКИ", "ShowSettings", new object?[] { window, configPath, fakeExe, theme, false, 1d, false },
+                    await SmokeModal("НАСТРОЙКИ", "ShowSettings", new object?[] { window, configPath, fakeExe, theme, false, 1d, false, null },
                         "settings-theme-" + themeNames.ToList().IndexOf(theme) + ".png");
             }
             Check(sampledAccents.Count == 9, "all nine themes have distinct accent palettes");
@@ -137,6 +166,7 @@ internal partial class Program
             folderDialogTimer.Start();
             var folderDialogTask = (Task<string?>)showFolderDialog.Invoke(null, new object[] { window, "Первое правило", "Второе правило" })!;
             await folderDialogTask;
+            await Task.Delay(240);
             Check(folderDialogSeen && folderDialogBlurred && ((FrameworkElement)Field("WindowContent")).Effect is null,
                 "folder creation uses the shared dialog chrome and restores the backdrop when closed");
 
@@ -144,6 +174,7 @@ internal partial class Program
             await Idle();
             Check(!(bool)Field("_busy") && !(bool)Field("_closing"), "settings stay available after closing the shared modals");
             var selectedThemeInSettings = false;
+            var savedSettingsDialogStayedOpen = false;
             var initialStatusFont = RenderedFontSize((TextBlock)Field("StatusText"), window);
             var initialPowerHeight = RenderedHeight((FrameworkElement)Field("PowerButton"), window);
             var settingsTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
@@ -164,10 +195,20 @@ internal partial class Program
                 Descendants<CheckBox>(settingsDialog).Single().IsChecked = true;
                 var save = Descendants<Button>(settingsDialog).Single(button => Equals(button.Content, "СОХРАНИТЬ"));
                 save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                savedSettingsDialogStayedOpen = settingsDialog.IsVisible;
+                var closeAfterSave = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
+                closeAfterSave.Tick += (_, _) =>
+                {
+                    if ((bool)Field("_busy")) return;
+                    closeAfterSave.Stop();
+                    if (settingsDialog.IsVisible) settingsDialog.Close();
+                };
+                closeAfterSave.Start();
             };
             settingsTimer.Start();
             settingsClick.Invoke(window, new object[] { new Button(), new RoutedEventArgs() });
             await Idle();
+            Check(savedSettingsDialogStayedOpen, "saving settings applies them without closing the settings window");
             Check(selectedThemeInSettings && settings.Theme == "Аврора" && AppSettings.Load(settingsPath).Theme == "Аврора",
                 $"saving a theme in settings applies it and persists it across launches (picked={selectedThemeInSettings}, current={settings.Theme}, persisted={AppSettings.Load(settingsPath).Theme})");
             Check(settings.InterfaceScale == 1.25 && AppSettings.Load(settingsPath).InterfaceScale == 1.25
@@ -178,7 +219,10 @@ internal partial class Program
                 && Math.Abs(RenderedHeight((FrameworkElement)Field("PowerButton"), window) / initialPowerHeight - 1.25) < .02,
                 "125-percent scaling changes rendered main-window fonts and controls together");
             var scaledDialogSeen = false;
-            var restoreTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+            var scaledSettingsDialogStayedOpen = false;
+            // Let the 170 ms entrance scale finish before measuring the stable
+            // user-selected interface scale on controls inside the dialog.
+            var restoreTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
             restoreTimer.Tick += (_, _) =>
             {
                 var dialog = Application.Current.Windows.OfType<Window>().FirstOrDefault(candidate =>
@@ -196,10 +240,20 @@ internal partial class Program
                 Descendants<CheckBox>(dialog).Single().IsChecked = false;
                 CaptureInteraction(dialog, Path.Combine(scratch, "settings-scaled-release.png"));
                 save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                scaledSettingsDialogStayedOpen = dialog.IsVisible;
+                var closeAfterSave = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
+                closeAfterSave.Tick += (_, _) =>
+                {
+                    if ((bool)Field("_busy")) return;
+                    closeAfterSave.Stop();
+                    if (dialog.IsVisible) dialog.Close();
+                };
+                closeAfterSave.Start();
             };
             restoreTimer.Start();
             settingsClick.Invoke(window, new object[] { new Button(), new RoutedEventArgs() });
             await Idle();
+            Check(scaledSettingsDialogStayedOpen, "saving changed appearance settings leaves the dialog available for further adjustments");
             Check(scaledDialogSeen && settings.InterfaceScale == 1 && !settings.AutoCheckUpdates
                 && Math.Abs(RenderedFontSize((TextBlock)Field("StatusText"), window) - initialStatusFont) < .2,
                 "new dialogs inherit app scaling and restoring 100 percent restores main-window font size");

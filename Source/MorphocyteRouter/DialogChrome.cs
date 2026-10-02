@@ -2,6 +2,8 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
+using System.Windows.Threading;
 
 namespace MorphocyteRouter;
 
@@ -101,31 +103,9 @@ internal static class DialogChrome
 
     internal static Button MakeButton(string caption, bool primary)
     {
-        const string template = """
-            <ControlTemplate xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
-                             xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-                             TargetType="Button">
-              <Border x:Name="Surface" CornerRadius="9" Background="{TemplateBinding Background}"
-                      BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
-                      Padding="{TemplateBinding Padding}">
-                <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
-              </Border>
-              <ControlTemplate.Triggers>
-                <Trigger Property="IsMouseOver" Value="True">
-                  <Setter TargetName="Surface" Property="Background" Value="{DynamicResource HoverBackground}"/>
-                  <Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
-                  <Setter TargetName="Surface" Property="Opacity" Value="0.94"/>
-                </Trigger>
-                <Trigger Property="IsKeyboardFocused" Value="True">
-                  <Setter TargetName="Surface" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
-                </Trigger>
-                <Trigger Property="IsPressed" Value="True"><Setter TargetName="Surface" Property="Opacity" Value="0.78"/></Trigger>
-                <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Surface" Property="Opacity" Value="0.45"/></Trigger>
-              </ControlTemplate.Triggers>
-            </ControlTemplate>
-            """;
         var button = new Button
         {
+            Style = (Style)Application.Current.FindResource(primary ? "PrimaryButton" : "FlatButton"),
             Content = caption,
             Height = 38,
             MinWidth = primary ? 112 : 94,
@@ -134,9 +114,7 @@ internal static class DialogChrome
             FontWeight = FontWeights.SemiBold,
             Cursor = Cursors.Hand,
             FocusVisualStyle = null,
-            BorderThickness = new Thickness(1),
-            Template = (ControlTemplate)System.Windows.Markup.XamlReader.Parse(
-                template.Replace("HoverBackground", primary ? "ThemeAccentGradient" : "ThemeButtonHover", StringComparison.Ordinal))
+            BorderThickness = new Thickness(1)
         };
         button.SetResourceReference(Control.ForegroundProperty, primary ? "ThemeButtonPrimaryText" : "ThemeText");
         button.SetResourceReference(Control.BackgroundProperty, primary ? "ThemeAccentGradient" : "ThemeButton");
@@ -146,6 +124,7 @@ internal static class DialogChrome
 
     internal static void ShowModal(Window? owner, Window dialog)
     {
+        AnimateWindowOpen(dialog);
         SetBackdrop(owner, true);
         dialog.Closed += (_, _) => SetBackdrop(owner, false);
         dialog.ShowDialog();
@@ -153,10 +132,72 @@ internal static class DialogChrome
 
     internal static void ShowModeless(Window owner, Window dialog)
     {
+        AnimateWindowOpen(dialog);
         SetBackdrop(owner, true);
         dialog.Closed += (_, _) => SetBackdrop(owner, false);
         dialog.Show();
         dialog.Activate();
+    }
+
+    private static void AnimateWindowOpen(Window dialog)
+    {
+        if (dialog.Content is not FrameworkElement content) return;
+        // Warm the bitmap before entrance, then animate only its opacity and transform.
+        // The gentle zoom stays inside the HWND and never overshoots its final size.
+        var originalOpacity = content.Opacity;
+        var originalCache = content.CacheMode;
+        var originalTransform = content.RenderTransform;
+        var originalOrigin = content.RenderTransformOrigin;
+        var zoom = new ScaleTransform(0.975, 0.975);
+        // Subpixel filtering avoids the pixel-snapped steps of the previous zoom.
+        content.CacheMode = new BitmapCache { SnapsToDevicePixels = false };
+        content.RenderTransformOrigin = new Point(0.5, 0.5);
+        content.RenderTransform = zoom;
+        content.Opacity = 0.01;
+        var closed = false;
+
+        void Restore()
+        {
+            content.BeginAnimation(UIElement.OpacityProperty, null);
+            zoom.BeginAnimation(ScaleTransform.ScaleXProperty, null);
+            zoom.BeginAnimation(ScaleTransform.ScaleYProperty, null);
+            content.Opacity = originalOpacity;
+            content.RenderTransform = originalTransform;
+            content.RenderTransformOrigin = originalOrigin;
+            content.CacheMode = originalCache;
+        }
+
+        void FirstPaint(object? sender, EventArgs args)
+        {
+            dialog.ContentRendered -= FirstPaint;
+            dialog.Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() =>
+            {
+                if (closed) return;
+                var fade = new DoubleAnimation(0.01, originalOpacity, TimeSpan.FromMilliseconds(140))
+                {
+                    EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }
+                };
+                var settle = new DoubleAnimation(0.975, 1, TimeSpan.FromMilliseconds(170))
+                {
+                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                };
+                settle.Completed += (_, _) => Restore();
+                content.BeginAnimation(UIElement.OpacityProperty, fade);
+                zoom.BeginAnimation(ScaleTransform.ScaleXProperty,
+                    new DoubleAnimation(0.975, 1, TimeSpan.FromMilliseconds(170))
+                    {
+                        EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
+                    });
+                zoom.BeginAnimation(ScaleTransform.ScaleYProperty, settle);
+            }));
+        }
+        dialog.ContentRendered += FirstPaint;
+        dialog.Closed += (_, _) =>
+        {
+            closed = true;
+            dialog.ContentRendered -= FirstPaint;
+            Restore();
+        };
     }
 
     private static Button? FindButtonAncestor(DependencyObject? current)

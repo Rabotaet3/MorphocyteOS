@@ -31,26 +31,51 @@
             <Setter Property="Background" Value="{DynamicResource ThemeButton}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource ThemeButtonBorder}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="14,9"/>
+            <Setter Property="Padding" Value="14,5"/>
+            <Setter Property="MinHeight" Value="32"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="FontWeight" Value="SemiBold"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
-                        <Border x:Name="B" CornerRadius="9" Background="{TemplateBinding Background}"
+                        <Border x:Name="B" Margin="3" CornerRadius="9" Background="{TemplateBinding Background}"
                                 BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
-                                Padding="{TemplateBinding Padding}">
-                            <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                                RenderTransformOrigin="0.5,0.5">
+                            <Border.RenderTransform><ScaleTransform/></Border.RenderTransform>
+                            <Grid>
+                                <Border x:Name="ButtonTint" Background="{DynamicResource ThemeAccent}" CornerRadius="7" Opacity="0" IsHitTestVisible="False"/>
+                                <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True"/>
+                            </Grid>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsMouseOver" Value="True">
-                                <Setter TargetName="B" Property="Background" Value="{DynamicResource ThemeButtonHover}"/>
                                 <Setter TargetName="B" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
-                                <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+                                <Trigger.EnterActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="ButtonTint" Storyboard.TargetProperty="Opacity" To="0.12" Duration="0:0:0.13"/>
+                                            <DoubleAnimation Storyboard.TargetName="B" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)" To="1.04" Duration="0:0:0.13"/>
+                                            <DoubleAnimation Storyboard.TargetName="B" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)" To="1.04" Duration="0:0:0.13"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.EnterActions>
+                                <Trigger.ExitActions>
+                                    <BeginStoryboard>
+                                        <Storyboard>
+                                            <DoubleAnimation Storyboard.TargetName="ButtonTint" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.15"/>
+                                            <DoubleAnimation Storyboard.TargetName="B" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.15"/>
+                                            <DoubleAnimation Storyboard.TargetName="B" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.15"/>
+                                        </Storyboard>
+                                    </BeginStoryboard>
+                                </Trigger.ExitActions>
                             </Trigger>
                             <Trigger Property="IsPressed" Value="True">
                                 <Setter TargetName="B" Property="Opacity" Value="0.72"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocused" Value="True">
+                                <Setter TargetName="B" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
                                 <Setter TargetName="B" Property="Opacity" Value="0.4"/>
@@ -107,10 +132,14 @@
 
         <Style TargetType="ComboBox">
             <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
-            <Setter Property="Background" Value="{DynamicResource ThemeInputBackground}"/>
-            <Setter Property="BorderBrush" Value="{DynamicResource ThemeInputBorder}"/>
+            <Setter Property="Background" Value="{DynamicResource ThemeButton}"/>
+            <Setter Property="BorderBrush" Value="{DynamicResource ThemeButtonBorder}"/>
             <Setter Property="BorderThickness" Value="1"/>
-            <Setter Property="Padding" Value="9,7"/>
+            <Setter Property="Padding" Value="12,7"/>
+            <Setter Property="MinHeight" Value="38"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+            <Setter Property="ScrollViewer.HorizontalScrollBarVisibility" Value="Disabled"/>
             <Setter Property="FontSize" Value="12"/>
             <Setter Property="Cursor" Value="Hand"/>
             <Setter Property="Template">
@@ -136,31 +165,39 @@
                                                                   ContentTemplate="{Binding SelectionBoxItemTemplate, RelativeSource={RelativeSource AncestorType={x:Type ComboBox}}}"
                                                                   TextElement.Foreground="{Binding Foreground, RelativeSource={RelativeSource AncestorType={x:Type ComboBox}}}"/>
                                                 <Border Grid.Column="1" BorderBrush="{DynamicResource ThemeComboDivider}" BorderThickness="1,0,0,0">
-                                                    <Path Width="8" Height="5" Stretch="Fill" Fill="{DynamicResource ThemeAccent}" HorizontalAlignment="Center" VerticalAlignment="Center"
-                                                          Data="M 0 0 L 4 4 L 8 0 Z"/>
+                                                    <Path x:Name="DropDownArrow" Width="8" Height="5" Stretch="Fill" Fill="{DynamicResource ThemeAccent}" HorizontalAlignment="Center" VerticalAlignment="Center" RenderTransformOrigin="0.5,0.5"
+                                                          Data="M 0 0 L 4 4 L 8 0 Z">
+                                                        <Path.RenderTransform><RotateTransform/></Path.RenderTransform>
+                                                    </Path>
                                                 </Border>
                                             </Grid>
                                         </Border>
                                         <ControlTemplate.Triggers>
                                             <Trigger Property="IsMouseOver" Value="True">
                                                 <Setter TargetName="ToggleBorder" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
-                                                <Setter TargetName="ToggleBorder" Property="Background" Value="{DynamicResource ThemeSurfaceHover}"/>
+                                                <Setter TargetName="ToggleBorder" Property="Background" Value="{DynamicResource ThemeButtonHover}"/>
                                             </Trigger>
                                             <Trigger Property="IsChecked" Value="True">
                                                 <Setter TargetName="ToggleBorder" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
+                                                <Trigger.EnterActions><BeginStoryboard><Storyboard>
+                                                    <DoubleAnimation Storyboard.TargetName="DropDownArrow" Storyboard.TargetProperty="RenderTransform.(RotateTransform.Angle)" To="180" Duration="0:0:0.16"/>
+                                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                                <Trigger.ExitActions><BeginStoryboard><Storyboard>
+                                                    <DoubleAnimation Storyboard.TargetName="DropDownArrow" Storyboard.TargetProperty="RenderTransform.(RotateTransform.Angle)" To="0" Duration="0:0:0.16"/>
+                                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
                                             </Trigger>
                                         </ControlTemplate.Triggers>
                                     </ControlTemplate>
                                 </ToggleButton.Template>
                             </ToggleButton>
                             <Popup x:Name="PART_Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}"
-                                   AllowsTransparency="True" Focusable="False" PopupAnimation="Fade">
-                                <Border MinWidth="{Binding ActualWidth, ElementName=ComboRoot}" MaxHeight="260" Margin="0,4,0,0"
-                                        Background="{DynamicResource ThemePopup}" BorderBrush="{DynamicResource ThemePopupBorder}" BorderThickness="1" CornerRadius="9" Padding="4">
+                                   AllowsTransparency="True" Focusable="False" PopupAnimation="Fade" HorizontalOffset="-8">
+                                <Border MinWidth="{Binding ActualWidth, ElementName=ComboRoot}" MaxHeight="320" Margin="8,6,8,10"
+                                        Background="{DynamicResource ThemePopup}" BorderBrush="{DynamicResource ThemeButtonBorder}" BorderThickness="1" CornerRadius="12" Padding="5">
                                     <Border.Effect>
-                                        <DropShadowEffect Color="{DynamicResource ThemeShadowColor}" BlurRadius="16" ShadowDepth="5" Opacity="0.38"/>
+                                        <DropShadowEffect Color="{DynamicResource ThemeShadowColor}" BlurRadius="10" ShadowDepth="3" Opacity="0.24"/>
                                     </Border.Effect>
-                                    <ScrollViewer SnapsToDevicePixels="True" VerticalScrollBarVisibility="Auto">
+                                    <ScrollViewer SnapsToDevicePixels="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                                         <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
                                     </ScrollViewer>
                                 </Border>
@@ -178,22 +215,41 @@
 
         <Style TargetType="ComboBoxItem">
             <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
-            <Setter Property="Background" Value="{DynamicResource ThemeInputBackground}"/>
-            <Setter Property="Padding" Value="10,7"/>
+            <Setter Property="Background" Value="{DynamicResource ThemeButton}"/>
+            <Setter Property="Padding" Value="11,8"/>
+            <Setter Property="Margin" Value="1,2"/>
+            <Setter Property="MinHeight" Value="36"/>
+            <Setter Property="FontWeight" Value="SemiBold"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
             <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="ComboBoxItem">
-                        <Border x:Name="ItemBorder" Background="{TemplateBinding Background}" CornerRadius="6" Padding="{TemplateBinding Padding}">
-                            <ContentPresenter VerticalAlignment="Center"/>
+                        <Border x:Name="ItemBorder" Background="{TemplateBinding Background}" BorderBrush="{DynamicResource ThemeButtonBorder}" BorderThickness="1" CornerRadius="9">
+                            <Grid>
+                                <Border x:Name="SelectedTint" Background="{DynamicResource ThemeSurfaceSelected}" CornerRadius="8" Opacity="0" IsHitTestVisible="False"/>
+                                <Border x:Name="ItemTint" Background="{DynamicResource ThemeButtonHover}" CornerRadius="8" Opacity="0" IsHitTestVisible="False"/>
+                                <Grid Margin="{TemplateBinding Padding}">
+                                    <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="20"/></Grid.ColumnDefinitions>
+                                    <ContentPresenter VerticalAlignment="Center" HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" RecognizesAccessKey="True"/>
+                                    <Path x:Name="SelectedMark" Grid.Column="1" Data="M 1,5 L 4,8 L 10,1" Width="11" Height="9" Stroke="{DynamicResource ThemeAccent}" StrokeThickness="1.8" StrokeStartLineCap="Round" StrokeEndLineCap="Round" HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Hidden"/>
+                                </Grid>
+                            </Grid>
                         </Border>
                         <ControlTemplate.Triggers>
                             <Trigger Property="IsHighlighted" Value="True">
-                                <Setter TargetName="ItemBorder" Property="Background" Value="{DynamicResource ThemeComboHover}"/>
-                                <Setter Property="Foreground" Value="{DynamicResource ThemeAccent}"/>
+                                <Setter TargetName="ItemBorder" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
+                                <Trigger.EnterActions><BeginStoryboard><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="ItemTint" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.11"/>
+                                </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                <Trigger.ExitActions><BeginStoryboard><Storyboard>
+                                    <DoubleAnimation Storyboard.TargetName="ItemTint" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.12"/>
+                                </Storyboard></BeginStoryboard></Trigger.ExitActions>
                             </Trigger>
                             <Trigger Property="IsSelected" Value="True">
-                                <Setter TargetName="ItemBorder" Property="Background" Value="{DynamicResource ThemeComboSelected}"/>
+                                <Setter TargetName="SelectedTint" Property="Opacity" Value="1"/>
+                                <Setter TargetName="ItemBorder" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
+                                <Setter TargetName="SelectedMark" Property="Visibility" Value="Visible"/>
                                 <Setter Property="Foreground" Value="{DynamicResource ThemeAccent}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>

@@ -63,11 +63,23 @@ internal static class RunningProcessDialog
                   <Setter.Value>
                     <ControlTemplate TargetType="ListBoxItem">
                       <Border x:Name="Row" Background="{DynamicResource ThemeRuleBackground}" BorderBrush="{DynamicResource ThemeRuleBorder}" BorderThickness="1" CornerRadius="8" Padding="7" MinHeight="46">
-                        <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+                        <Grid>
+                          <Border x:Name="SelectedMark" Width="3" HorizontalAlignment="Left" VerticalAlignment="Stretch" CornerRadius="2" Background="{DynamicResource ThemeAccent}" Opacity="0" IsHitTestVisible="False"/>
+                          <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+                        </Grid>
                       </Border>
                       <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Row" Property="Background" Value="{DynamicResource ThemeRuleHover}"/><Setter TargetName="Row" Property="BorderBrush" Value="{DynamicResource ThemeRuleHoverBorder}"/></Trigger>
-                        <Trigger Property="IsSelected" Value="True"><Setter TargetName="Row" Property="Background" Value="{DynamicResource ThemeRuleSelected}"/><Setter TargetName="Row" Property="BorderBrush" Value="{DynamicResource ThemeRuleSelectedBorder}"/></Trigger>
+                        <Trigger Property="IsSelected" Value="True">
+                          <Setter TargetName="Row" Property="Background" Value="{DynamicResource ThemeRuleSelected}"/>
+                          <Setter TargetName="Row" Property="BorderBrush" Value="{DynamicResource ThemeRuleSelectedBorder}"/>
+                          <Trigger.EnterActions><BeginStoryboard><Storyboard>
+                            <DoubleAnimation Storyboard.TargetName="SelectedMark" Storyboard.TargetProperty="Opacity" To="1" Duration="0:0:0.15"/>
+                          </Storyboard></BeginStoryboard></Trigger.EnterActions>
+                          <Trigger.ExitActions><BeginStoryboard><Storyboard>
+                            <DoubleAnimation Storyboard.TargetName="SelectedMark" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.12"/>
+                          </Storyboard></BeginStoryboard></Trigger.ExitActions>
+                        </Trigger>
                         <MultiTrigger><MultiTrigger.Conditions><Condition Property="IsSelected" Value="True"/><Condition Property="IsMouseOver" Value="True"/></MultiTrigger.Conditions><Setter TargetName="Row" Property="Background" Value="{DynamicResource ThemeRuleSelectedHover}"/><Setter TargetName="Row" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/></MultiTrigger>
                       </ControlTemplate.Triggers>
                     </ControlTemplate>

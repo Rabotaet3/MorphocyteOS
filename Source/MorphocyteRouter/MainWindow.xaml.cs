@@ -10,6 +10,7 @@ using System.Windows.Controls;
 using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 using System.Windows.Media.Effects;
 using System.Windows.Threading;
 
@@ -41,6 +42,8 @@ public partial class MainWindow : Window
     private double _logThumbGrabOffset;
     private DateTime _startedAt;
     private bool _dirty, _loading, _busy, _closing, _allowClose, _draftSaved;
+    private int _dialogBackdropVersion;
+    private bool _dialogBackdropVisible, _logDisplayDeferred;
     private static readonly SemaphoreSlim LogWriteGate = new(1, 1);
     private static string PersistentLogPath => Path.Combine(AppSettings.LocalDataDirectory, "router.log");
 
@@ -113,7 +116,6 @@ public partial class MainWindow : Window
         Closing += MainWindow_Closing;
         Closed += (_, _) => _logRefreshTimer.Stop();
         Deactivated += (_, _) => CancelRuleDrag();
-        DialogShade.SizeChanged += (_, _) => UpdateFrameClip();
         UpdateControls();
     }
 
@@ -145,31 +147,53 @@ public partial class MainWindow : Window
 
     internal void SetDialogBackdrop(bool visible)
     {
+        var version = ++_dialogBackdropVersion;
+        var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+        var duration = TimeSpan.FromMilliseconds(180);
         if (visible)
         {
+            _dialogBackdropVisible = true;
             // Blur the entire visual layer (including the title bar and decorative texture),
             // while the rounded clip prevents the effect leaking outside the window silhouette.
-            WindowContent.Effect = new BlurEffect { Radius = 5.5 };
+            // Keep the blur kernel fixed: animating its radius rerenders the entire
+            // main window while the transparent dialog is also being animated.
+            var blur = new BlurEffect { Radius = 5.5, RenderingBias = RenderingBias.Performance };
+            WindowContent.CacheMode = new BitmapCache { SnapsToDevicePixels = true };
+            WindowContent.Effect = blur;
             DialogShade.Visibility = Visibility.Visible;
+            // Do not animate a second large layered HWND behind the entering dialog.
+            // Compose the static backdrop once; only the dialog fades in.
+            DialogShade.BeginAnimation(UIElement.OpacityProperty, null);
+            DialogShade.Opacity = 0.75;
         }
         else
         {
-            DialogShade.Visibility = Visibility.Collapsed;
-            WindowContent.Effect = null;
+            var shadeFade = new DoubleAnimation(DialogShade.Opacity, 0, duration) { EasingFunction = easing };
+            shadeFade.Completed += (_, _) =>
+            {
+                if (version != _dialogBackdropVersion) return;
+                DialogShade.Visibility = Visibility.Collapsed;
+                WindowContent.Effect = null;
+                WindowContent.CacheMode = null;
+                _dialogBackdropVisible = false;
+                UpdateUptime();
+                RefreshDeferredLog();
+            };
+            DialogShade.BeginAnimation(UIElement.OpacityProperty, shadeFade);
         }
     }
 
-    private void WindowContent_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateFrameClip();
+    private void FrameContent_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateFrameClip();
 
     private void UpdateFrameClip()
     {
-        var bounds = new Rect(0, 0, WindowContent.ActualWidth, WindowContent.ActualHeight);
+        var bounds = new Rect(0, 0, FrameContent.ActualWidth, FrameContent.ActualHeight);
         if (bounds.Width <= 0 || bounds.Height <= 0) return;
-        // Match the app frame, but clip a couple of pixels inside the double border.
-        var radius = 20 / UiScaleManager.CurrentScale;
-        WindowContent.Clip = new RectangleGeometry(bounds, radius, radius);
-        if (DialogShade is not null && DialogShade.ActualWidth > 0 && DialogShade.ActualHeight > 0)
-            DialogShade.Clip = new RectangleGeometry(new Rect(0, 0, DialogShade.ActualWidth, DialogShade.ActualHeight), 20, 20);
+        // Clip the composed frame after child effects are rendered. In particular,
+        // BlurEffect expands its pixels beyond the child's own clip; this parent
+        // clip keeps both the blurred content and modal shade inside the rounded frame.
+        const double frameRadius = 19.5;
+        FrameContent.Clip = new RectangleGeometry(bounds, frameRadius, frameRadius);
     }
 
     // Every mutation and lifecycle operation enters this gate. Nested helpers do not reacquire it.
@@ -357,23 +381,6 @@ public partial class MainWindow : Window
         var routingErrors = actual.ValidateForRouting();
         if (routingErrors.Count > 0) throw new InvalidDataException(string.Join("\n", routingErrors));
 
-        var otherInstances = CoreProcessManager.FindOtherInstances(_settings.CorePath);
-        if (otherInstances.Count > 0)
-        {
-            var ids = string.Join(", ", otherInstances.Select(instance => instance.ProcessId));
-            var accepted = UtilityDialogs.ShowConfirm(this, "УЖЕ ЗАПУЩЕНО ЯДРО MIHOMO",
-                $"Найден другой процесс из этого же файла ядра (PID: {ids}). Он может удерживать порт или TUN-интерфейс и оставлять старые правила.\n\nОстановить только эти экземпляры и запустить текущий профиль? Соединение на короткое время прервётся.",
-                "ОСТАНОВИТЬ И ПРОДОЛЖИТЬ", "ОТМЕНА");
-            if (!accepted)
-            {
-                SetStatus("VPN ВЫКЛЮЧЕН", "Запуск отменён; другое ядро не тронуто", "#667A74");
-                SetLog("Запуск отменён: найден другой экземпляр того же mihomo.exe.");
-                return;
-            }
-            await CoreProcessManager.StopOtherInstancesAsync(_settings.CorePath, otherInstances.Select(instance => instance.ProcessId), _lifetime.Token);
-            SetLog("Подтверждённые старые экземпляры Mihomo остановлены.");
-        }
-
         SetStatus("ПРОВЕРКА…", "Проверяю конфигурацию", "#FFD166");
         var check = await CoreProcessManager.ValidateAsync(_settings.CorePath, _settings.ConfigPath, _lifetime.Token);
         if (!check.Success)
@@ -382,6 +389,7 @@ public partial class MainWindow : Window
             throw new InvalidDataException(check.Message);
         }
         _lifetime.Token.ThrowIfCancellationRequested();
+        if (!await ConfirmAndStopOtherMihomoAsync()) return;
         try
         {
             await _core.StartAsync(CoreProcessManager.CreateStartInfo(_settings.CorePath, _settings.ConfigPath), _lifetime.Token);
@@ -394,6 +402,47 @@ public partial class MainWindow : Window
             SetStatus("ОШИБКА ЗАПУСКА", _core.IsRunning ? "Ядро требует остановки" : "Ядро не запущено", "#FF6B8A");
             throw;
         }
+    }
+
+    private async Task<bool> ConfirmAndStopOtherMihomoAsync()
+    {
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var instances = CoreProcessManager.FindOtherInstances(_settings.CorePath);
+            if (instances.Count == 0) return true;
+
+            var unverified = instances.Where(instance => string.IsNullOrWhiteSpace(instance.ExecutablePath)).ToArray();
+            if (unverified.Length > 0)
+            {
+                var ids = string.Join(", ", unverified.Select(instance => instance.ProcessId));
+                SetStatus("ПРОВЕРКА ЯДРА", "Найден процесс, чей путь нельзя проверить", "#FFD166");
+                SetLog($"Ядро не запущено: путь процесса Mihomo PID {ids} недоступен; он не был остановлен.");
+                UtilityDialogs.ShowNotice(this, "НЕ УДАЛОСЬ ПРОВЕРИТЬ MIHOMO",
+                    $"Найден процесс с именем «{Path.GetFileName(_settings.CorePath)}», но Windows не разрешила проверить его путь (PID: {ids}).\n\nЧтобы не завершить посторонний процесс и не оставить TUN в неопределённом состоянии, новое ядро не запущено. Закрой этот процесс вручную или запусти программу с правами, позволяющими проверить его.");
+                SetStatus("VPN ВЫКЛЮЧЕН", "Ядро не запускалось", "#667A74");
+                return false;
+            }
+
+            var processList = string.Join(Environment.NewLine, instances.Select(instance =>
+                $"PID {instance.ProcessId} — {instance.ExecutablePath}"));
+            var accepted = UtilityDialogs.ShowConfirm(this, "УЖЕ ЗАПУЩЕНО ЯДРО MIHOMO",
+                $"Перед запуском найдены другие процессы «{Path.GetFileName(_settings.CorePath)}» — в том числе копии из других папок:\n\n{processList}\n\nОни могут удерживать порты или TUN-интерфейс и оставлять старые правила. Остановить только перечисленные процессы и продолжить? Соединение на короткое время прервётся.",
+                "ОСТАНОВИТЬ И ПРОДОЛЖИТЬ", "ОТМЕНА");
+            if (!accepted)
+            {
+                SetStatus("VPN ВЫКЛЮЧЕН", "Запуск отменён; найденное ядро не тронуто", "#667A74");
+                SetLog("Запуск отменён: найден другой процесс Mihomo.");
+                return false;
+            }
+
+            await CoreProcessManager.StopOtherInstancesAsync(_settings.CorePath, instances, _lifetime.Token);
+            SetLog("Остановка найденных копий Mihomo подтверждена; проверяю, что они завершились.");
+        }
+
+        var remaining = CoreProcessManager.FindOtherInstances(_settings.CorePath);
+        if (remaining.Count == 0) return true;
+        var remainingIds = string.Join(", ", remaining.Select(instance => instance.ProcessId));
+        throw new IOException($"Дублирующие процессы Mihomo снова появились или не завершились (PID: {remainingIds}). Текущее ядро не запущено, чтобы не оставить конфликтующий TUN.");
     }
 
     private async Task<bool> StopCoreAsync()
@@ -420,7 +469,7 @@ public partial class MainWindow : Window
     }
     private void UpdateUptime()
     {
-        if (!_core.IsRunning || _busy || _closing) return;
+        if (!_core.IsRunning || _busy || _closing || _dialogBackdropVisible) return;
         UptimeText.Text = $"Ядро работает {(DateTime.Now - _startedAt):hh\\:mm\\:ss}";
     }
     private void Post(Action action)
@@ -466,6 +515,13 @@ public partial class MainWindow : Window
             }
         }
 
+        // Keep collecting and persisting every entry while a dialog is visible,
+        // but do not invalidate the blurred background bitmap with log text layout.
+        if (_dialogBackdropVisible)
+        {
+            _logDisplayDeferred = true;
+            return;
+        }
         if (LogText.Visibility != Visibility.Visible) return;
         if (droppedOldLines || string.IsNullOrEmpty(LogText.Text))
             LogText.Text = string.Join(Environment.NewLine, _logLines);
@@ -474,6 +530,19 @@ public partial class MainWindow : Window
 
         if (wasNearEnd) LogText.ScrollToEnd();
         else if (_logScrollViewer is not null) _logScrollViewer.ScrollToVerticalOffset(oldVerticalOffset);
+    }
+
+    private void RefreshDeferredLog()
+    {
+        if (!_logDisplayDeferred) return;
+        _logDisplayDeferred = false;
+        if (LogText.Visibility != Visibility.Visible || _closing) return;
+        var oldOffset = _logScrollViewer?.VerticalOffset ?? 0;
+        var wasNearEnd = _logScrollViewer is null
+            || _logScrollViewer.ScrollableHeight - _logScrollViewer.VerticalOffset < 28;
+        LogText.Text = string.Join(Environment.NewLine, _logLines);
+        if (wasNearEnd) LogText.ScrollToEnd();
+        else _logScrollViewer?.ScrollToVerticalOffset(oldOffset);
     }
 
     private static async Task PersistLogAsync(string logPath, string entry)
@@ -886,16 +955,16 @@ public partial class MainWindow : Window
     {
         if (!_busy && !_closing) UtilityDialogs.ShowFaq(this);
     }
-    private async void SettingsButton_Click(object sender, RoutedEventArgs e)
+    private void SettingsButton_Click(object sender, RoutedEventArgs e)
     {
         if (_busy || _closing) return;
-        var choice = UtilityDialogs.ShowSettings(this, _settings.ConfigPath, _settings.CorePath, _settings.Theme,
-            _core.HasTrackedProcess, _settings.InterfaceScale, _settings.AutoCheckUpdates);
-        if (choice is null)
-        {
-            ThemeManager.Apply(_settings.Theme);
-            return;
-        }
+        UtilityDialogs.ShowSettings(this, _settings.ConfigPath, _settings.CorePath, _settings.Theme,
+            _core.HasTrackedProcess, _settings.InterfaceScale, _settings.AutoCheckUpdates, SaveSettingsSelectionAsync);
+    }
+
+    private async Task<SettingsDialogSelection?> SaveSettingsSelectionAsync(SettingsDialogSelection choice)
+    {
+        SettingsDialogSelection? applied = null;
         await RunExclusiveAsync(async () =>
         {
             _settings.Theme = ThemeManager.Normalize(choice.Theme);
@@ -917,7 +986,11 @@ public partial class MainWindow : Window
             else if (!string.Equals(choice.ConfigPath, _settings.ConfigPath, StringComparison.OrdinalIgnoreCase)
                 && !string.IsNullOrWhiteSpace(choice.ConfigPath))
                 await LoadConfigAsync(choice.ConfigPath);
+            SetLog("Настройки сохранены.");
+            applied = new SettingsDialogSelection(_settings.ConfigPath, _settings.CorePath, _settings.Theme,
+                _settings.InterfaceScale, _settings.AutoCheckUpdates);
         });
+        return applied;
     }
     private async void ImportProfile_Click(object sender, RoutedEventArgs e)
     {

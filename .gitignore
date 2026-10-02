@@ -2,8 +2,30 @@
 **/bin/
 **/obj/
 Source/artifacts/
+artifacts/
+.preview/
 .vs/
 
 # Local editor and OS files
 .DS_Store
 Thumbs.db
+
+# Private profiles, local settings, logs and credentials
+*.yaml
+*.yml
+!Source/MorphocyteRouter/Assets/profile-template.yaml
+**/settings.json
+**/settings.json.*
+**/router.log*
+**/portable.flag
+**/cache.db*
+**/Profiles/
+*.bak
+*.bak-*
+*.corrupt-*
+.env
+.env.*
+*.pem
+*.key
+*.pfx
+*.p12

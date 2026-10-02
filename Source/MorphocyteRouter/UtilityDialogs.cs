@@ -5,6 +5,7 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
+using System.Windows.Media.Animation;
 
 namespace MorphocyteRouter;
 
@@ -66,7 +67,8 @@ internal static class UtilityDialogs
     }
 
     public static SettingsDialogSelection? ShowSettings(MainWindow owner, string configPath, string corePath, string theme,
-        bool coreRunning, double interfaceScale = 1, bool autoCheckUpdates = false)
+        bool coreRunning, double interfaceScale, bool autoCheckUpdates,
+        Func<SettingsDialogSelection, Task<SettingsDialogSelection?>>? onSave)
     {
         var dialog = DialogChrome.CreateWindow(owner, "НАСТРОЙКИ", 660, 650, 590, 500, ResizeMode.CanResize);
         using var lifetime = new CancellationTokenSource();
@@ -77,6 +79,7 @@ internal static class UtilityDialogs
         var selectedTheme = ThemeManager.Normalize(theme);
         var selectedScale = AppSettings.NormalizeScale(interfaceScale);
         SettingsDialogSelection? result = null;
+        var committedTheme = selectedTheme;
 
         var layout = new Grid { Margin = new Thickness(22, 12, 22, 16) };
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -91,17 +94,56 @@ internal static class UtilityDialogs
         var profile = new StackPanel();
         var updates = new StackPanel();
         var pageViews = new[] { Scroll(appearance), Scroll(profile), Scroll(updates) };
-        foreach (var page in pageViews) pages.Children.Add(page);
+        foreach (var body in new[] { appearance, profile, updates })
+            body.Margin = new Thickness(8, 4, 8, 4);
+        foreach (var page in pageViews)
+        {
+            // Keep room for the horizontal transition so its first/last frame stays
+            // inside the settings viewport instead of clipping text or button edges.
+            page.Margin = new Thickness(14, 0, 14, 0);
+            page.Visibility = Visibility.Collapsed;
+            pages.Children.Add(page);
+        }
         var tabs = new List<Button>();
         var names = new[] { "Внешний вид", "VPN-профиль", "Обновления" };
+        var selectedPage = -1;
         void SelectTab(int index)
         {
+            if (index < 0 || index >= pageViews.Length || index == selectedPage) return;
+            var previousPage = selectedPage;
+            selectedPage = index;
             for (var i = 0; i < pageViews.Length; i++)
             {
-                pageViews[i].Visibility = i == index ? Visibility.Visible : Visibility.Collapsed;
                 tabs[i].SetResourceReference(Control.BackgroundProperty, i == index ? "ThemeSurfaceSelected" : "ThemeButton");
                 tabs[i].SetResourceReference(Control.BorderBrushProperty, i == index ? "ThemeAccent" : "ThemeButtonBorder");
             }
+            if (previousPage >= 0)
+            {
+                var previous = pageViews[previousPage];
+                previous.BeginAnimation(UIElement.OpacityProperty, null);
+                previous.Visibility = Visibility.Collapsed;
+                previous.Opacity = 1;
+                previous.RenderTransform = Transform.Identity;
+            }
+
+            var current = pageViews[index];
+            current.Visibility = Visibility.Visible;
+            current.IsHitTestVisible = true;
+            if (previousPage < 0)
+            {
+                current.Opacity = 1;
+                current.RenderTransform = Transform.Identity;
+                return;
+            }
+
+            var slide = new TranslateTransform(index > previousPage ? 14 : -14, 0);
+            current.RenderTransform = slide;
+            current.Opacity = 0;
+            var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
+            current.BeginAnimation(UIElement.OpacityProperty,
+                new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180)) { EasingFunction = easing });
+            slide.BeginAnimation(TranslateTransform.XProperty,
+                new DoubleAnimation(slide.X, 0, TimeSpan.FromMilliseconds(210)) { EasingFunction = easing });
         }
         for (var i = 0; i < names.Length; i++)
         {
@@ -242,14 +284,74 @@ internal static class UtilityDialogs
         cancel.Click += (_, _) => dialog.Close();
         var save = DialogChrome.MakeButton("СОХРАНИТЬ", true);
         save.IsDefault = true;
-        save.Click += (_, _) =>
+        var saveFeedback = new TextBlock
         {
-            result = new SettingsDialogSelection(selectedConfig, selectedCore, selectedTheme, selectedScale, automatic.IsChecked == true, importedProfile);
-            dialog.Close();
+            VerticalAlignment = VerticalAlignment.Center,
+            TextWrapping = TextWrapping.Wrap,
+            Margin = new Thickness(0, 0, 12, 0),
+            FontSize = 11
         };
-        dialog.Content = DialogChrome.BuildFrame(dialog, "НАСТРОЙКИ", layout, Footer(cancel, save));
+        saveFeedback.SetResourceReference(TextBlock.ForegroundProperty, "ThemeMuted");
+        var footer = new Grid();
+        footer.ColumnDefinitions.Add(new ColumnDefinition());
+        footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        footer.Children.Add(saveFeedback);
+        Grid.SetColumn(cancel, 2);
+        Grid.SetColumn(save, 3);
+        footer.Children.Add(cancel);
+        footer.Children.Add(save);
+        save.Click += async (_, _) =>
+        {
+            var selection = new SettingsDialogSelection(selectedConfig, selectedCore, selectedTheme,
+                selectedScale, automatic.IsChecked == true, importedProfile);
+            if (onSave is null)
+            {
+                result = selection;
+                dialog.Close();
+                return;
+            }
+            save.IsEnabled = false;
+            saveFeedback.Text = "Сохраняю…";
+            try
+            {
+                var applied = await onSave(selection);
+                if (lifetime.IsCancellationRequested) return;
+                if (applied is null)
+                {
+                    saveFeedback.Text = "Не удалось сохранить. Проверь журнал событий и попробуй ещё раз.";
+                    return;
+                }
+
+                result = applied;
+                committedTheme = applied.Theme;
+                selectedConfig = applied.ConfigPath;
+                selectedCore = applied.CorePath;
+                selectedTheme = applied.Theme;
+                selectedScale = applied.InterfaceScale;
+                importedProfile = null;
+                themePicker.SelectedItem = selectedTheme;
+                scalePicker.SelectedIndex = Enumerable.Range(0, scaleOptions.Length)
+                    .MinBy(index => Math.Abs(scaleOptions[index] - selectedScale));
+                automatic.IsChecked = applied.AutoCheckUpdates;
+                UiScaleManager.Apply(dialog, (FrameworkElement)dialog.Content, selectedScale);
+                UpdatePath(configValue, selectedConfig);
+                UpdatePath(coreValue, selectedCore);
+                saveFeedback.Text = "Сохранено. Можно продолжать работу с настройками.";
+            }
+            catch (Exception ex)
+            {
+                if (!lifetime.IsCancellationRequested) saveFeedback.Text = "Не удалось сохранить: " + ex.Message;
+            }
+            finally
+            {
+                if (!lifetime.IsCancellationRequested) save.IsEnabled = true;
+            }
+        };
+        dialog.Content = DialogChrome.BuildFrame(dialog, "НАСТРОЙКИ", layout, footer);
         DialogChrome.ShowModal(owner, dialog);
-        if (result is null) ThemeManager.Apply(theme);
+        ThemeManager.Apply(committedTheme);
         return result;
     }
 

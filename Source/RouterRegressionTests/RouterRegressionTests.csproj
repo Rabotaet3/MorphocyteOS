@@ -7,6 +7,7 @@
     <Compile Include="../MorphocyteRouter/AtomicFile.cs" Link="AtomicFile.cs" />
     <Compile Include="../MorphocyteRouter/AppSettings.cs" Link="AppSettings.cs" />
     <Compile Include="../MorphocyteRouter/CoreProcessManager.cs" Link="CoreProcessManager.cs" />
+    <Compile Include="../MorphocyteRouter/ProcessLifetimeJob.cs" Link="ProcessLifetimeJob.cs" />
     <Compile Include="../MorphocyteRouter/BundledResources.cs" Link="BundledResources.cs" />
   </ItemGroup>
 </Project>

@@ -4,6 +4,13 @@ param(
     [switch]$NoRestore
 )
 $ErrorActionPreference = 'Stop'
+$OutputPath = [System.IO.Path]::GetFullPath($OutputPath)
+if (Test-Path -LiteralPath $OutputPath) {
+    if (-not (Test-Path -LiteralPath $OutputPath -PathType Container) -or
+        @(Get-ChildItem -LiteralPath $OutputPath -Force).Count -gt 0) {
+        throw 'Release output must be an empty directory. Use a new directory; no existing files were removed.'
+    }
+}
 Set-Location -LiteralPath $PSScriptRoot
 $coreSource = Join-Path $PSScriptRoot 'Packaging/Engine/mihomo.exe'
 if (-not (Test-Path -LiteralPath $coreSource) -or (Get-FileHash -LiteralPath $coreSource -Algorithm SHA256).Hash -ne '4A2275F385FC11106F7D819C16B510FCCA5E4996B5E902D295BFC78AC29C5530') {
@@ -28,7 +35,7 @@ if (-not $SkipTests) {
     Run-Dotnet -Arguments @('run', '--project', 'UpdateServiceTests/UpdateServiceTests.csproj', '-c', 'Release')
     Run-Dotnet -Arguments @('build', 'FakeMihomo/FakeMihomo.csproj', '-c', 'Release')
     $fakeCorePath = Join-Path $PSScriptRoot 'FakeMihomo/bin/Release/net10.0/FakeMihomo.exe'
-    Run-Dotnet -Arguments @('run', '--project', 'RouterIntegrationTests/RouterIntegrationTests.csproj', '-c', 'Release', '--', $fakeCorePath)
+    Run-Dotnet -Arguments @('run', '--project', 'RouterIntegrationTests/RouterIntegrationTests.csproj', '-c', 'Release', '-p:PublishSingleFile=false', '--', $fakeCorePath)
 }
 
 Run-Dotnet -Arguments @('publish', 'MorphocyteRouter/MorphocyteRouter.csproj', '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '-p:PublishSingleFile=true', '-p:DebugType=None', '-o', $OutputPath)
