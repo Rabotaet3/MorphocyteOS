@@ -313,14 +313,7 @@
                             </Grid.RowDefinitions>
 
                             <StackPanel>
-                                <Grid Margin="0,0,0,4">
-                                    <Grid.ColumnDefinitions>
-                                        <ColumnDefinition Width="*"/>
-                                        <ColumnDefinition Width="Auto"/>
-                                    </Grid.ColumnDefinitions>
-                                    <Image Grid.Column="1" Source="Assets/morphocyte-icon.png" Width="52" Height="52" Opacity="0.9" Margin="0,-10,-5,-8"/>
-                                </Grid>
-                                <StackPanel Orientation="Horizontal" Margin="0,13,0,5">
+                                <StackPanel Orientation="Horizontal" Margin="0,2,0,5">
                                     <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="{DynamicResource ThemeStatusNeutral}" Margin="0,0,10,0">
                                         <Ellipse.Effect>
                                             <DropShadowEffect Color="{DynamicResource ThemeAccentGlowColor}" BlurRadius="9" ShadowDepth="0" Opacity="0.7"/>
@@ -371,17 +364,21 @@
                         </Grid.RowDefinitions>
 
                         <Grid Margin="4,8,4,15">
+                            <Grid.RowDefinitions>
+                                <RowDefinition Height="Auto"/>
+                                <RowDefinition Height="Auto"/>
+                            </Grid.RowDefinitions>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <StackPanel>
                                 <TextBlock Text="МАРШРУТЫ" Foreground="{DynamicResource ThemeText}" FontSize="31" FontWeight="Light"/>
-                                <TextBlock Text="Направляй сайты и приложения через VPN, напрямую или в блокировку" Foreground="{DynamicResource ThemeMuted}" FontSize="13" Margin="0,4,12,0" TextWrapping="Wrap"/>
                             </StackPanel>
                             <Border Grid.Column="1" Background="{DynamicResource ThemeTagBackground}" BorderBrush="{DynamicResource ThemeTagBorder}" BorderThickness="1" CornerRadius="16" Padding="13,6" VerticalAlignment="Center">
                                 <TextBlock x:Name="CountText" Text="0 ПРАВИЛ" Foreground="{DynamicResource ThemeAccent}" FontSize="11" FontWeight="Bold"/>
                             </Border>
+                            <Button x:Name="DownloadUpdateButton" Grid.Row="1" Grid.ColumnSpan="2" Style="{StaticResource PrimaryButton}" Visibility="Collapsed" Margin="0,8,0,0" Height="39" Click="DownloadUpdate_Click"/>
                         </Grid>
 
                         <Border Grid.Row="1" Background="{DynamicResource ThemePanelGradient}" BorderBrush="{DynamicResource ThemePanelBorder}" BorderThickness="1" CornerRadius="15" Padding="16">

@@ -11,11 +11,11 @@ internal static class RunningProcessDialog
 {
     private sealed record RunningApp(string Executable, string Title, int Id);
 
-    public static Task<string?> ShowAsync(Window owner)
+    public static Task<IReadOnlyList<string>> ShowAsync(Window owner)
     {
         var apps = GetVisibleApps();
-        var completion = new TaskCompletionSource<string?>(TaskCreationOptions.RunContinuationsAsynchronously);
-        string? selected = null;
+        var completion = new TaskCompletionSource<IReadOnlyList<string>>(TaskCreationOptions.RunContinuationsAsynchronously);
+        IReadOnlyList<string> selected = Array.Empty<string>();
         var dialog = DialogChrome.CreateWindow(owner, "Запущенные приложения", 650, 570, 560, 440);
 
         var search = new TextBox
@@ -35,7 +35,7 @@ internal static class RunningProcessDialog
             ItemsSource = apps,
             BorderThickness = new Thickness(1),
             Margin = new Thickness(0, 0, 0, 12),
-            SelectionMode = SelectionMode.Single
+            SelectionMode = SelectionMode.Extended
         };
         list.SetResourceReference(Control.BackgroundProperty, "ThemeRuleListBackground");
         list.SetResourceReference(Control.ForegroundProperty, "ThemeText");
@@ -123,8 +123,10 @@ internal static class RunningProcessDialog
         cancel.Margin = new Thickness(0, 0, 8, 0);
         void Accept()
         {
-            if (list.SelectedItem is not RunningApp app) return;
-            selected = app.Executable;
+            var names = list.SelectedItems.OfType<RunningApp>().Select(app => app.Executable)
+                .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+            if (names.Length == 0) return;
+            selected = names;
             dialog.Close();
         }
         cancel.Click += (_, _) => dialog.Close();
@@ -132,10 +134,10 @@ internal static class RunningProcessDialog
         list.MouseDoubleClick += (_, _) => Accept();
         chooseFile.Click += (_, _) =>
         {
-            var picker = new OpenFileDialog { Title = "Выбрать приложение", Filter = "Исполняемые файлы (*.exe)|*.exe|Все файлы (*.*)|*.*", CheckFileExists = true };
+            var picker = new OpenFileDialog { Title = "Выбрать приложения", Filter = "Исполняемые файлы (*.exe)|*.exe", CheckFileExists = true, Multiselect = true };
             if (picker.ShowDialog(dialog) == true)
             {
-                selected = Path.GetFileName(picker.FileName);
+                selected = picker.FileNames.Select(Path.GetFileName).OfType<string>().Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
                 dialog.Close();
             }
             else if (dialog.IsVisible)
@@ -180,7 +182,8 @@ internal static class RunningProcessDialog
         body.Children.Add(search);
         body.Children.Add(listPanel);
 
-        dialog.Content = DialogChrome.BuildFrame(dialog, "ВЫБОР ЗАПУЩЕННОГО ПРИЛОЖЕНИЯ", body, footer);
+        list.ToolTip = "Ctrl + клик — несколько приложений; Shift + клик — диапазон";
+        dialog.Content = DialogChrome.BuildFrame(dialog, "ВЫБОР ЗАПУЩЕННЫХ ПРИЛОЖЕНИЙ", body, footer);
         dialog.Loaded += (_, _) => search.Focus();
         dialog.Closed += (_, _) => completion.TrySetResult(selected);
         DialogChrome.ShowModal(owner, dialog);

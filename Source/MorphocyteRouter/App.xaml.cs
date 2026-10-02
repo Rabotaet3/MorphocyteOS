@@ -6,8 +6,18 @@ public partial class App : Application
 {
     private Mutex? _singleInstance;
     private bool _ownsMutex;
-    protected override void OnStartup(StartupEventArgs e)
+    protected override async void OnStartup(StartupEventArgs e)
     {
+        if (e.Args.Length == 2 && e.Args[0] == "--apply-update")
+        {
+            StartupUri = null;
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            int code;
+            try { code = await UpdateInstaller.RunAsync(e.Args[1]); }
+            catch { code = 2; }
+            Shutdown(code);
+            return;
+        }
         _singleInstance = new Mutex(true, "Local\\MorphocyteOS.Router.SingleInstance", out _ownsMutex);
         if (!_ownsMutex)
         {

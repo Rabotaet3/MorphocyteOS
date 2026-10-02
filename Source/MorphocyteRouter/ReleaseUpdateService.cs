@@ -7,8 +7,9 @@ using System.Text.RegularExpressions;
 
 namespace MorphocyteRouter;
 
+internal record UpdateAsset(string Name, string Url, string Sha256, long Size);
 internal record UpdateCheckResult(bool IsConfigured, bool UpdateAvailable, string Message,
-    string? ReleaseUrl = null, string? LatestVersion = null);
+    string? ReleaseUrl = null, string? LatestVersion = null, UpdateAsset? Asset = null, string? Repository = null);
 
 /// <summary>Checks configured public GitHub releases. Never downloads or executes binaries.</summary>
 internal static class ReleaseUpdateService
@@ -82,7 +83,13 @@ internal static class ReleaseUpdateService
 
             var version = tag!.TrimStart('v', 'V');
             if (latest.CompareTo(current) > 0)
-                return new(true, true, $"Доступна версия {version}. Открой страницу релиза, чтобы скачать обновление.", releaseUrl, version);
+            {
+                var asset = FindAsset(root, repository!, tag!, version);
+                return new(true, true, asset is null
+                    ? $"Доступна версия {version}, но проверенный архив для Windows x64 пока недоступен."
+                    : $"Доступна версия {version}. Нажми «Загрузить актуальную версию», чтобы подготовить обновление.",
+                    releaseUrl, version, asset, repository);
+            }
             return new(true, false, $"Установлена актуальная сборка ({currentVersion}). Последний стабильный релиз: {version}.", releaseUrl, version);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
@@ -102,6 +109,26 @@ internal static class ReleaseUpdateService
 
     private static UpdateCheckResult InvalidResponse() => new(true, false,
         "Сервис вернул непонятные данные о релизе. Проверить версию пока не удалось.");
+
+    private static UpdateAsset? FindAsset(JsonElement root, string repository, string tag, string version)
+    {
+        if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array) return null;
+        var expected = $"MorphocyteOS-{version}-win-x64.zip";
+        UpdateAsset? found = null;
+        foreach (var item in assets.EnumerateArray())
+        {
+            if (item.ValueKind != JsonValueKind.Object || !TryGetString(item, "name", out var name) || name != expected) continue;
+            if (found is not null || !TryGetString(item, "browser_download_url", out var url) ||
+                !Uri.TryCreate(url, UriKind.Absolute, out var uri) || uri.Scheme != "https" || uri.Host != "github.com" ||
+                !uri.IsDefaultPort || uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0 ||
+                uri.AbsolutePath != $"/{repository}/releases/download/{Uri.EscapeDataString(tag)}/{Uri.EscapeDataString(expected)}" ||
+                !TryGetString(item, "digest", out var digest) || !Regex.IsMatch(digest!, @"\Asha256:[a-fA-F0-9]{64}\z") ||
+                !item.TryGetProperty("size", out var size) || size.ValueKind != JsonValueKind.Number || !size.TryGetInt64(out var bytes) || bytes <= 0 || bytes > 512L * 1024 * 1024)
+                return null;
+            found = new UpdateAsset(expected, url!, digest![7..].ToLowerInvariant(), bytes);
+        }
+        return found;
+    }
 
     private static (string? Repository, string Message) ReadSource()
     {

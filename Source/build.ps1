@@ -33,6 +33,7 @@ function Run-Dotnet {
 if (-not $SkipTests) {
     Run-Dotnet -Arguments @('run', '--project', 'RouterRegressionTests/RouterRegressionTests.csproj', '-c', 'Release')
     Run-Dotnet -Arguments @('run', '--project', 'UpdateServiceTests/UpdateServiceTests.csproj', '-c', 'Release')
+    Run-Dotnet -Arguments @('run', '--project', 'UpdaterTests/UpdaterTests.csproj', '-c', 'Release')
     Run-Dotnet -Arguments @('build', 'FakeMihomo/FakeMihomo.csproj', '-c', 'Release')
     $fakeCorePath = Join-Path $PSScriptRoot 'FakeMihomo/bin/Release/net10.0/FakeMihomo.exe'
     Run-Dotnet -Arguments @('run', '--project', 'RouterIntegrationTests/RouterIntegrationTests.csproj', '-c', 'Release', '-p:PublishSingleFile=false', '--', $fakeCorePath)
@@ -51,4 +52,14 @@ foreach ($name in @('Licenses', 'ThirdPartySource')) {
     New-Item -ItemType Directory -Force -Path $destination | Out-Null
     Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot "Packaging/$name") | Copy-Item -Destination $destination -Recurse -Force
 }
+[xml]$project = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'MorphocyteRouter/MorphocyteRouter.csproj') -Raw
+$manifestFiles = @(Get-ChildItem -LiteralPath $OutputPath -Recurse -File | Sort-Object FullName | ForEach-Object {
+    [ordered]@{
+        Path = $_.FullName.Substring($OutputPath.Length + 1).Replace('\', '/')
+        Size = $_.Length
+        Sha256 = (Get-FileHash -LiteralPath $_.FullName -Algorithm SHA256).Hash.ToLowerInvariant()
+    }
+})
+$manifest = [ordered]@{ SchemaVersion = 1; Version = [string]$project.Project.PropertyGroup.Version; Files = $manifestFiles }
+[System.IO.File]::WriteAllText((Join-Path $OutputPath 'release-manifest.json'), ($manifest | ConvertTo-Json -Depth 5), [System.Text.UTF8Encoding]::new($false))
 Write-Host "Built: $OutputPath"

@@ -19,6 +19,7 @@ internal partial class Program
     {
         var settingsPath = Path.Combine(scratch, "interaction-settings.json");
         var settings = AppSettings.Load(settingsPath);
+        settings.AutoCheckUpdates = false;
         settings.CorePath = Path.GetFullPath(fakeExe);
         settings.ShowEventLog = true;
         var configPath = Path.Combine(scratch, "interaction.yaml");
@@ -108,7 +109,7 @@ internal partial class Program
                         updatesTab.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                         dialog.UpdateLayout();
                         Check(Descendants<CheckBox>(dialog).Single().IsVisible
-                            && Descendants<Button>(dialog).Single(button => Equals(button.Content, "Проверить актуальный релиз")).IsVisible,
+                            && Descendants<Button>(dialog).Single(button => Equals(button.Content, "Проверить обновления")).IsVisible,
                             "settings expose automatic and manual release checks");
                         Check(Descendants<ScrollViewer>(dialog).Any(page => page.Visibility == Visibility.Visible
                             && page.RenderTransform is TranslateTransform), "switching settings pages keeps its slide transition within an inset page viewport");

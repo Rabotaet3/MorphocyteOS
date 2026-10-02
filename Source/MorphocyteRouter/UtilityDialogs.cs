@@ -207,7 +207,7 @@ internal static class UtilityDialogs
             configValue.ToolTip = null;
         };
         importActions.Children.Add(importProfile); importActions.Children.Add(template); profile.Children.Add(importActions);
-        profile.Children.Add(PathSection("ЯДРО MIHOMO", coreValue, "Выбрать ядро", () =>
+        profile.Children.Add(PathSection("Установленное ядро:", coreValue, "Выбрать ядро", () =>
         {
             var picker = new OpenFileDialog { Filter = "Приложение Windows (*.exe)|*.exe", CheckFileExists = true };
             if (File.Exists(selectedCore)) picker.InitialDirectory = Path.GetDirectoryName(selectedCore);
@@ -238,33 +238,39 @@ internal static class UtilityDialogs
         var autoCaption = new TextBlock { Text = "Проверять автоматически при запуске", FontSize = 13, VerticalAlignment = VerticalAlignment.Center };
         autoCaption.SetResourceReference(TextBlock.ForegroundProperty, "ThemeText");
         autoRow.Children.Add(autoCaption);
-        updates.Children.Add(Card("АВТООБНОВЛЕНИЕ", "При появлении новой версии предложит открыть страницу загрузки. Установка и перезапуск происходят по твоему решению.", autoRow));
+        updates.Children.Add(Card("АВТООБНОВЛЕНИЕ", "При запуске проверяет новые версии. Кнопка загрузки появляется только при наличии обновления. Архив загружается прямо с GitHub и проверяется. Установка выполняется после подтверждения перезапуска: VPN остановится, личные профили и настройки сохранятся.", autoRow));
         var status = new TextBlock { Text = ReleaseUpdateService.SourceStatus, Foreground = Muted, FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 12) };
         status.SetResourceReference(TextBlock.ForegroundProperty, "ThemeMuted");
-        var check = DialogChrome.MakeButton("Проверить актуальный релиз", true);
-        check.MinWidth = 240;
-        var open = DialogChrome.MakeButton("Открыть страницу релиза", false);
-        open.Visibility = Visibility.Collapsed;
-        open.Margin = new Thickness(0, 9, 0, 0);
-        string? releaseUrl = null;
-        open.Click += (_, _) =>
+        var check = DialogChrome.MakeButton("Проверить обновления", false);
+        check.HorizontalAlignment = HorizontalAlignment.Left;
+        var download = DialogChrome.MakeButton("Загрузить актуальную версию", true);
+        download.Visibility = Visibility.Collapsed;
+        download.Margin = new Thickness(0, 9, 0, 0);
+        void RefreshUpdate(UpdateCheckResult? found)
         {
-            if (releaseUrl is null) return;
-            try { Process.Start(new ProcessStartInfo(releaseUrl) { UseShellExecute = true }); }
-            catch (Exception ex) { status.Text = "Не удалось открыть страницу: " + ex.Message; }
+            download.Visibility = found is { UpdateAvailable: true, Asset: not null } ? Visibility.Visible : Visibility.Collapsed;
+            download.Content = "Загрузить актуальную версию: " + found?.LatestVersion;
+            if (found is not null) status.Text = found.Message;
+        }
+        RefreshUpdate(owner.AvailableUpdate);
+        owner.UpdateStateChanged += RefreshUpdate;
+        dialog.Closed += (_, _) => owner.UpdateStateChanged -= RefreshUpdate;
+        download.Click += async (_, _) =>
+        {
+            download.IsEnabled = false; check.IsEnabled = false;
+            try { await owner.InstallAvailableUpdateAsync(dialog); }
+            finally { if (!lifetime.IsCancellationRequested) { download.IsEnabled = true; check.IsEnabled = true; } }
         };
         check.Click += async (_, _) =>
         {
             check.IsEnabled = false;
             status.Text = "Проверяю релиз…";
-            open.Visibility = Visibility.Collapsed;
             try
             {
-                var found = await ReleaseUpdateService.CheckAsync(lifetime.Token);
+                var found = await owner.CheckUpdatesAsync(lifetime.Token);
                 if (lifetime.IsCancellationRequested) return;
                 status.Text = found.Message;
-                releaseUrl = found.ReleaseUrl;
-                open.Visibility = found.UpdateAvailable && releaseUrl is not null ? Visibility.Visible : Visibility.Collapsed;
+                RefreshUpdate(found);
             }
             catch (OperationCanceledException) { }
             catch (Exception ex) { if (!lifetime.IsCancellationRequested) status.Text = "Проверка не выполнена: " + ex.Message; }
@@ -276,7 +282,7 @@ internal static class UtilityDialogs
         updateBody.Children.Add(versionText);
         updateBody.Children.Add(status);
         updateBody.Children.Add(check);
-        updateBody.Children.Add(open);
+        updateBody.Children.Add(download);
         updates.Children.Add(Card("РЕЛИЗ", null, updateBody));
 
         var cancel = DialogChrome.MakeButton("ОТМЕНА", false);

@@ -97,6 +97,24 @@ for (var index = 0; index < order.Length - 1; index++)
 }
 Check(!ReleaseUpdateService.SemanticVersion.TryParse("1.0.0-rc.01", out _), "Numeric prerelease leading zero rejected");
 Check(!ReleaseUpdateService.SemanticVersion.TryParse("01.0.0", out _), "Core leading zero rejected");
+HttpResponseMessage AssetRelease(string assetUrl = "https://github.com/sample-org/sample-app/releases/download/v1.1.0/MorphocyteOS-1.1.0-win-x64.zip",
+    string? digest = null, object? size = null, bool duplicate = false)
+{
+    var asset = new { name = "MorphocyteOS-1.1.0-win-x64.zip", browser_download_url = assetUrl, digest = digest ?? "sha256:" + new string('a', 64), size = size ?? 1024 };
+    return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new
+    {
+        tag_name = "v1.1.0", draft = false, prerelease = false,
+        html_url = "https://github.com/sample-org/sample-app/releases/tag/v1.1.0", assets = duplicate ? new[] { asset, asset } : new[] { asset }
+    })) };
+}
+Check((await MockCheck(AssetRelease())).Asset is { Size: 1024, Sha256.Length: 64 }, "Version-matched official asset with GitHub digest accepted");
+Check((await MockCheck(AssetRelease(assetUrl: "https://attacker.example/update.zip"))).Asset is null, "Untrusted download host rejected");
+Check((await MockCheck(AssetRelease(assetUrl: "https://github.com/other/repo/releases/download/v1.1.0/MorphocyteOS-1.1.0-win-x64.zip"))).Asset is null, "Different repository download rejected");
+Check((await MockCheck(AssetRelease(digest: "sha256:bad"))).Asset is null, "Malformed asset digest rejected");
+Check((await MockCheck(AssetRelease(size: "1024"))).Asset is null, "Wrong JSON size type rejected without crashing");
+Check((await MockCheck(AssetRelease(size: 0))).Asset is null, "Empty asset rejected");
+Check((await MockCheck(AssetRelease(size: 536870913))).Asset is null, "Oversized asset rejected");
+Check((await MockCheck(AssetRelease(duplicate: true))).Asset is null, "Ambiguous duplicate assets rejected");
 Console.WriteLine($"Passed {checks} update-service checks. No external network requests.");
 
 sealed class StubHandler : HttpMessageHandler

@@ -23,7 +23,7 @@ public sealed class AppSettings
     public string PreferredRoute { get; set; } = "";
     public string Theme { get; set; } = "Тёмная морфоцитная";
     public double InterfaceScale { get; set; } = 1;
-    public bool AutoCheckUpdates { get; set; }
+    public bool AutoCheckUpdates { get; set; } = true;
     public bool ShowEventLog { get; set; }
     // Legacy fields migrate 1.5.x drafts on load.
     public bool HasRuleDraft { get; set; }

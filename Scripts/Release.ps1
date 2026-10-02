@@ -24,7 +24,7 @@ $package = Join-Path $output $appName
 & (Join-Path $source 'build.ps1') -OutputPath $package -SkipTests:$SkipTests -NoRestore:$NoRestore
 
 # Reject unexpected files rather than silently packaging a user's working directory.
-$rootFiles = @('MorphocyteOS.exe', 'mihomo.exe', 'release-source.json', 'README.md', 'LICENSE.txt', 'THIRD-PARTY-NOTICES.md')
+$rootFiles = @('MorphocyteOS.exe', 'mihomo.exe', 'release-source.json', 'release-manifest.json', 'README.md', 'LICENSE.txt', 'THIRD-PARTY-NOTICES.md')
 $packageFiles = @(Get-ChildItem -LiteralPath $package -Recurse -File -Force)
 foreach ($file in $packageFiles) {
     $relative = $file.FullName.Substring($package.Length + 1).Replace('\', '/')
@@ -52,7 +52,7 @@ New-Item -ItemType Directory -Path $sourceStage -Force | Out-Null
 $rootSourceFiles = @('.gitignore', 'LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.md', 'BUILDING.md', 'RELEASE-NOTES.md')
 foreach ($name in $rootSourceFiles) { Copy-Item -LiteralPath (Join-Path $repo $name) -Destination (Join-Path $sourceStage $name) }
 $sourceDirectories = @('Source/MorphocyteRouter', 'Source/RouterRegressionTests', 'Source/RouterIntegrationTests',
-    'Source/UpdateServiceTests', 'Source/FakeMihomo', 'Source/Packaging')
+    'Source/UpdateServiceTests', 'Source/UpdaterTests', 'Source/FakeMihomo', 'Source/Packaging')
 foreach ($directory in $sourceDirectories) {
     foreach ($file in Get-ChildItem -LiteralPath (Join-Path $repo $directory) -Recurse -File -Force) {
         $relative = $file.FullName.Substring($repo.Length + 1).Replace('\', '/')
@@ -60,7 +60,7 @@ foreach ($directory in $sourceDirectories) {
         $allowedSource = $relative -match '^Source/MorphocyteRouter/[^/]+\.(cs|xaml|csproj)$' -or
             $relative -in @('Source/MorphocyteRouter/app.manifest', 'Source/MorphocyteRouter/Assets/profile-template.yaml',
                 'Source/MorphocyteRouter/Assets/morphocyte.ico', 'Source/MorphocyteRouter/Assets/morphocyte-icon.png') -or
-            $relative -match '^Source/(RouterRegressionTests|RouterIntegrationTests|UpdateServiceTests|FakeMihomo)/[^/]+\.(cs|csproj)$' -or
+            $relative -match '^Source/(RouterRegressionTests|RouterIntegrationTests|UpdateServiceTests|UpdaterTests|FakeMihomo)/[^/]+\.(cs|csproj)$' -or
             $relative -match '^Source/Packaging/Licenses/' -or
             $relative -in @('Source/Packaging/Engine/mihomo.exe', 'Source/Packaging/LICENSE.txt',
                 'Source/Packaging/THIRD-PARTY-NOTICES.md', 'Source/Packaging/ThirdPartySource/Build-Mihomo.ps1',
@@ -81,9 +81,25 @@ foreach ($name in @('Source/build.ps1', 'Source/global.json', 'Source/release-so
 
 $appZip = Join-Path $output "$appName.zip"
 $sourceZip = Join-Path $output "MorphocyteOS-$version-source.zip"
-Compress-Archive -LiteralPath $package -DestinationPath $appZip -CompressionLevel Optimal
-Compress-Archive -LiteralPath $sourceStage -DestinationPath $sourceZip -CompressionLevel Optimal
+Add-Type -AssemblyName System.IO.Compression
 Add-Type -AssemblyName System.IO.Compression.FileSystem
+function New-ReleaseArchive {
+    param([string]$Directory, [string]$Destination)
+    $archiveRoot = [System.IO.Path]::GetFullPath($Directory).TrimEnd('\')
+    $prefix = [System.IO.Path]::GetFileName($archiveRoot) + '/'
+    $zip = [System.IO.Compression.ZipFile]::Open($Destination, [System.IO.Compression.ZipArchiveMode]::Create)
+    try {
+        foreach ($file in Get-ChildItem -LiteralPath $archiveRoot -Recurse -File -Force | Sort-Object FullName) {
+            $relative = $file.FullName.Substring($archiveRoot.Length + 1).Replace('\', '/')
+            # Explicit slash paths work in both Windows PowerShell 5 and PowerShell 7.
+            # Compress-Archive in older Windows versions writes backslash entries.
+            [System.IO.Compression.ZipFileExtensions]::CreateEntryFromFile($zip, $file.FullName, ($prefix + $relative), [System.IO.Compression.CompressionLevel]::Optimal) | Out-Null
+        }
+    }
+    finally { $zip.Dispose() }
+}
+New-ReleaseArchive -Directory $package -Destination $appZip
+New-ReleaseArchive -Directory $sourceStage -Destination $sourceZip
 $archive = [System.IO.Compression.ZipFile]::OpenRead($sourceZip)
 try {
     foreach ($name in @('LICENSE', 'BUILDING.md', 'Source/MorphocyteRouter/MorphocyteRouter.csproj',

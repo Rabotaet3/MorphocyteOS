@@ -13,6 +13,8 @@ internal partial class Program
     {
         var settingsPath = Path.Combine(scratch, "first-launch-settings.json");
         var settings = AppSettings.Load(settingsPath);
+        if (!settings.AutoCheckUpdates) throw new Exception("Fresh installations must enable the startup update check.");
+        settings.AutoCheckUpdates = false; // Keep this UI test offline; networking has an injected test suite.
         var window = new MainWindow(settings, Path.Combine(scratch, "first-launch.log"))
             { Width = 1120, Height = 760, ShowInTaskbar = false };
         object Field(string name) => typeof(MainWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;

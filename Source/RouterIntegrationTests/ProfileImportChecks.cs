@@ -98,6 +98,7 @@ internal partial class Program
             Check(File.Exists(path), "actual bundled Mihomo validates imported " + item.Description + " without starting VPN");
         }
         var settings = AppSettings.Load(Path.Combine(scratch, "import-ui", "settings.json"));
+        settings.AutoCheckUpdates = false;
         settings.CorePath = fakeExe;
         var window = new MainWindow(settings, Path.Combine(scratch, "import-ui.log")) { ShowInTaskbar = false };
         try

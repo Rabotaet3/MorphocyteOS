@@ -111,6 +111,8 @@ public partial class MainWindow : Window
             });
             if (_settings.RecoveryMessage is { } message) SetLog(message);
             UpdateControls();
+            await ReadUpdateResultAsync();
+            _ = CleanCompletedUpdateCachesAsync();
             if (_settings.AutoCheckUpdates) await CheckForUpdatesOnStartupAsync();
         };
         Closing += MainWindow_Closing;
@@ -131,18 +133,11 @@ public partial class MainWindow : Window
     private async Task CheckForUpdatesOnStartupAsync()
     {
         UpdateCheckResult result;
-        try { result = await ReleaseUpdateService.CheckAsync(_lifetime.Token); }
+        try { result = await CheckUpdatesAsync(_lifetime.Token); }
         catch (OperationCanceledException) when (_closing) { return; }
         catch (Exception ex) { SetLog("Проверка обновлений не выполнена: " + ex.Message); return; }
         if (_closing) return;
         SetLog(result.Message);
-        if (!result.UpdateAvailable || result.ReleaseUrl is null || OwnedWindows.Cast<Window>().Any(window => window.IsVisible)) return;
-        if (UtilityDialogs.ShowConfirm(this, "ДОСТУПНО ОБНОВЛЕНИЕ", result.Message,
-            "ОТКРЫТЬ РЕЛИЗ", "ПОЗЖЕ"))
-        {
-            try { Process.Start(new ProcessStartInfo(result.ReleaseUrl) { UseShellExecute = true }); }
-            catch (Exception ex) { SetLog("Не удалось открыть страницу релиза: " + ex.Message); }
-        }
     }
 
     internal void SetDialogBackdrop(bool visible)
@@ -226,6 +221,7 @@ public partial class MainWindow : Window
         var ready = _document is { HasVpnConnection: true } && File.Exists(_settings.ConfigPath) && File.Exists(_settings.CorePath);
         PowerButton.IsEnabled = !_busy && !_closing && (ready || _core.HasTrackedProcess);
         AddRuleButton.IsEnabled = _document is not null && !_busy && !_closing;
+        DownloadUpdateButton.IsEnabled = !_busy && !_closing;
         EmptyRulesMessage.Opacity = 1;
         LogVisibilityToggle.IsEnabled = !_busy && !_closing;
         PowerButton.Content = _core.HasTrackedProcess ? "ОСТАНОВИТЬ VPN" : "ЗАПУСТИТЬ VPN";
@@ -1020,23 +1016,37 @@ public partial class MainWindow : Window
         _settings.CorePath = dialog.FileName;
         await SaveSettingsAsync();
     });
-    private void ChooseProcess_Click(object sender, RoutedEventArgs e)
+    private async void ChooseProcess_Click(object sender, RoutedEventArgs e)
     {
         if (_busy || _closing) return;
-        var dialog = new OpenFileDialog { Filter = "Приложение Windows (*.exe)|*.exe", CheckFileExists = true };
+        var dialog = new OpenFileDialog { Filter = "Приложения Windows (*.exe)|*.exe", CheckFileExists = true, Multiselect = true };
         if (dialog.ShowDialog(this) != true) return;
-        DomainInput.Text = Path.GetFileName(dialog.FileName);
-        RuleKindCombo.SelectedIndex = 3;
-        DomainInput.Focus();
+        await RunExclusiveAsync(() => AddApplicationsAsync(dialog.FileNames.Select(Path.GetFileName).OfType<string>()));
     }
     private async void ChooseRunningProcess_Click(object sender, RoutedEventArgs e)
     {
         if (_busy || _closing) return;
-        var processName = await RunningProcessDialog.ShowAsync(this);
-        if (string.IsNullOrWhiteSpace(processName)) return;
-        DomainInput.Text = processName;
+        var processNames = await RunningProcessDialog.ShowAsync(this);
+        if (processNames.Count == 0) return;
+        await RunExclusiveAsync(() => AddApplicationsAsync(processNames));
+    }
+    private async Task AddApplicationsAsync(IEnumerable<string> processNames)
+    {
+        if (_document is null || RouteCombo.SelectedItem is not string route)
+            throw new InvalidOperationException("Сначала выбери профиль и маршрут.");
+        var names = processNames.Select(name => ClashConfigDocument.NormalizeDomain(name, "PROCESS-NAME"))
+            .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var added = names.Where(name => !_rules.Any(rule => rule.Kind == "PROCESS-NAME" &&
+            rule.Value.Equals(name, StringComparison.OrdinalIgnoreCase)))
+            .Select(name => new DomainRule { Kind = "PROCESS-NAME", Value = name, Route = route }).ToArray();
+        foreach (var rule in added) _rules.Add(rule);
+        if (added.Length == 0) { SetLog("Выбранные приложения уже есть в правилах."); return; }
+        _lastDeleted = null;
+        await RecordEditAsync();
         RuleKindCombo.SelectedIndex = 3;
-        DomainInput.Focus();
+        DomainInput.Clear();
+        RestoreRuleSelection(added);
+        SetLog($"Добавлено приложений: {added.Length}. Для применения нажми «ПРИМЕНИТЬ В YAML».");
     }
     private void TitleBar_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
     {

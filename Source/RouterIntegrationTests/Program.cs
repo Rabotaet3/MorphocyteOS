@@ -38,6 +38,7 @@ internal partial class Program
         File.WriteAllText(config, initial);
         var settingsPath = Path.Combine(scratch, "settings.json");
         var settings = AppSettings.Load(settingsPath);
+        settings.AutoCheckUpdates = false;
         settings.ConfigPath = config;
         settings.CorePath = Path.GetFullPath(fakeExe);
         settings.ShowEventLog = true;
@@ -59,6 +60,7 @@ internal partial class Program
             passed += await RunFreshLaunchChecks(scratch);
             passed += await RunProfileImportChecks(scratch, fakeExe);
             passed += await RunRuleInteractionChecks(scratch, fakeExe);
+            passed += await RunProcessAndUpdateChecks(scratch, fakeExe);
             var workspace = (FrameworkElement)Field("Workspace");
             var busyField = typeof(MainWindow).GetField("_busy", BindingFlags.Instance | BindingFlags.NonPublic)!;
             busyField.SetValue(window, true);
@@ -84,7 +86,7 @@ internal partial class Program
                 pickerWindow.Close();
             };
             pickerTimer.Start();
-            var pickerTask = (Task<string?>)showPicker.Invoke(null, new object[] { pickerOwner })!;
+            var pickerTask = (Task<IReadOnlyList<string>>)showPicker.Invoke(null, new object[] { pickerOwner })!;
             await pickerTask;
             var ownerReturned = pickerOwner.IsVisible && pickerOwner.WindowState != WindowState.Minimized;
             pickerOwner.Close();

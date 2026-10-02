@@ -4,6 +4,7 @@
 Source/artifacts/
 artifacts/
 .preview/
+.update-cache/
 .vs/
 
 # Local editor and OS files
