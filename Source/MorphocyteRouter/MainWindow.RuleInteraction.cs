@@ -37,7 +37,7 @@ public partial class MainWindow
     {
         if (_busy || _closing) return;
         var source = e.OriginalSource as DependencyObject;
-        if (FindAncestor<CheckBox>(source) is not null || FindAncestor<Button>(source) is not null)
+        if (FindAncestor<CheckBox>(source) is not null || FindAncestor<Button>(source) is not null || FindAncestor<ComboBox>(source) is not null)
         {
             _dragRule = null;
             _dragSourceElement = null;
@@ -77,9 +77,6 @@ public partial class MainWindow
         _dragAnchor = e.GetPosition(item);
         e.Handled = true;
     }
-
-    private void SelectRuleForPointer(DomainRule rule, bool control) =>
-        SelectRuleForPointer(rule, control ? ModifierKeys.Control : ModifierKeys.None);
 
     private void SelectRuleForPointer(DomainRule rule, ModifierKeys modifiers)
     {

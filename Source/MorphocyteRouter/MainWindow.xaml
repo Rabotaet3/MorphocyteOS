@@ -18,27 +18,6 @@
             <Setter Property="Padding" Value="9,6"/>
             <Setter Property="FontSize" Value="11"/>
         </Style>
-        <Style x:Key="LogSwitch" TargetType="ToggleButton">
-            <Setter Property="Width" Value="36"/><Setter Property="Height" Value="20"/>
-            <Setter Property="Cursor" Value="Hand"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
-            <Setter Property="Template"><Setter.Value>
-                <ControlTemplate TargetType="ToggleButton">
-                    <Border x:Name="Track" Background="{DynamicResource ThemeSurface}" BorderBrush="{DynamicResource ThemeButtonBorder}" BorderThickness="1" CornerRadius="10" Padding="2">
-                        <Ellipse x:Name="Knob" Width="14" Height="14" Fill="{DynamicResource ThemeMuted}" HorizontalAlignment="Left"/>
-                    </Border>
-                    <ControlTemplate.Triggers>
-                        <Trigger Property="IsChecked" Value="True">
-                            <Setter TargetName="Track" Property="Background" Value="{DynamicResource ThemeSurfaceSelected}"/>
-                            <Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
-                            <Setter TargetName="Knob" Property="Fill" Value="{DynamicResource ThemeAccent}"/>
-                            <Setter TargetName="Knob" Property="HorizontalAlignment" Value="Right"/>
-                        </Trigger>
-                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="Track" Property="BorderBrush" Value="{DynamicResource ThemeAccentSoft}"/></Trigger>
-                        <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Track" Property="Opacity" Value="0.5"/></Trigger>
-                    </ControlTemplate.Triggers>
-                </ControlTemplate>
-            </Setter.Value></Setter>
-        </Style>
         <Style x:Key="FolderArrowButton" TargetType="Button">
             <Setter Property="Width" Value="32"/><Setter Property="Height" Value="32"/>
             <Setter Property="Foreground" Value="{DynamicResource ThemeAccent}"/><Setter Property="Background" Value="{DynamicResource ThemeExpanderBackground}"/>
@@ -48,8 +27,7 @@
             <Setter Property="Template"><Setter.Value>
                 <ControlTemplate TargetType="Button">
                         <Border x:Name="ArrowSurface" Margin="3" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
-                            BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7" RenderTransformOrigin="0.5,0.5">
-                        <Border.RenderTransform><ScaleTransform/></Border.RenderTransform>
+                            BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7">
                         <Path x:Name="ArrowGlyph" Width="8" Height="8" Stroke="{TemplateBinding Foreground}" StrokeThickness="2"
                               StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"
                               Data="M 1,1 L 5,4 L 1,7" HorizontalAlignment="Center" VerticalAlignment="Center"/>
@@ -61,14 +39,6 @@
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="ArrowSurface" Property="Background" Value="{DynamicResource ThemeComboHover}"/>
                             <Setter TargetName="ArrowSurface" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
-                            <Trigger.EnterActions><BeginStoryboard><Storyboard>
-                                <DoubleAnimation Storyboard.TargetName="ArrowSurface" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)" To="1.06" Duration="0:0:0.12"/>
-                                <DoubleAnimation Storyboard.TargetName="ArrowSurface" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)" To="1.06" Duration="0:0:0.12"/>
-                            </Storyboard></BeginStoryboard></Trigger.EnterActions>
-                            <Trigger.ExitActions><BeginStoryboard><Storyboard>
-                                <DoubleAnimation Storyboard.TargetName="ArrowSurface" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.14"/>
-                                <DoubleAnimation Storyboard.TargetName="ArrowSurface" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.14"/>
-                            </Storyboard></BeginStoryboard></Trigger.ExitActions>
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True"><Setter TargetName="ArrowSurface" Property="Opacity" Value="0.7"/></Trigger>
                     </ControlTemplate.Triggers>
@@ -84,22 +54,13 @@
             <Setter Property="Template"><Setter.Value>
                 <ControlTemplate TargetType="Button">
                     <Border x:Name="ToolSurface" Margin="3" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}"
-                            BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="9" RenderTransformOrigin="0.5,0.5">
-                        <Border.RenderTransform><ScaleTransform/></Border.RenderTransform>
+                            BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="9">
                         <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center"/>
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="ToolSurface" Property="Background" Value="{DynamicResource ThemeButtonHover}"/>
                             <Setter TargetName="ToolSurface" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
-                            <Trigger.EnterActions><BeginStoryboard><Storyboard>
-                                <DoubleAnimation Storyboard.TargetName="ToolSurface" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)" To="1.04" Duration="0:0:0.12"/>
-                                <DoubleAnimation Storyboard.TargetName="ToolSurface" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)" To="1.04" Duration="0:0:0.12"/>
-                            </Storyboard></BeginStoryboard></Trigger.EnterActions>
-                            <Trigger.ExitActions><BeginStoryboard><Storyboard>
-                                <DoubleAnimation Storyboard.TargetName="ToolSurface" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.14"/>
-                                <DoubleAnimation Storyboard.TargetName="ToolSurface" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.14"/>
-                            </Storyboard></BeginStoryboard></Trigger.ExitActions>
                         </Trigger>
                         <Trigger Property="IsPressed" Value="True"><Setter TargetName="ToolSurface" Property="Opacity" Value="0.72"/></Trigger>
                     </ControlTemplate.Triggers>
@@ -115,9 +76,7 @@
             <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
             <Setter Property="Template"><Setter.Value>
                 <ControlTemplate TargetType="ListViewItem">
-                    <Border x:Name="ContainerSurface" Background="{DynamicResource ThemeRuleBackground}" BorderBrush="{DynamicResource ThemeRuleBorder}" BorderThickness="1" CornerRadius="12" Padding="1"
-                            RenderTransformOrigin="0.5,0.5">
-                        <Border.RenderTransform><ScaleTransform/></Border.RenderTransform>
+                    <Border x:Name="ContainerSurface" Background="{DynamicResource ThemeRuleBackground}" BorderBrush="{DynamicResource ThemeRuleBorder}" BorderThickness="1" CornerRadius="12" Padding="1">
                         <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="{TemplateBinding VerticalContentAlignment}"/>
                     </Border>
                     <ControlTemplate.Triggers>
@@ -128,14 +87,6 @@
                         <Trigger Property="IsMouseOver" Value="True">
                             <Setter TargetName="ContainerSurface" Property="Background" Value="{DynamicResource ThemeRuleHover}"/>
                             <Setter TargetName="ContainerSurface" Property="BorderBrush" Value="{DynamicResource ThemeRuleHoverBorder}"/>
-                            <Trigger.EnterActions><BeginStoryboard><Storyboard>
-                                <DoubleAnimation Storyboard.TargetName="ContainerSurface" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)" To="1.006" Duration="0:0:0.13"/>
-                                <DoubleAnimation Storyboard.TargetName="ContainerSurface" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)" To="1.006" Duration="0:0:0.13"/>
-                            </Storyboard></BeginStoryboard></Trigger.EnterActions>
-                            <Trigger.ExitActions><BeginStoryboard><Storyboard>
-                                <DoubleAnimation Storyboard.TargetName="ContainerSurface" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.16"/>
-                                <DoubleAnimation Storyboard.TargetName="ContainerSurface" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.16"/>
-                            </Storyboard></BeginStoryboard></Trigger.ExitActions>
                         </Trigger>
                         <Trigger Property="IsSelected" Value="True">
                             <Setter TargetName="ContainerSurface" Property="Background" Value="{DynamicResource ThemeRuleSelected}"/>
@@ -148,6 +99,34 @@
                             <Setter TargetName="ContainerSurface" Property="Background" Value="{DynamicResource ThemeRuleSelectedHover}"/>
                             <Setter TargetName="ContainerSurface" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
                         </MultiTrigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value></Setter>
+        </Style>
+        <Style x:Key="RouteMenuStyle" TargetType="ContextMenu">
+            <Setter Property="MinWidth" Value="170"/>
+            <Setter Property="Template"><Setter.Value>
+                <ControlTemplate TargetType="ContextMenu">
+                    <Border Background="{DynamicResource ThemeSurface}" BorderBrush="{DynamicResource ThemeRouteBorder}" BorderThickness="1" CornerRadius="12" Padding="5">
+                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value></Setter>
+        </Style>
+        <Style x:Key="RouteMenuItemStyle" TargetType="MenuItem">
+            <Setter Property="Template"><Setter.Value>
+                <ControlTemplate TargetType="MenuItem">
+                    <Border x:Name="Option" Background="Transparent" CornerRadius="8" Padding="10,9" Margin="0,1">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="24"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <TextBlock x:Name="Check" Text="✓" Foreground="{DynamicResource ThemeAccent}" Opacity="0" FontSize="13" VerticalAlignment="Center"/>
+                            <ContentPresenter Grid.Column="1" ContentSource="Header" RecognizesAccessKey="True" TextElement.Foreground="{DynamicResource ThemeText}" TextElement.FontSize="12" VerticalAlignment="Center"/>
+                        </Grid>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Option" Property="Background" Value="{DynamicResource ThemeSurfaceHover}"/></Trigger>
+                        <Trigger Property="IsChecked" Value="True"><Setter TargetName="Check" Property="Opacity" Value="1"/></Trigger>
+                        <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Option" Property="Opacity" Value="0.4"/></Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
             </Setter.Value></Setter>
@@ -168,9 +147,9 @@
                         <TextBlock Text="{Binding KindLabel}" Foreground="{DynamicResource ThemeAccent}" FontSize="9" FontWeight="Bold" VerticalAlignment="Center"/>
                     </Border>
                     <TextBlock Grid.Column="2" Text="{Binding Value}" Foreground="{DynamicResource ThemeText}" FontSize="14" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-                    <Border Grid.Column="3" CornerRadius="8" Padding="9,4" Margin="10,0" BorderThickness="1">
-                        <Border.Style>
-                            <Style TargetType="Border">
+                    <Button Grid.Column="3" Padding="9,5" Margin="10,0" BorderThickness="1" Tag="{Binding}" Click="RuleRoute_Click" ToolTip="Изменить маршрут правила; для выделенных строк — всей группы">
+                        <Button.Style>
+                            <Style TargetType="Button" BasedOn="{StaticResource FlatButton}">
                                 <Setter Property="Background" Value="{DynamicResource ThemeRouteBackground}"/>
                                 <Setter Property="BorderBrush" Value="{DynamicResource ThemeRouteBorder}"/>
                                 <Style.Triggers>
@@ -184,9 +163,12 @@
                                     </DataTrigger>
                                 </Style.Triggers>
                             </Style>
-                        </Border.Style>
-                        <TextBlock Text="{Binding RouteLabel}" Foreground="{DynamicResource ThemeText}" FontSize="9" FontWeight="SemiBold" VerticalAlignment="Center"/>
-                    </Border>
+                        </Button.Style>
+                        <StackPanel Orientation="Horizontal">
+                            <Path Data="M 1,1 L 5,5 L 9,1" Stroke="{DynamicResource ThemeAccent}" StrokeThickness="1.5" Width="10" Height="6" Margin="0,0,7,0" VerticalAlignment="Center"/>
+                            <TextBlock Text="{Binding RouteLabel}" Foreground="{DynamicResource ThemeText}" FontSize="9" FontWeight="SemiBold" VerticalAlignment="Center"/>
+                        </StackPanel>
+                    </Button>
                     <Button Grid.Column="4" Style="{StaticResource IconButton}" Content="×" Tag="{Binding}" Click="DeleteRule_Click" ToolTip="Удалить правило"/>
                 </Grid>
                 <Border.Style>
@@ -284,7 +266,7 @@
                     </StackPanel>
                     <StackPanel Grid.Column="1" Orientation="Horizontal" Margin="0,0,12,0">
                         <Button shell:WindowChrome.IsHitTestVisibleInChrome="True" Style="{StaticResource IconButton}" Content="—" Click="Minimize_Click" ToolTip="Свернуть"/>
-                        <Button shell:WindowChrome.IsHitTestVisibleInChrome="True" Style="{StaticResource IconButton}" Content="×" Click="Close_Click" ToolTip="Закрыть"/>
+                        <Button shell:WindowChrome.IsHitTestVisibleInChrome="True" Style="{StaticResource IconButton}" Content="×" Click="Close_Click" ToolTip="Свернуть в трей; Выход — в меню значка"/>
                     </StackPanel>
                 </Grid>
 
@@ -292,11 +274,23 @@
 
                 <Grid Grid.Row="1" x:Name="MainBody" Background="Transparent">
                     <Grid.RowDefinitions>
+                        <RowDefinition Height="Auto"/>
+                        <RowDefinition Height="44"/>
                         <RowDefinition x:Name="WorkspaceRow" Height="*"/>
-                        <RowDefinition x:Name="LogSplitterRow" Height="7"/>
-                        <RowDefinition x:Name="LogRow" Height="140" MinHeight="70"/>
                     </Grid.RowDefinitions>
-                <Grid x:Name="Workspace" Grid.Row="0" Margin="20,6,20,0">
+                    <Border x:Name="UpdateBanner" Visibility="Collapsed" Background="{DynamicResource ThemeSurfaceSelected}" BorderBrush="{DynamicResource ThemeRouteBorder}" BorderThickness="1" CornerRadius="12" Margin="20,9,20,3" Padding="12,8">
+                        <Grid>
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <TextBlock x:Name="UpdateOfferText" Foreground="{DynamicResource ThemeText}" FontSize="12" VerticalAlignment="Center" TextWrapping="Wrap" Margin="0,0,12,0"/>
+                            <Button x:Name="InstallUpdateButton" Grid.Column="1" Style="{StaticResource FlatButton}" Content="ОБНОВИТЬ" Padding="12,6" Click="DownloadUpdate_Click" ToolTip="Установить обновление и перезапустить приложение; VPN остановится."/>
+                            <Button Grid.Column="2" Style="{StaticResource IconButton}" Content="×" Margin="8,0,0,0" Click="DismissUpdate_Click" ToolTip="Отложить до следующего запуска"/>
+                        </Grid>
+                    </Border>
+                    <StackPanel Grid.Row="1" Orientation="Horizontal" Margin="20,5,20,4">
+                        <Button x:Name="RoutesTabButton" Style="{StaticResource FlatButton}" Content="МАРШРУТЫ" Padding="17,5" Click="RoutesTab_Click"/>
+                        <Button x:Name="JournalTabButton" Style="{StaticResource FlatButton}" Content="ЖУРНАЛ И СОЕДИНЕНИЯ" Margin="8,0,0,0" Padding="17,5" Click="JournalTab_Click"/>
+                    </StackPanel>
+                <Grid x:Name="Workspace" Grid.Row="2" Margin="20,6,20,16">
                     <Grid.ColumnDefinitions>
                         <ColumnDefinition Width="292"/>
                         <ColumnDefinition Width="18"/>
@@ -304,12 +298,13 @@
                     </Grid.ColumnDefinitions>
 
                     <Border Grid.Column="0" Background="{DynamicResource ThemePanelGradient}" BorderBrush="{DynamicResource ThemePanelBorder}" BorderThickness="1" CornerRadius="18" Padding="20">
+                        <ScrollViewer x:Name="SidebarScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="*" MinHeight="66"/>
                             </Grid.RowDefinitions>
 
                             <StackPanel>
@@ -319,7 +314,7 @@
                                             <DropShadowEffect Color="{DynamicResource ThemeAccentGlowColor}" BlurRadius="9" ShadowDepth="0" Opacity="0.7"/>
                                         </Ellipse.Effect>
                                     </Ellipse>
-                                    <TextBlock x:Name="StatusText" Text="НУЖЕН ПРОФИЛЬ" Foreground="{DynamicResource ThemeText}" FontSize="20" FontWeight="SemiBold"/>
+                                    <TextBlock x:Name="StatusText" Text="НУЖЕН ПРОФИЛЬ" Foreground="{DynamicResource ThemeText}" FontSize="17" FontWeight="SemiBold"/>
                                 </StackPanel>
                                 <TextBlock x:Name="UptimeText" Text="Выбери своё подключение" Foreground="{DynamicResource ThemeMuted}" FontSize="12" TextWrapping="Wrap"/>
                             </StackPanel>
@@ -329,19 +324,28 @@
                                 <Button x:Name="RestartButton" Style="{StaticResource FlatButton}" Height="39" Margin="0,9,0,0" Content="ПЕРЕЗАПУСТИТЬ ЯДРО" Click="RestartButton_Click" IsEnabled="False"/>
                             </StackPanel>
 
-                            <Border Grid.Row="2" Margin="0,22,0,0" Background="{DynamicResource ThemeSurface}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" BorderThickness="1" CornerRadius="12" Padding="13">
+                            <Border x:Name="ConnectionCard" Grid.Row="2" Margin="0,22,0,0" Background="{DynamicResource ThemeSurface}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" BorderThickness="1" CornerRadius="12" Padding="13">
                                 <StackPanel>
-                                    <TextBlock Text="ТОЧКА ВЫХОДА" Foreground="{DynamicResource ThemeMuted}" FontSize="9" FontWeight="Bold"/>
+                                    <TextBlock Text="ПОДКЛЮЧЕНИЕ" Foreground="{DynamicResource ThemeMuted}" FontSize="9" FontWeight="Bold"/>
                                     <TextBlock x:Name="EndpointText" Text="не определена" Foreground="{DynamicResource ThemeAccentSecondary}" FontSize="13" Margin="0,5,0,0" TextTrimming="CharacterEllipsis"/>
                                     <Border Height="1" Background="{DynamicResource ThemeSurfaceBorder}" Margin="0,11"/>
-                                    <TextBlock Text="ДЕЙСТВИЕ НОВЫХ ПРАВИЛ" Foreground="{DynamicResource ThemeMuted}" FontSize="9" FontWeight="Bold"/>
-                                    <ComboBox x:Name="RouteCombo" Margin="0,6,0,0" SelectionChanged="RouteCombo_SelectionChanged"
-                                              ToolTip="VPN-маршрут, DIRECT — напрямую, REJECT — блокировать"/>
-                                    <TextBlock x:Name="RouteHintText" Text="Выбери действие для добавляемых правил" Foreground="{DynamicResource ThemeRouteHint}" FontSize="9" Margin="2,6,0,0" TextWrapping="Wrap"/>
+                                    <Grid ToolTip="Текущий трафик через ядро, включая прямые маршруты. Это не тест максимальной скорости канала.">
+                                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                        <StackPanel><TextBlock Text="↓ ПРИЁМ" Foreground="{DynamicResource ThemeMuted}" FontSize="9"/><TextBlock x:Name="DownloadSpeedText" Text="—" Foreground="{DynamicResource ThemeText}" FontSize="18" Margin="0,4,0,0"/></StackPanel>
+                                        <StackPanel Grid.Column="1"><TextBlock Text="↑ ОТДАЧА" Foreground="{DynamicResource ThemeMuted}" FontSize="9"/><TextBlock x:Name="UploadSpeedText" Text="—" Foreground="{DynamicResource ThemeText}" FontSize="18" Margin="0,4,0,0"/></StackPanel>
+                                    </Grid>
+                                    <Grid Margin="0,16,0,0">
+                                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                        <StackPanel ToolTip="Задержка HTTPS-запроса через VPN; проверка каждые 20 секунд, пока окно открыто."><TextBlock Text="ПИНГ" Foreground="{DynamicResource ThemeMuted}" FontSize="9"/><TextBlock x:Name="PingText" Text="—" Foreground="{DynamicResource ThemeText}" FontSize="18" Margin="0,4,0,0"/></StackPanel>
+                                        <StackPanel Grid.Column="1" ToolTip="Доля успешных HTTPS-проверок среди последних 20. Это доступность VPN, а не измерение потерь сетевых пакетов."><TextBlock Text="ДОСТУПНОСТЬ" Foreground="{DynamicResource ThemeMuted}" FontSize="9"/><TextBlock x:Name="StabilityText" Text="—" Foreground="{DynamicResource ThemeText}" FontSize="18" Margin="0,4,0,0"/></StackPanel>
+                                    </Grid>
+                                    <TextBlock x:Name="ConnectionStateText" Text="Проверка не выполнялась" Foreground="{DynamicResource ThemeText}" FontSize="11" Margin="0,11,0,0" TextWrapping="Wrap"/>
+                                    <Button x:Name="CheckConnectionButton" Style="{StaticResource FlatButton}" Content="ПРОВЕРИТЬ VPN" Margin="0,8,0,0" Padding="8,7" Click="CheckConnection_Click"/>
+                                    <TextBlock x:Name="LastIssueText" Foreground="{DynamicResource ThemeAccentSecondary}" FontSize="10" Margin="0,8,0,0" MaxHeight="44" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"/>
                                 </StackPanel>
                             </Border>
 
-                            <Grid Grid.Row="3" VerticalAlignment="Bottom" Margin="0,0,0,2">
+                            <Grid x:Name="SidebarTools" Grid.Row="3" VerticalAlignment="Bottom" Margin="0,0,0,2">
                                 <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
                                 <Button Grid.Column="0" Style="{StaticResource SidebarToolButton}" Click="FaqButton_Click" ToolTip="ЧаВо?">
                                     <TextBlock Text="?" FontSize="25" FontWeight="SemiBold" Foreground="{DynamicResource ThemeAccent}"/>
@@ -352,9 +356,11 @@
                             </Grid>
 
                         </Grid>
+                        </ScrollViewer>
                     </Border>
 
                     <Grid Grid.Column="2">
+                    <Grid x:Name="RoutesPage">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
                             <RowDefinition Height="Auto"/>
@@ -363,26 +369,11 @@
                             <RowDefinition Height="Auto"/>
                         </Grid.RowDefinitions>
 
-                        <Grid Margin="4,8,4,15">
-                            <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="Auto"/>
-                            </Grid.RowDefinitions>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <StackPanel>
-                                <TextBlock Text="МАРШРУТЫ" Foreground="{DynamicResource ThemeText}" FontSize="31" FontWeight="Light"/>
-                            </StackPanel>
-                            <Border Grid.Column="1" Background="{DynamicResource ThemeTagBackground}" BorderBrush="{DynamicResource ThemeTagBorder}" BorderThickness="1" CornerRadius="16" Padding="13,6" VerticalAlignment="Center">
-                                <TextBlock x:Name="CountText" Text="0 ПРАВИЛ" Foreground="{DynamicResource ThemeAccent}" FontSize="11" FontWeight="Bold"/>
-                            </Border>
-                            <Button x:Name="DownloadUpdateButton" Grid.Row="1" Grid.ColumnSpan="2" Style="{StaticResource PrimaryButton}" Visibility="Collapsed" Margin="0,8,0,0" Height="39" Click="DownloadUpdate_Click"/>
-                        </Grid>
+                        <TextBlock Text="МАРШРУТЫ" Foreground="{DynamicResource ThemeText}" FontSize="31" FontWeight="Light" Margin="4,8,4,15"/>
 
                         <Border Grid.Row="1" Background="{DynamicResource ThemePanelGradient}" BorderBrush="{DynamicResource ThemePanelBorder}" BorderThickness="1" CornerRadius="15" Padding="16">
                             <Grid>
+                                <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                                 <Grid.ColumnDefinitions>
                                     <ColumnDefinition Width="*"/>
                                     <ColumnDefinition Width="170"/>
@@ -412,6 +403,15 @@
                                     <ComboBoxItem Content="Процесс .exe" Tag="PROCESS-NAME"/>
                                 </ComboBox>
                                 <Button x:Name="AddRuleButton" Grid.Column="2" Style="{StaticResource PrimaryButton}" Height="39" Margin="10,0,0,0" Content="ДОБАВИТЬ" Click="AddRule_Click"/>
+                                <StackPanel Grid.Row="1" Grid.ColumnSpan="3" Orientation="Horizontal" Margin="0,10,0,0">
+                                    <TextBlock Text="Новое правило:" Foreground="{DynamicResource ThemeMuted}" FontSize="11" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                    <ComboBox x:Name="RouteCombo" Width="160" Height="32" SelectionChanged="RouteCombo_SelectionChanged">
+                                        <ComboBoxItem Content="VPN" Tag="VPN"/>
+                                        <ComboBoxItem Content="Напрямую" Tag="DIRECT"/>
+                                        <ComboBoxItem Content="Блокировать" Tag="REJECT"/>
+                                    </ComboBox>
+                                    <TextBlock x:Name="RouteHintText" Text="Для новых записей" Foreground="{DynamicResource ThemeMuted}" FontSize="10" VerticalAlignment="Center" Margin="10,0,0,0" TextWrapping="Wrap"/>
+                                </StackPanel>
                             </Grid>
                         </Border>
 
@@ -526,65 +526,41 @@
                             <Button x:Name="ApplyButton" Grid.Column="2" Style="{StaticResource PrimaryButton}" Width="190" Height="44" Content="ПРИМЕНИТЬ В YAML" Click="ApplyButton_Click" IsEnabled="False"/>
                         </Grid>
                     </Grid>
-                </Grid>
-                    <GridSplitter x:Name="LogSplitter" Grid.Row="1" Height="9" HorizontalAlignment="Stretch" VerticalAlignment="Center"
-                                  Background="Transparent" ShowsPreview="False" ResizeDirection="Rows" ResizeBehavior="PreviousAndNext"
-                                  Cursor="SizeNS" ToolTip="Потяни, чтобы изменить высоту журнала">
-                        <GridSplitter.Template>
-                            <ControlTemplate TargetType="GridSplitter">
-                                <Grid Background="Transparent">
-                                    <Border Width="52" Height="3" CornerRadius="2" Background="{DynamicResource ThemeSplitter}"
-                                            HorizontalAlignment="Center" VerticalAlignment="Center"/>
-                                    <Border Width="18" Height="3" CornerRadius="2" Background="{DynamicResource ThemeAccent}"
-                                            HorizontalAlignment="Center" VerticalAlignment="Center" Opacity="0.75"/>
-                                </Grid>
-                            </ControlTemplate>
-                        </GridSplitter.Template>
-                    </GridSplitter>
-                    <Border Grid.Row="2" Margin="20,0,20,14" Background="{DynamicResource ThemeLogPanel}" BorderBrush="{DynamicResource ThemePanelBorder}" BorderThickness="1"
-                            CornerRadius="13" Padding="12,8">
+                    <Border x:Name="JournalPage" Visibility="Collapsed" Background="{DynamicResource ThemeLogPanel}" BorderBrush="{DynamicResource ThemePanelBorder}" BorderThickness="1" CornerRadius="15" Padding="16">
                         <Grid>
                             <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*"/>
+                                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="2*"/><RowDefinition Height="Auto"/><RowDefinition Height="3*"/>
                             </Grid.RowDefinitions>
-                            <Grid.ColumnDefinitions>
-                                <ColumnDefinition Width="*"/>
-                                <ColumnDefinition Width="Auto"/>
-                            </Grid.ColumnDefinitions>
-                            <Grid x:Name="LogHeader" Margin="2,0,2,6" MinHeight="24" Grid.ColumnSpan="2">
-                                <Grid.ColumnDefinitions>
-                                    <ColumnDefinition Width="*"/>
-                                    <ColumnDefinition Width="Auto"/>
-                                </Grid.ColumnDefinitions>
-                                <StackPanel Orientation="Horizontal" VerticalAlignment="Center">
-                                    <TextBlock Text="ЖУРНАЛ СОБЫТИЙ" Foreground="{DynamicResource ThemeMuted}" FontSize="9" FontWeight="Bold" VerticalAlignment="Center"/>
-                                    <ToggleButton x:Name="LogVisibilityToggle" Style="{StaticResource LogSwitch}" Margin="10,0,0,0" IsChecked="True" Click="LogVisibilityToggle_Click" ToolTip="Показать или скрыть журнал событий"/>
-                                </StackPanel>
-                                <Button x:Name="CopyLogButton" Grid.Column="1" Style="{StaticResource FlatButton}" Padding="9,3" Content="КОПИРОВАТЬ" Click="CopyLog_Click"/>
+                            <TextBlock Text="ЖУРНАЛ И СОЕДИНЕНИЯ" FontSize="23" FontWeight="Light" Foreground="{DynamicResource ThemeText}"/>
+                            <Grid Grid.Row="1" Margin="0,10,0,9">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <TextBox x:Name="ConnectionSearchBox" ToolTip="Фильтр: процесс, адрес, правило или маршрут" TextChanged="ConnectionSearch_TextChanged" Padding="9,6"/>
+                                <Button x:Name="RefreshConnectionsButton" Grid.Column="1" Style="{StaticResource FlatButton}" Content="ОБНОВИТЬ" Padding="12,6" Margin="8,0,0,0" Click="RefreshConnections_Click"/>
                             </Grid>
-                        <TextBox x:Name="LogText" Grid.Row="1" Text="Система готова." IsReadOnly="True" AcceptsReturn="True"
-                                     TextWrapping="Wrap" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled"
-                                     Background="{DynamicResource ThemeLogBackground}" Foreground="{DynamicResource ThemeLogText}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" BorderThickness="1"
-                                     FontFamily="Consolas" FontSize="12" Padding="9,7"/>
-                            <Grid x:Name="LogScrollTrack" Grid.Row="1" Grid.Column="1" Width="16" Margin="5,3,0,3"
-                                  Background="{DynamicResource ThemeLogTrack}" ClipToBounds="True" Visibility="Collapsed"
-                                    SizeChanged="LogScrollTrack_SizeChanged"
-                                  MouseLeftButtonDown="LogScrollTrack_MouseLeftButtonDown" PreviewMouseWheel="LogScrollTrack_PreviewMouseWheel"
-                                  ToolTip="Перетаскивай ручку для прокрутки журнала">
-                                <Border Background="{DynamicResource ThemeLogTrack}" CornerRadius="7"/>
-                            <Border x:Name="LogScrollThumb" Height="30" VerticalAlignment="Top" Margin="2"
-                                        Background="{DynamicResource ThemeLogThumb}" BorderBrush="{DynamicResource ThemeLogThumbBorder}" BorderThickness="1" CornerRadius="6"
-                                        Cursor="SizeNS" RenderTransformOrigin="0.5,0"
-                                        MouseLeftButtonDown="LogScrollThumb_MouseLeftButtonDown"
-                                        MouseMove="LogScrollThumb_MouseMove" MouseLeftButtonUp="LogScrollThumb_MouseLeftButtonUp"
-                                        LostMouseCapture="LogScrollThumb_LostMouseCapture">
-                                    <Border.RenderTransform><TranslateTransform/></Border.RenderTransform>
-                                    <Border.Effect><DropShadowEffect Color="{DynamicResource ThemeAccentGlowColor}" BlurRadius="8" ShadowDepth="0" Opacity="0.18"/></Border.Effect>
-                                </Border>
+                            <DataGrid x:Name="ConnectionsGrid" Grid.Row="2" IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="None" RowHeight="32" Background="{DynamicResource ThemeSurface}" Foreground="{DynamicResource ThemeText}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                                <DataGrid.Resources>
+                                    <Style TargetType="DataGridColumnHeader"><Setter Property="Background" Value="{DynamicResource ThemeTagBackground}"/><Setter Property="Foreground" Value="{DynamicResource ThemeText}"/><Setter Property="Padding" Value="8"/></Style>
+                                    <Style TargetType="DataGridRow"><Setter Property="Background" Value="{DynamicResource ThemeSurface}"/><Setter Property="Foreground" Value="{DynamicResource ThemeText}"/></Style>
+                                    <Style TargetType="DataGridCell"><Setter Property="Padding" Value="5"/><Setter Property="BorderThickness" Value="0"/></Style>
+                                </DataGrid.Resources>
+                                <DataGrid.Columns>
+                                    <DataGridTextColumn Header="Процесс" Binding="{Binding Process}" Width="110"/>
+                                    <DataGridTextColumn Header="Адрес" Binding="{Binding Destination}" Width="*" MinWidth="130"/>
+                                    <DataGridTextColumn Header="Сеть" Binding="{Binding Network}" Width="55"/>
+                                    <DataGridTextColumn Header="Правило" Binding="{Binding Rule}" Width="130"/>
+                                    <DataGridTextColumn Header="Маршрут" Binding="{Binding Route}" Width="120"/>
+                                </DataGrid.Columns>
+                            </DataGrid>
+                            <Grid Grid.Row="3" Margin="0,11,0,8">
+                                <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                <TextBlock x:Name="ConnectionsStatusText" Text="Соединения появятся после запуска VPN. Короткие запросы могут завершиться между обновлениями." FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource ThemeMuted}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                                <Button x:Name="CopyLogButton" Grid.Column="1" Style="{StaticResource FlatButton}" Content="КОПИРОВАТЬ ЖУРНАЛ" Padding="10,5" Click="CopyLog_Click"/>
                             </Grid>
+                            <TextBox x:Name="LogText" Grid.Row="4" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Background="{DynamicResource ThemeLogBackground}" Foreground="{DynamicResource ThemeLogText}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" FontFamily="Consolas" FontSize="11" Padding="9,7"/>
                         </Grid>
                     </Border>
+                    </Grid>
+                </Grid>
                 </Grid>
             </Grid>
                 <Border x:Name="DialogShade" Background="{DynamicResource ThemeDialogShade}" Visibility="Collapsed"

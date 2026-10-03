@@ -326,10 +326,10 @@ public sealed class CoreProcessManager
         }
     }
 
-    public static ProcessStartInfo CreateStartInfo(string executable, string configPath)
+    public static ProcessStartInfo CreateStartInfo(string executable, string configPath, string? dataDirectory = null)
     {
         var fullConfigPath = Path.GetFullPath(configPath);
-        var profileDirectory = Path.GetDirectoryName(fullConfigPath)!;
+        var profileDirectory = dataDirectory is null ? Path.GetDirectoryName(fullConfigPath)! : Path.GetFullPath(dataDirectory);
         var info = new ProcessStartInfo
         {
             FileName = executable,

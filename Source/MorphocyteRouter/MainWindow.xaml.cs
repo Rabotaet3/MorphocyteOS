@@ -2,7 +2,6 @@ using Microsoft.Win32;
 using System.Collections.Concurrent;
 using System.Collections.ObjectModel;
 using System.ComponentModel;
-using System.Diagnostics;
 using System.IO;
 using System.Text;
 using System.Windows;
@@ -37,9 +36,6 @@ public partial class MainWindow : Window
     private (DomainRule Rule, int Index)? _lastDeleted;
     private ScrollViewer? _rulesScrollViewer;
     private ScrollViewer? _logScrollViewer;
-    private bool _logScrollHooked, _logThumbDragging;
-    private double _expandedLogHeight = 140;
-    private double _logThumbGrabOffset;
     private DateTime _startedAt;
     private bool _dirty, _loading, _busy, _closing, _allowClose, _draftSaved;
     private int _dialogBackdropVersion;
@@ -48,10 +44,13 @@ public partial class MainWindow : Window
     private static string PersistentLogPath => Path.Combine(AppSettings.LocalDataDirectory, "router.log");
 
     public MainWindow() : this(null) { }
-    internal string StorageDirectory => _settings.StorageDirectory;
+
+    internal bool LaunchAtSignIn => _settings.LaunchAtSignIn;
+    internal bool AutoConnectOnStartup => _settings.AutoConnectOnStartup;
 
     public MainWindow(AppSettings? settings, string? logPath = null)
     {
+        _desktopIntegrationEnabled = settings is null;
         _settings = settings ?? AppSettings.Load();
         _settings.Theme = ThemeManager.Normalize(_settings.Theme);
         ThemeManager.Apply(_settings.Theme);
@@ -64,8 +63,7 @@ public partial class MainWindow : Window
         };
         _rulesView.GroupDescriptions.Add(folderGroups);
         RulesList.ItemsSource = _rulesView;
-        LogVisibilityToggle.IsChecked = _settings.ShowEventLog;
-        ApplyLogVisibility();
+        SelectMainPage(_settings.ShowEventLog);
         _logPath = logPath ?? PersistentLogPath;
         if (File.Exists(_logPath))
         {
@@ -83,6 +81,8 @@ public partial class MainWindow : Window
         _logRefreshTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(180) };
         _logRefreshTimer.Tick += (_, _) => FlushCoreOutput();
         _logRefreshTimer.Start();
+        InitializeDiagnostics();
+        InitializeAutomaticUpdates();
         LogText.Loaded += LogText_Loaded;
 
         _core.Output += message => _pendingCoreOutput.Enqueue(message);
@@ -91,23 +91,29 @@ public partial class MainWindow : Window
             if (_busy || _closing || _core.IsRunning) return;
             _uptimeTimer.Stop();
             SetStatus("ЯДРО ОСТАНОВЛЕНО", "Смотри журнал событий", "#FFD166");
+            ResetDiagnostics();
             UpdateControls();
         });
         _core.StartupFailed += message => Post(() =>
         {
             _uptimeTimer.Stop();
             SetStatus("СБОЙ ЯДРА", "Смотри журнал событий", "#FF6B8A");
+            ResetDiagnostics();
+            LastIssueText.Text = "Ошибка запуска ядра. Подробности — в журнале.";
             SetLog(message);
             UpdateControls();
         });
 
         Loaded += async (_, _) =>
         {
+            if (_desktopIntegrationEnabled) InitializeDesktopIntegration();
             await RunExclusiveAsync(async () =>
             {
                 await BundledResources.PrepareDefaultsAsync(_settings, _lifetime.Token);
                 if (File.Exists(_settings.ConfigPath)) await LoadConfigAsync(_settings.ConfigPath);
                 else SetLog("Выбранный YAML не найден. Выбери профиль в настройках или импортируй подключение.");
+                if (_startupMode && _settings.LaunchAtSignIn && _settings.AutoConnectOnStartup)
+                    await StartCoreAsync(applyDraft: false);
             });
             if (_settings.RecoveryMessage is { } message) SetLog(message);
             UpdateControls();
@@ -116,7 +122,7 @@ public partial class MainWindow : Window
             if (_settings.AutoCheckUpdates) await CheckForUpdatesOnStartupAsync();
         };
         Closing += MainWindow_Closing;
-        Closed += (_, _) => _logRefreshTimer.Stop();
+        Closed += (_, _) => { _logRefreshTimer.Stop(); _automaticUpdateTimer?.Stop(); DisposeDesktopIntegration(); ResetDiagnostics(); };
         Deactivated += (_, _) => CancelRuleDrag();
         UpdateControls();
     }
@@ -173,6 +179,7 @@ public partial class MainWindow : Window
                 _dialogBackdropVisible = false;
                 UpdateUptime();
                 RefreshDeferredLog();
+                ScheduleAutoInstall();
             };
             DialogShade.BeginAnimation(UIElement.OpacityProperty, shadeFade);
         }
@@ -201,7 +208,9 @@ public partial class MainWindow : Window
         catch (OperationCanceledException) when (_closing) { }
         catch (Exception ex)
         {
+            LastIssueText.Text = ex.Message;
             SetLog(ex.Message);
+            if (!IsVisible && !_closing) RestoreFromTray();
             if (!_closing) UtilityDialogs.ShowNotice(this, "MorphocyteOS", ex.Message);
         }
         finally
@@ -221,13 +230,18 @@ public partial class MainWindow : Window
         var ready = _document is { HasVpnConnection: true } && File.Exists(_settings.ConfigPath) && File.Exists(_settings.CorePath);
         PowerButton.IsEnabled = !_busy && !_closing && (ready || _core.HasTrackedProcess);
         AddRuleButton.IsEnabled = _document is not null && !_busy && !_closing;
-        DownloadUpdateButton.IsEnabled = !_busy && !_closing;
+        InstallUpdateButton.IsEnabled = !_busy && !_closing;
+        RefreshUpdateOffer();
+        ScheduleAutoInstall();
         EmptyRulesMessage.Opacity = 1;
-        LogVisibilityToggle.IsEnabled = !_busy && !_closing;
+        CheckConnectionButton.IsEnabled = _core.IsRunning && !_busy && !_closing && !_checkingConnection;
+        RefreshConnectionsButton.IsEnabled = _core.IsRunning && !_closing;
         PowerButton.Content = _core.HasTrackedProcess ? "ОСТАНОВИТЬ VPN" : "ЗАПУСТИТЬ VPN";
         RestartButton.IsEnabled = _core.IsRunning;
         ApplyButton.IsEnabled = _dirty && _document is not null;
         UndoButton.IsEnabled = _lastDeleted is not null && !_busy && !_closing;
+        RefreshConnectionCard();
+        RefreshTrayState();
     }
 
     private async Task LoadConfigAsync(string path)
@@ -253,12 +267,9 @@ public partial class MainWindow : Window
                 : state is not null && state.SourceHash == loaded.SourceHash ? MergeRuleUiState(loaded.Rules, state.Rules)
                 : loaded.Rules;
             ReplaceRules(rules);
-            var actionRoutes = loaded.Routes.Concat(new[] { "DIRECT", "REJECT" }).Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
-            RouteCombo.ItemsSource = actionRoutes;
-            var existing = _rules.Select(rule => rule.Route).FirstOrDefault(route => actionRoutes.Contains(route));
-            RouteCombo.SelectedItem = actionRoutes.Contains(_settings.PreferredRoute) ? _settings.PreferredRoute : existing ?? loaded.Routes.FirstOrDefault() ?? "DIRECT";
-            UpdateRouteHint(RouteCombo.SelectedItem?.ToString());
-            EndpointText.Text = loaded.Endpoint;
+            var preferredAction = _settings.PreferredRoute is "DIRECT" or "REJECT" ? _settings.PreferredRoute : "VPN";
+            RouteCombo.SelectedItem = RouteCombo.Items.OfType<ComboBoxItem>().First(item => Equals(item.Tag, preferredAction));
+            UpdateRouteHint(preferredAction);
             _lastDeleted = null;
             _draftSaved = restoreDraft;
             SetDirty(restoreDraft || loaded.HadMarkdownFence);
@@ -388,13 +399,24 @@ public partial class MainWindow : Window
         if (!await ConfirmAndStopOtherMihomoAsync()) return;
         try
         {
-            await _core.StartAsync(CoreProcessManager.CreateStartInfo(_settings.CorePath, _settings.ConfigPath), _lifetime.Token);
+            _diagnostics = new CoreDiagnostics();
+            var runtimeDirectory = Path.Combine(_settings.StorageDirectory, ".runtime");
+            Directory.CreateDirectory(runtimeDirectory);
+            _runtimeConfigPath = Path.Combine(runtimeDirectory, "active-" + Guid.NewGuid().ToString("N") + ".yaml");
+            await File.WriteAllTextAsync(_runtimeConfigPath, actual.BuildRuntimeText(_diagnostics.Port, _diagnostics.Secret), new UTF8Encoding(false), _lifetime.Token);
+            await _core.StartAsync(CoreProcessManager.CreateStartInfo(_settings.CorePath, _runtimeConfigPath,
+                Path.GetDirectoryName(_settings.ConfigPath)), _lifetime.Token);
             _startedAt = DateTime.Now;
             _uptimeTimer.Start();
             SetStatus("ЯДРО РАБОТАЕТ", "Правила VPN загружены", "#73FFBF");
+            LastIssueText.Text = "";
+            ConnectionStateText.Text = "VPN ещё не проверен";
+            StartTrafficMonitor();
+            _ = RefreshConnectionSnapshotAsync();
         }
         catch
         {
+            if (!_core.HasTrackedProcess) ResetDiagnostics();
             SetStatus("ОШИБКА ЗАПУСКА", _core.IsRunning ? "Ядро требует остановки" : "Ядро не запущено", "#FF6B8A");
             throw;
         }
@@ -406,6 +428,7 @@ public partial class MainWindow : Window
         {
             var instances = CoreProcessManager.FindOtherInstances(_settings.CorePath);
             if (instances.Count == 0) return true;
+            if (_startupMode) RestoreFromTray();
 
             var unverified = instances.Where(instance => string.IsNullOrWhiteSpace(instance.ExecutablePath)).ToArray();
             if (unverified.Length > 0)
@@ -448,6 +471,7 @@ public partial class MainWindow : Window
         var stopped = await _core.StopAsync();
         if (stopped)
         {
+            ResetDiagnostics();
             _uptimeTimer.Stop();
             SetStatus("VPN ВЫКЛЮЧЕН", "Процесс ядра завершён", "#667A74");
             SetLog("Завершение ядра подтверждено.");
@@ -518,7 +542,7 @@ public partial class MainWindow : Window
             _logDisplayDeferred = true;
             return;
         }
-        if (LogText.Visibility != Visibility.Visible) return;
+        if (!JournalPage.IsVisible) return;
         if (droppedOldLines || string.IsNullOrEmpty(LogText.Text))
             LogText.Text = string.Join(Environment.NewLine, _logLines);
         else
@@ -532,7 +556,7 @@ public partial class MainWindow : Window
     {
         if (!_logDisplayDeferred) return;
         _logDisplayDeferred = false;
-        if (LogText.Visibility != Visibility.Visible || _closing) return;
+        if (!JournalPage.IsVisible || _closing) return;
         var oldOffset = _logScrollViewer?.VerticalOffset ?? 0;
         var wasNearEnd = _logScrollViewer is null
             || _logScrollViewer.ScrollableHeight - _logScrollViewer.VerticalOffset < 28;
@@ -620,8 +644,6 @@ public partial class MainWindow : Window
     }
     private void RefreshCount(bool refreshView = true)
     {
-        CountText.Text = $"{_rules.Count(rule => rule.Enabled)} / {_rules.Count}";
-        CountText.ToolTip = "Включённые правила / всего. Ctrl+клик выбирает несколько правил, Shift+клик — диапазон.";
         if (refreshView) RefreshRulesView();
     }
     private void RefreshRulesView()
@@ -676,7 +698,8 @@ public partial class MainWindow : Window
 
     private async void AddRule_Click(object sender, RoutedEventArgs e) => await RunExclusiveAsync(async () =>
     {
-        if (_document is null || RouteCombo.SelectedItem is not string route) throw new InvalidOperationException("Сначала выбери профиль и маршрут.");
+        if (_document is null) throw new InvalidOperationException("Сначала выбери профиль.");
+        var route = ResolveNewRuleRoute();
         var kind = (RuleKindCombo.SelectedItem as ComboBoxItem)?.Tag?.ToString() ?? "DOMAIN-SUFFIX";
         var value = ClashConfigDocument.NormalizeDomain(DomainInput.Text, kind);
         if (_rules.Any(rule => rule.Kind == kind && rule.Value.Equals(value, StringComparison.OrdinalIgnoreCase)))
@@ -776,96 +799,8 @@ public partial class MainWindow : Window
     private void LogText_Loaded(object sender, RoutedEventArgs e)
     {
         _logScrollViewer ??= FindVisualDescendant<ScrollViewer>(LogText);
-        if (!_logScrollHooked)
-        {
-            LogText.AddHandler(ScrollViewer.ScrollChangedEvent, new ScrollChangedEventHandler(LogText_ScrollChanged));
-            _logScrollHooked = true;
-        }
-        LogText.UpdateLayout();
-        SyncLogScrollbar();
         LogText.ScrollToEnd();
     }
-
-    private void LogText_ScrollChanged(object sender, ScrollChangedEventArgs e)
-    {
-        SyncLogScrollbar();
-    }
-
-    private void SyncLogScrollbar()
-    {
-        if (LogVisibilityToggle.IsChecked != true) { LogScrollTrack.Visibility = Visibility.Collapsed; return; }
-        if (_logScrollViewer is null) return;
-        var maximum = Math.Max(0, _logScrollViewer.ScrollableHeight);
-        if (maximum <= 0 || _logScrollViewer.ExtentHeight <= 0)
-        {
-            LogScrollTrack.Visibility = Visibility.Collapsed;
-            return;
-        }
-        LogScrollTrack.Visibility = Visibility.Visible;
-        LogScrollTrack.UpdateLayout();
-        var trackHeight = LogScrollTrack.ActualHeight;
-        if (trackHeight <= 6) { LogScrollTrack.Visibility = Visibility.Collapsed; return; }
-        var idealThumb = trackHeight * _logScrollViewer.ViewportHeight / _logScrollViewer.ExtentHeight;
-        var minimumThumb = Math.Min(trackHeight - 4, Math.Max(18, trackHeight * 0.18));
-        LogScrollThumb.Height = Math.Clamp(idealThumb - 4, minimumThumb, trackHeight - 4);
-        LogScrollThumb.UpdateLayout();
-        var travel = Math.Max(0, trackHeight - LogScrollThumb.ActualHeight - LogScrollThumb.Margin.Top - LogScrollThumb.Margin.Bottom);
-        var position = _logScrollViewer.VerticalOffset / maximum * travel;
-        ((TranslateTransform)LogScrollThumb.RenderTransform).Y = position;
-    }
-
-    private void LogScrollTrack_SizeChanged(object sender, SizeChangedEventArgs e) => SyncLogScrollbar();
-
-    private void LogScrollTrack_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        if (_logScrollViewer is null || _logScrollViewer.ScrollableHeight <= 0) return;
-        var trackHeight = LogScrollTrack.ActualHeight;
-        var travel = Math.Max(1, trackHeight - LogScrollThumb.ActualHeight - LogScrollThumb.Margin.Top - LogScrollThumb.Margin.Bottom);
-        var desiredPosition = Math.Clamp(e.GetPosition(LogScrollTrack).Y - LogScrollThumb.ActualHeight / 2, 0, travel);
-        SetLogScrollFromThumbPosition(desiredPosition, travel);
-        e.Handled = true;
-    }
-
-    private void LogScrollThumb_MouseLeftButtonDown(object sender, MouseButtonEventArgs e)
-    {
-        if (_logScrollViewer is null) return;
-        _logThumbDragging = true;
-        _logThumbGrabOffset = e.GetPosition(LogScrollTrack).Y - ((TranslateTransform)LogScrollThumb.RenderTransform).Y;
-        LogScrollThumb.CaptureMouse();
-        e.Handled = true;
-    }
-
-    private void LogScrollThumb_MouseMove(object sender, MouseEventArgs e)
-    {
-        if (!_logThumbDragging || _logScrollViewer is null) return;
-        var travel = Math.Max(1, LogScrollTrack.ActualHeight - LogScrollThumb.ActualHeight);
-        var desiredPosition = Math.Clamp(e.GetPosition(LogScrollTrack).Y - _logThumbGrabOffset, 0, travel);
-        SetLogScrollFromThumbPosition(desiredPosition, travel);
-    }
-
-    private void LogScrollThumb_MouseLeftButtonUp(object sender, MouseButtonEventArgs e)
-    {
-        _logThumbDragging = false;
-        LogScrollThumb.ReleaseMouseCapture();
-        e.Handled = true;
-    }
-
-    private void LogScrollThumb_LostMouseCapture(object sender, MouseEventArgs e) => _logThumbDragging = false;
-
-    private void LogScrollTrack_PreviewMouseWheel(object sender, MouseWheelEventArgs e)
-    {
-        if (_logScrollViewer is null) return;
-        _logScrollViewer.ScrollToVerticalOffset(_logScrollViewer.VerticalOffset - e.Delta / 2d);
-        e.Handled = true;
-    }
-
-    private void SetLogScrollFromThumbPosition(double position, double travel)
-    {
-        if (_logScrollViewer is null) return;
-        ((TranslateTransform)LogScrollThumb.RenderTransform).Y = position;
-        _logScrollViewer.ScrollToVerticalOffset(position / travel * _logScrollViewer.ScrollableHeight);
-    }
-
     private static T? FindVisualDescendant<T>(DependencyObject parent) where T : DependencyObject
     {
         for (var index = 0; index < VisualTreeHelper.GetChildrenCount(parent); index++)
@@ -899,7 +834,7 @@ public partial class MainWindow : Window
     });
     private async void RouteCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
-        if (RouteCombo.SelectedItem is not string route) return;
+        if (RouteCombo.SelectedItem is not ComboBoxItem { Tag: string route }) return;
         UpdateRouteHint(route);
         if (_loading || _settings is null) return;
         await RunExclusiveAsync(async () =>
@@ -963,9 +898,20 @@ public partial class MainWindow : Window
         SettingsDialogSelection? applied = null;
         await RunExclusiveAsync(async () =>
         {
+            string? transferredPath = null;
+            if (choice.Transfer is { } transfer)
+            {
+                if (_core.HasTrackedProcess && !string.Equals(choice.CorePath, _settings.CorePath, StringComparison.OrdinalIgnoreCase))
+                    throw new InvalidOperationException("Перед сменой ядра останови VPN.");
+                transferredPath = await ConfigurationTransfer.CreateProfileAsync(transfer, choice.CorePath, _settings.StorageDirectory, _lifetime.Token);
+            }
             _settings.Theme = ThemeManager.Normalize(choice.Theme);
             _settings.InterfaceScale = AppSettings.NormalizeScale(choice.InterfaceScale);
             _settings.AutoCheckUpdates = choice.AutoCheckUpdates;
+            if (choice.LaunchAtSignIn != _settings.LaunchAtSignIn)
+                StartupRegistration.SetEnabled(choice.LaunchAtSignIn);
+            _settings.LaunchAtSignIn = choice.LaunchAtSignIn;
+            _settings.AutoConnectOnStartup = choice.AutoConnectOnStartup;
             ThemeManager.Apply(_settings.Theme);
             ApplyInterfaceScale(_settings.InterfaceScale);
             await SaveSettingsAsync();
@@ -978,22 +924,19 @@ public partial class MainWindow : Window
                 await SaveSettingsAsync();
                 SetLog("Путь к ядру Mihomo сохранён.");
             }
-            if (choice.Imported is { } imported) await ImportProfileAsync(imported);
+            if (choice.Transfer is { } package) await ImportConfigurationAsync(package, transferredPath!);
+            else if (choice.Imported is { } imported) await ImportProfileAsync(imported);
             else if (!string.Equals(choice.ConfigPath, _settings.ConfigPath, StringComparison.OrdinalIgnoreCase)
                 && !string.IsNullOrWhiteSpace(choice.ConfigPath))
                 await LoadConfigAsync(choice.ConfigPath);
             SetLog("Настройки сохранены.");
             applied = new SettingsDialogSelection(_settings.ConfigPath, _settings.CorePath, _settings.Theme,
-                _settings.InterfaceScale, _settings.AutoCheckUpdates);
+                _settings.InterfaceScale, _settings.AutoCheckUpdates, LaunchAtSignIn: _settings.LaunchAtSignIn,
+                AutoConnectOnStartup: _settings.AutoConnectOnStartup);
         });
         return applied;
     }
-    private async void ImportProfile_Click(object sender, RoutedEventArgs e)
-    {
-        if (_busy || _closing) return;
-        var imported = ProfileImportDialog.Show(this);
-        if (imported is not null) await RunExclusiveAsync(() => ImportProfileAsync(imported));
-    }
+
     private async Task ImportProfileAsync(ImportedProfile imported)
     {
         if (!File.Exists(_settings.CorePath)) _settings.CorePath = await BundledResources.EnsureCoreAsync(_lifetime.Token);
@@ -1002,20 +945,7 @@ public partial class MainWindow : Window
         await LoadConfigAsync(path);
         SetLog("Создан новый локальный YAML. Остальные профили сохранены. Добавь сайты или приложения в правила VPN.");
     }
-    private async void ChooseConfig_Click(object sender, RoutedEventArgs e) => await RunExclusiveAsync(async () =>
-    {
-        var dialog = new OpenFileDialog { Filter = "YAML (*.yaml;*.yml)|*.yaml;*.yml", CheckFileExists = true };
-        if (File.Exists(_settings.ConfigPath)) dialog.InitialDirectory = Path.GetDirectoryName(_settings.ConfigPath);
-        if (dialog.ShowDialog(this) == true) await LoadConfigAsync(dialog.FileName);
-    });
-    private async void ChooseCore_Click(object sender, RoutedEventArgs e) => await RunExclusiveAsync(async () =>
-    {
-        if (_core.HasTrackedProcess) throw new InvalidOperationException("Перед сменой ядра останови VPN.");
-        var dialog = new OpenFileDialog { Filter = "Ядро Mihomo (*.exe)|*.exe", CheckFileExists = true };
-        if (dialog.ShowDialog(this) != true) return;
-        _settings.CorePath = dialog.FileName;
-        await SaveSettingsAsync();
-    });
+
     private async void ChooseProcess_Click(object sender, RoutedEventArgs e)
     {
         if (_busy || _closing) return;
@@ -1032,10 +962,11 @@ public partial class MainWindow : Window
     }
     private async Task AddApplicationsAsync(IEnumerable<string> processNames)
     {
-        if (_document is null || RouteCombo.SelectedItem is not string route)
+        if (_document is null)
             throw new InvalidOperationException("Сначала выбери профиль и маршрут.");
         var names = processNames.Select(name => ClashConfigDocument.NormalizeDomain(name, "PROCESS-NAME"))
             .Distinct(StringComparer.OrdinalIgnoreCase).ToArray();
+        var route = ResolveNewRuleRoute();
         var added = names.Where(name => !_rules.Any(rule => rule.Kind == "PROCESS-NAME" &&
             rule.Value.Equals(name, StringComparison.OrdinalIgnoreCase)))
             .Select(name => new DomainRule { Kind = "PROCESS-NAME", Value = name, Route = route }).ToArray();
@@ -1054,12 +985,13 @@ public partial class MainWindow : Window
         else DragMove();
     }
     private void Minimize_Click(object sender, RoutedEventArgs e) => WindowState = WindowState.Minimized;
-    private void Close_Click(object sender, RoutedEventArgs e) => Close();
+    private void Close_Click(object sender, RoutedEventArgs e) => HideToTray();
 
     private async void MainWindow_Closing(object? sender, CancelEventArgs e)
     {
         if (_allowClose) return;
         e.Cancel = true;
+        if (_tray is not null && !_exitRequested && !_closing) { HideToTray(); return; }
         if (_closing) return;
         _closing = true;
         _lifetime.Cancel();
@@ -1077,9 +1009,11 @@ public partial class MainWindow : Window
         catch (Exception ex)
         {
             _closing = false;
+            _exitRequested = false;
             _lifetime.Dispose();
             _lifetime = new CancellationTokenSource();
             SetLog(ex.Message);
+            RestoreFromTray();
             UtilityDialogs.ShowNotice(this, "Не удалось закрыть приложение", ex.Message);
         }
         finally { _operations.Release(); UpdateControls(); }

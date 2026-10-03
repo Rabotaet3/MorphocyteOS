@@ -111,8 +111,6 @@ internal static class ThemeManager
         var checkMark = p.Light ? "#FFFFFF" : p.OnAccent;
         var resources = new Dictionary<string, object>(StringComparer.Ordinal)
         {
-            ["Ink"] = Brush(p.Text), ["Muted"] = Brush(p.Muted), ["Mint"] = Brush(p.Accent), ["Cyan"] = Brush(p.Secondary),
-            ["Panel"] = Brush(p.Panel), ["Line"] = Brush(p.Border), ["MintGradient"] = accentGradient, ["PanelGradient"] = panelGradient,
             ["ThemeCanvas"] = Brush(p.Canvas), ["ThemeAppOutline"] = accentGradient, ["ThemeAppInnerOutline"] = Brush(p.Border), ["ThemeAppGlow"] = Brush(p.Accent),
             ["ThemeAccentGlowColor"] = Parse(p.Accent), ["ThemeStatusNeutral"] = Brush(p.Muted),
             ["ThemeBackgroundGradient"] = backgroundGradient, ["ThemeTitleBar"] = Brush(p.TitleBar),
@@ -154,12 +152,6 @@ internal static class ThemeManager
     }
 
     internal static Brush GetBrush(string key) => Application.Current?.Resources[key] as Brush ?? Brushes.Transparent;
-    internal static Color GetColor(string key) => Application.Current?.Resources[key] switch
-    {
-        Color color => color,
-        SolidColorBrush brush => brush.Color,
-        _ => Colors.Transparent
-    };
 
     private static Color Parse(string value) => (Color)ColorConverter.ConvertFromString(value)!;
 

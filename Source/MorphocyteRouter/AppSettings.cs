@@ -24,7 +24,10 @@ public sealed class AppSettings
     public string Theme { get; set; } = "Тёмная морфоцитная";
     public double InterfaceScale { get; set; } = 1;
     public bool AutoCheckUpdates { get; set; } = true;
+    public string AutoUpdateBlockedVersion { get; set; } = "";
     public bool ShowEventLog { get; set; }
+    public bool LaunchAtSignIn { get; set; }
+    public bool AutoConnectOnStartup { get; set; } = true;
     // Legacy fields migrate 1.5.x drafts on load.
     public bool HasRuleDraft { get; set; }
     public string DraftConfigPath { get; set; } = "";

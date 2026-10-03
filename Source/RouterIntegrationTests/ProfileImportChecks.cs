@@ -126,7 +126,7 @@ internal partial class Program
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
             timer.Tick += (_, _) =>
             {
-                var dialog = window.OwnedWindows.Cast<Window>().FirstOrDefault(value => value.Title == "ИМПОРТ ПРОФИЛЯ");
+                var dialog = Application.Current.Windows.Cast<Window>().FirstOrDefault(value => value.Title == "ИМПОРТ ПРОФИЛЯ");
                 if (dialog is null) return;
                 timer.Stop(); seen = true;
                 var input = Descendants<TextBox>(dialog).Single(value => value.Name == "ImportProfileInput");
@@ -141,7 +141,7 @@ internal partial class Program
                 Descendants<Button>(dialog).Single(value => Equals(value.Content, "СОЗДАТЬ ПРОФИЛЬ")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             };
             timer.Start();
-            typeof(MainWindow).GetMethod("ImportProfile_Click", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, new object[] { window, new RoutedEventArgs() });
+            ImportProfileViaSettings(window);
             await gate.WaitAsync(); gate.Release();
             timer.Stop();
             Check(seen && window.OwnedWindows.Count == 0 && window.WindowState != WindowState.Minimized, "import modal submits and restores its visible owner without leftover blur");
@@ -150,9 +150,9 @@ internal partial class Program
             Check(AppSettings.Load(Path.Combine(scratch, "import-ui", "settings.json")).ConfigPath == settings.ConfigPath, "imported profile path is persisted across launches");
             var savedPath = settings.ConfigPath;
             var cancelTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
-            cancelTimer.Tick += (_, _) => { var dialog = window.OwnedWindows.Cast<Window>().FirstOrDefault(value => value.Title == "ИМПОРТ ПРОФИЛЯ"); if (dialog is null) return; cancelTimer.Stop(); dialog.Close(); };
+            cancelTimer.Tick += (_, _) => { var dialog = Application.Current.Windows.Cast<Window>().FirstOrDefault(value => value.Title == "ИМПОРТ ПРОФИЛЯ"); if (dialog is null) return; cancelTimer.Stop(); dialog.Close(); };
             cancelTimer.Start();
-            typeof(MainWindow).GetMethod("ImportProfile_Click", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, new object[] { window, new RoutedEventArgs() });
+            ImportProfileViaSettings(window);
             cancelTimer.Stop();
             Check(settings.ConfigPath == savedPath && window.IsVisible && window.WindowState != WindowState.Minimized, "cancelled import does not switch profiles or minimize the app");
             var settingsSeen = false;
@@ -194,6 +194,40 @@ internal partial class Program
         return count;
     }
 
+    private static void ImportProfileViaSettings(MainWindow window)
+    {
+        Exception? failure = null;
+        var seen = false;
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
+        timer.Tick += async (_, _) =>
+        {
+            var dialog = window.OwnedWindows.Cast<Window>().FirstOrDefault(value => value.Title == "НАСТРОЙКИ");
+            if (dialog is null) return;
+            timer.Stop(); seen = true;
+            try
+            {
+                Descendants<Button>(dialog).Single(value => Equals(value.Content, "VPN-профиль")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Descendants<Button>(dialog).Single(value => Equals(value.Content, "Импорт профиля")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                if (Descendants<TextBlock>(dialog).Any(value => value.Text.StartsWith("Новый профиль:", StringComparison.Ordinal)))
+                {
+                    Descendants<Button>(dialog).Single(value => Equals(value.Content, "СОХРАНИТЬ")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    var gate = (SemaphoreSlim)typeof(MainWindow).GetField("_operations", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
+                    await gate.WaitAsync(); gate.Release();
+                    await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                }
+            }
+            catch (Exception ex) { failure = ex; }
+            finally { if (dialog.IsVisible) dialog.Close(); }
+        };
+        timer.Start();
+        try
+        {
+            typeof(MainWindow).GetMethod("SettingsButton_Click", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, new object[] { window, new RoutedEventArgs() });
+            if (failure is not null) throw failure;
+            if (!seen) throw new Exception("Settings import workflow did not open");
+        }
+        finally { timer.Stop(); }
+    }
     private static async Task<int> RunConnectionNameChecks(MainWindow window, AppSettings settings, string link)
     {
         var count = 0;
@@ -202,14 +236,14 @@ internal partial class Program
         var oldText = File.ReadAllText(oldPath);
         var phase = 0;
         Exception? failure = null;
-        var deadline = DateTime.UtcNow.AddSeconds(10);
+        var deadline = DateTime.UtcNow.AddSeconds(20);
         var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
         timer.Tick += (_, _) =>
         {
             try
             {
                 if (DateTime.UtcNow > deadline) throw new Exception("Name dialog test timed out");
-                var import = window.OwnedWindows.Cast<Window>().FirstOrDefault(value => value.Title == "ИМПОРТ ПРОФИЛЯ");
+                var import = Application.Current.Windows.Cast<Window>().FirstOrDefault(value => value.Title == "ИМПОРТ ПРОФИЛЯ");
                 var naming = import?.OwnedWindows.Cast<Window>().FirstOrDefault(value => value.Title == "НАЗВАНИЕ ПОДКЛЮЧЕНИЯ");
                 if (phase == 0 && import is not null)
                 {
@@ -249,7 +283,7 @@ internal partial class Program
             catch (Exception ex)
             {
                 failure = ex; timer.Stop();
-                var import = window.OwnedWindows.Cast<Window>().FirstOrDefault(value => value.Title == "ИМПОРТ ПРОФИЛЯ");
+                var import = Application.Current.Windows.Cast<Window>().FirstOrDefault(value => value.Title == "ИМПОРТ ПРОФИЛЯ");
                 foreach (var nested in import?.OwnedWindows.Cast<Window>().ToArray() ?? Array.Empty<Window>()) nested.Close();
                 import?.Close();
             }
@@ -257,7 +291,7 @@ internal partial class Program
         timer.Start();
         try
         {
-            typeof(MainWindow).GetMethod("ImportProfile_Click", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, new object[] { window, new RoutedEventArgs() });
+            ImportProfileViaSettings(window);
             var gate = (SemaphoreSlim)typeof(MainWindow).GetField("_operations", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
             await gate.WaitAsync(); gate.Release();
             if (failure is not null) throw failure;

@@ -24,7 +24,6 @@ internal static class ReleaseUpdateService
     private static readonly Regex RepositoryPattern = new(
         @"\A[A-Za-z0-9](?:[A-Za-z0-9-]{0,38})/[A-Za-z0-9_.-]{1,100}\z", RegexOptions.CultureInvariant);
 
-    public static bool IsConfigured => ReadSource().Repository is not null;
     public static string SourceStatus => ReadSource().Message;
 
     public static Task<UpdateCheckResult> CheckAsync(CancellationToken cancellationToken = default)
@@ -87,10 +86,12 @@ internal static class ReleaseUpdateService
                 var asset = FindAsset(root, repository!, tag!, version);
                 return new(true, true, asset is null
                     ? $"Доступна версия {version}, но проверенный архив для Windows x64 пока недоступен."
-                    : $"Доступна версия {version}. Нажми «Загрузить актуальную версию», чтобы подготовить обновление.",
+                    : $"Доступна версия {version}. Нажми «Обновить», чтобы установить её и перезапустить приложение.",
                     releaseUrl, version, asset, repository);
             }
-            return new(true, false, $"Установлена актуальная сборка ({currentVersion}). Последний стабильный релиз: {version}.", releaseUrl, version);
+            return new(true, false, latest.CompareTo(current) == 0
+                ? $"Установлена актуальная сборка ({currentVersion}). Последний стабильный релиз: {version}."
+                : $"Эта сборка ({currentVersion}) новее опубликованного релиза {version}. Обновление не требуется.", releaseUrl, version);
         }
         catch (OperationCanceledException) when (!cancellationToken.IsCancellationRequested)
         {

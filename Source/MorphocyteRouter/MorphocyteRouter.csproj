@@ -5,15 +5,16 @@
     <RuntimeFrameworkVersion>10.0.12</RuntimeFrameworkVersion>
     <RuntimeIdentifiers>win-x64</RuntimeIdentifiers>
     <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
     <Nullable>enable</Nullable>
     <ImplicitUsings>enable</ImplicitUsings>
     <AssemblyName>MorphocyteOS</AssemblyName>
     <RootNamespace>MorphocyteRouter</RootNamespace>
     <ApplicationManifest>app.manifest</ApplicationManifest>
     <ApplicationIcon>Assets\morphocyte.ico</ApplicationIcon>
-    <Version>1.1.1</Version>
-    <AssemblyVersion>1.1.1.0</AssemblyVersion>
-    <FileVersion>1.1.1.0</FileVersion>
+    <Version>1.2.1</Version>
+    <AssemblyVersion>1.2.1.0</AssemblyVersion>
+    <FileVersion>1.2.1.0</FileVersion>
     <IncludeSourceRevisionInInformationalVersion>false</IncludeSourceRevisionInInformationalVersion>
     <Authors>MorphocyteOS</Authors>
     <Product>MorphocyteOS Router</Product>
@@ -23,6 +24,8 @@
     <DebugType>embedded</DebugType>
   </PropertyGroup>
   <ItemGroup>
+    <Using Remove="System.Windows.Forms" />
+    <Using Remove="System.Drawing" />
     <PackageReference Include="YamlDotNet" Version="18.1.0" />
     <Resource Include="Assets\morphocyte-icon.png" />
     <Resource Include="Assets\morphocyte.ico" />

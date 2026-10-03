@@ -41,7 +41,7 @@ internal partial class Program
         settings.AutoCheckUpdates = false;
         settings.ConfigPath = config;
         settings.CorePath = Path.GetFullPath(fakeExe);
-        settings.ShowEventLog = true;
+        settings.ShowEventLog = false;
         var window = new MainWindow(settings, Path.Combine(scratch, "test.log"));
         object Field(string name) => typeof(MainWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
         Task Call(string name, params object[] values) => (Task)typeof(MainWindow).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, values)!;
@@ -59,8 +59,12 @@ internal partial class Program
         {
             passed += await RunFreshLaunchChecks(scratch);
             passed += await RunProfileImportChecks(scratch, fakeExe);
+            passed += await RunConfigurationTransferChecks(scratch, fakeExe);
             passed += await RunRuleInteractionChecks(scratch, fakeExe);
             passed += await RunProcessAndUpdateChecks(scratch, fakeExe);
+            passed += await RunDesktopFeatureChecks(scratch, fakeExe);
+            passed += await RunRealDiagnosticsChecks(scratch);
+            passed += await RunTelemetryChecks();
             var workspace = (FrameworkElement)Field("Workspace");
             var busyField = typeof(MainWindow).GetField("_busy", BindingFlags.Instance | BindingFlags.NonPublic)!;
             busyField.SetValue(window, true);
@@ -95,17 +99,17 @@ internal partial class Program
             await Call("LoadConfigAsync", config);
             Check(rules[0].Route == "DIRECT", "profile imported with direct exception");
             var routeCombo = (ComboBox)Field("RouteCombo");
-            Check(routeCombo.Items.Cast<object>().Select(item => item.ToString()).Contains("DIRECT")
-                && routeCombo.Items.Cast<object>().Select(item => item.ToString()).Contains("REJECT"),
+            Check(routeCombo.Items.OfType<ComboBoxItem>().Any(item => Equals(item.Tag, "DIRECT"))
+                && routeCombo.Items.OfType<ComboBoxItem>().Any(item => Equals(item.Tag, "REJECT")),
                 "UI exposes direct and reject actions");
             var victim = rules[0];
             typeof(MainWindow).GetMethod("DeleteRule_Click", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .Invoke(window, new object[] { new Button { Tag = victim }, new RoutedEventArgs() });
-            await Task.Delay(200);
+            await WaitForUiOperation();
             Check(!rules.Contains(victim), "delete removes rule through actual UI handler");
             typeof(MainWindow).GetMethod("UndoDelete_Click", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .Invoke(window, new object[] { new Button(), new RoutedEventArgs() });
-            await Task.Delay(200);
+            await WaitForUiOperation();
             Check(rules.Any(rule => rule.Value == victim.Value && rule.Route == "DIRECT"), "undo restores deleted rule");
             var secondRan = false;
             var running = Call("RunExclusiveAsync", (Func<Task>)(() => Task.Delay(80)));
@@ -122,7 +126,7 @@ internal partial class Program
             disabledRule.Folder = "Исключения";
             typeof(MainWindow).GetMethod("RuleEnabled_Click", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .Invoke(window, new object[] { new CheckBox { DataContext = disabledRule }, new RoutedEventArgs() });
-            await Task.Delay(150);
+            await WaitForUiOperation();
             await Call("ApplyChangesAsync", true);
             Check(!ClashConfigDocument.Load(config).Rules.Any(rule => rule.Value == disabledRule.Value),
                 "disabled rule omitted from applied config");
@@ -134,7 +138,7 @@ internal partial class Program
             disabledRule = rules.First(rule => rule.Value == disabledRule.Value);
             typeof(MainWindow).GetMethod("RuleEnabled_Click", BindingFlags.Instance | BindingFlags.NonPublic)!
                 .Invoke(window, new object[] { new CheckBox { DataContext = disabledRule }, new RoutedEventArgs() });
-            await Task.Delay(150);
+            await WaitForUiOperation();
             await Call("ApplyChangesAsync", true);
             Check(ClashConfigDocument.Load(config).Rules.Any(rule => rule.Value == disabledRule.Value),
                 "reenabled rule returns to applied config");

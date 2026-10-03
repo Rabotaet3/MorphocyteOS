@@ -41,10 +41,10 @@ internal partial class Program
                 && !Descendants<Button>(window).Any(button => Equals(button.Content, "Импорт профиля"))
                 && !((Button)Field("PowerButton")).IsEnabled,
                 "fresh launch has no onboarding overlay or import button in the main toolbar, and blocks empty-template VPN start");
-            var toggle = (ToggleButton)Field("LogVisibilityToggle");
+            var toggle = (Button)Field("JournalTabButton");
             var text = (TextBox)Field("LogText");
-            Check(toggle.IsVisible && toggle.IsChecked == false && text.Visibility == Visibility.Collapsed,
-                "fresh launch keeps logs collapsed while leaving their toggle available");
+            Check(toggle.IsVisible && !text.IsVisible,
+                "fresh launch opens routes while keeping the journal tab available");
             Check(Descendants<Button>(window).Any(button => Equals(button.ToolTip, "Настройки") && button.IsVisible),
                 "fresh launch offers visible settings to choose profile and core");
             Check(!Descendants<Button>(window).Any(button => Equals(button.ToolTip, "Проверка скорости")),

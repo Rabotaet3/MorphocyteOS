@@ -21,8 +21,7 @@ public partial class App : Application
         _singleInstance = new Mutex(true, "Local\\MorphocyteOS.Router.SingleInstance", out _ownsMutex);
         if (!_ownsMutex)
         {
-            ThemeManager.Apply("Тёмная морфоцитная");
-            UtilityDialogs.ShowNotice(null, "MorphocyteOS", "Приложение уже запущено. Переключись на существующее окно.");
+            if (!e.Args.Contains("--startup")) MorphocyteRouter.MainWindow.RequestExistingWindow();
             Shutdown();
             return;
         }

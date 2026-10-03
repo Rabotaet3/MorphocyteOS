@@ -20,9 +20,10 @@ public sealed class ClashConfigDocument
     public string SourceHash { get; }
     public IReadOnlyList<DomainRule> Rules { get; }
     public IReadOnlyList<string> Routes { get; }
-    public string? EndpointHost { get; }
-    public int? EndpointPort { get; }
-    public int? HttpProxyPort { get; }
+
+    public string? VpnRoute { get; }
+    public int ConnectionCount { get; }
+
     public bool HasVpnConnection => Get(_root, "proxies") is YamlSequenceNode proxies && proxies.Children.OfType<YamlMappingNode>()
         .Any(proxy => Scalar(proxy, "type") is { } type && type is not ("direct" or "reject"))
         || Get(_root, "proxy-providers") is YamlMappingNode providers && providers.Children.Count > 0;
@@ -49,7 +50,7 @@ public sealed class ClashConfigDocument
         if (yaml.Documents.Count != 1 || yaml.Documents[0].RootNode is not YamlMappingNode root)
             throw new InvalidDataException("Ожидается один YAML-документ с настройками.");
         _root = root;
-        HttpProxyPort = ParsePort(Scalar(root, "mixed-port")) ?? ParsePort(Scalar(root, "port"));
+        ConnectionCount = (Get(root, "proxies") as YamlSequenceNode)?.Children.Count ?? 0;
         if (Get(root, "rules") is not YamlSequenceNode sequence)
             throw new InvalidDataException("Секция rules должна быть списком правил.");
         _allRules = sequence.Children.Select(node => node is YamlScalarNode { Value: not null } scalar
@@ -73,13 +74,30 @@ public sealed class ClashConfigDocument
                 if (!string.IsNullOrWhiteSpace(name) && name is not "DIRECT" and not "REJECT" && !routes.Contains(name)) routes.Add(name);
                 if (section == "proxies" && Endpoint == "не определён" && Scalar(item, "server") is { } server)
                 {
-                    EndpointHost = server;
-                    if (int.TryParse(Scalar(item, "port"), out var port)) EndpointPort = port;
                     Endpoint = $"{server}:{Scalar(item, "port")}";
                 }
             }
         }
         Routes = routes;
+        var groups = (Get(root, "proxy-groups") as YamlSequenceNode)?.Children.OfType<YamlMappingNode>()
+            .Select(group => Scalar(group, "name")).Where(name => !string.IsNullOrWhiteSpace(name) && name is not ("DIRECT" or "REJECT")).ToArray();
+        VpnRoute = groups?.FirstOrDefault(name => name == "VPN") ?? groups?.FirstOrDefault() ?? routes.FirstOrDefault();
+    }
+
+    internal string BuildRuntimeText(int controllerPort, string secret)
+    {
+        if (controllerPort is < 1 or > 65535 || !System.Text.RegularExpressions.Regex.IsMatch(secret, "^[A-F0-9]{64}$"))
+            throw new ArgumentException("Недопустимые параметры локальной диагностики.");
+        var yaml = new YamlStream();
+        yaml.Load(new StringReader(_yamlText));
+        var root = (YamlMappingNode)yaml.Documents[0].RootNode;
+        foreach (var key in new[] { "external-controller", "external-controller-tls", "external-controller-unix", "external-controller-pipe", "secret", "external-ui", "external-ui-url", "external-ui-name", "external-controller-cors" })
+            root.Children.Remove(new YamlScalarNode(key));
+        root.Add("external-controller", $"127.0.0.1:{controllerPort}");
+        root.Add("secret", secret);
+        using var writer = new StringWriter();
+        yaml.Save(writer, assignAnchors: false);
+        return writer.ToString();
     }
 
     public static ClashConfigDocument Load(string path) => new(path, File.ReadAllText(path));
@@ -88,8 +106,6 @@ public sealed class ClashConfigDocument
     private static int LineStart(string text, int index) => text.LastIndexOf('\n', Math.Max(0, index - 1)) + 1;
     private static YamlNode? Get(YamlMappingNode mapping, string key) => mapping.Children.TryGetValue(new YamlScalarNode(key), out var value) ? value : null;
     private static string? Scalar(YamlMappingNode mapping, string key) => (Get(mapping, key) as YamlScalarNode)?.Value;
-    private static int? ParsePort(string? value) => int.TryParse(value, NumberStyles.None, CultureInfo.InvariantCulture, out var port)
-        && port is >= 1 and <= 65535 ? port : null;
 
     private static DomainRule? ParseRule(string text, int index)
     {
@@ -182,8 +198,6 @@ public sealed class ClashConfigDocument
             throw new ArgumentException("Поле правила пусто или содержит запятую / управляющий символ.");
     }
 
-    public string SaveRules(IEnumerable<DomainRule> rules) => CommitText(BuildText(rules));
-
     public string CommitText(string text)
     {
         _ = Parse(Path, text);
@@ -261,21 +275,4 @@ public sealed class ClashConfigDocument
         return host;
     }
 
-    public IReadOnlyList<string> AnalyzeRules(IEnumerable<DomainRule> rules)
-    {
-        var snapshot = rules.ToList();
-        var warnings = new List<string>();
-        foreach (var duplicate in snapshot.GroupBy(rule => (Kind: rule.Kind.ToUpperInvariant(), Value: rule.Value.ToLowerInvariant()))
-                     .Where(group => group.Count() > 1))
-            warnings.Add($"Повтор: {duplicate.Key.Kind} {duplicate.First().Value} ({duplicate.Count()} правила)." );
-
-        var firstProcess = snapshot.FindIndex(rule => rule.Kind == "PROCESS-NAME");
-        if (firstProcess >= 0)
-        {
-            foreach (var rule in snapshot.Skip(firstProcess + 1).Where(rule => rule.Route.Equals("DIRECT", StringComparison.OrdinalIgnoreCase)
-                         && rule.Kind.StartsWith("DOMAIN", StringComparison.Ordinal)))
-                warnings.Add($"Исключение {rule.Value} находится после правила процесса и может не сработать. Удали и добавь его заново — приложение поставит его выше.");
-        }
-        return warnings;
-    }
 }

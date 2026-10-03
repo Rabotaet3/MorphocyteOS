@@ -7,6 +7,16 @@ using System.Text.Json;
 using MorphocyteRouter;
 
 if (args.Length == 2 && args[0] == "--apply-update") return await UpdateInstaller.RunAsync(args[1]);
+if (args.Length == 2 && args[0] == "--live-release-check")
+{
+    using var client = new HttpClient(new HttpClientHandler { AllowAutoRedirect = false }) { Timeout = Timeout.InfiniteTimeSpan };
+    var release = await ReleaseUpdateService.CheckAsync(client, "Rabotaet3/MorphocyteOS", "0.0.0");
+    if (!release.UpdateAvailable || release.Asset is null) throw new Exception("Live release unavailable: " + release.Message);
+    var prepared = await UpdateDownloader.PrepareAsync(client, release, Path.GetFullPath(args[1]), null, default);
+    Console.WriteLine($"Live GitHub release {prepared.Manifest.Version}: downloaded and verified {prepared.Manifest.Files.Count} hashed files. No installation performed.");
+    UpdateDownloader.DeleteOperation(Path.GetFullPath(args[1]), prepared.Directory);
+    return 0;
+}
 if (args.Length == 2 && args[0] == "--fixture-parent")
 {
     File.WriteAllText(args[1], "ready");

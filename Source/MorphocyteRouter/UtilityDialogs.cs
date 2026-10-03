@@ -1,21 +1,17 @@
 using Microsoft.Win32;
-using System.Diagnostics;
 using System.IO;
 using System.Windows;
 using System.Windows.Controls;
-using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
 
 namespace MorphocyteRouter;
 
-internal sealed record SettingsDialogSelection(string ConfigPath, string CorePath, string Theme, double InterfaceScale, bool AutoCheckUpdates, ImportedProfile? Imported = null);
+internal sealed record SettingsDialogSelection(string ConfigPath, string CorePath, string Theme, double InterfaceScale, bool AutoCheckUpdates, ImportedProfile? Imported = null, bool LaunchAtSignIn = false, bool AutoConnectOnStartup = true, ConfigurationPackage? Transfer = null);
 
 internal static class UtilityDialogs
 {
     private static Brush Ink => ThemeManager.GetBrush("ThemeText");
     private static Brush Muted => ThemeManager.GetBrush("ThemeMuted");
-    private static Brush Accent => ThemeManager.GetBrush("ThemeAccent");
 
     public static void ShowNotice(Window? owner, string title, string message, string buttonText = "ПОНЯТНО")
     {
@@ -50,15 +46,19 @@ internal static class UtilityDialogs
         AddFaq(body, "С чего начать?", "Ядро Mihomo поставляется рядом с приложением отдельным EXE, а нейтральный YAML-шаблон встроен. Нажми «Импорт профиля», вставь свою VLESS-ссылку или JSON Xray и создай YAML. Либо выбери готовый YAML в настройках. Чужих серверов и ключей в программе нет.");
         AddFaq(body, "Что делает импорт?", "Принимает HTTPS-подписку (YAML Clash/Mihomo, список VLESS или Base64), VLESS-ссылку или JSON Xray с одним VLESS-сервером. Создаёт отдельный локальный YAML с TUN. Из подписки переносятся серверы, а не чужие правила, DNS или inbounds. По умолчанию трафик идёт напрямую; через VPN идут добавленные правила. Подписка загружается по нажатию; автоматически не обновляется. Исходный профиль не перезаписывается.");
         AddFaq(body, "Как направить сайт через VPN?", "Введи домен, например example.com, выбери «Весь домен», маршрут VPN и нажми «Добавить». Затем нажми «Применить в YAML». «Весь домен» включает поддомены, «Точное имя» — только этот адрес, «По слову» — совпадение части домена.");
-        AddFaq(body, "Как добавить целую программу?", "Нажми «Выбрать .exe» или «Запущенные процессы». В поле появится имя исполняемого файла. Добавь правило и примени изменения. Правило охватывает все соединения этой программы.");
+        AddFaq(body, "Как добавить целую программу?", "Нажми «Выбрать .exe» или «Запущенные процессы». Выбранные приложения добавляются в черновик правил; можно выбрать несколько через Ctrl/Shift. Затем нажми «Применить в YAML». Правило охватывает соединения этой программы.");
+        AddFaq(body, "Как изменить маршрут правила?", "Нажми маршрут справа в строке правила и выбери VPN, «Напрямую» или «Блокировать». Если строка входит в выделенную группу, маршрут изменится у всех выделенных правил. Изменения начнут действовать после «Применить в YAML».");
         AddFaq(body, "Что означают DIRECT и REJECT?", "DIRECT направляет трафик через обычное подключение, REJECT блокирует его. Для исключения из правила приложения добавь нужный домен с DIRECT.");
         AddFaq(body, "Как работают папки и выделение?", "Перетащи правило на другое, чтобы создать папку, или в существующую папку. Ctrl + клик выбирает несколько правил, Shift + клик — диапазон. Галочка выбранного правила переключает всю выделенную группу. Галочка папки переключает все её правила, включая скрытые поиском.");
         AddFaq(body, "Как перемещать и удалять папки?", "Тяни заголовок папки вверх или вниз для изменения порядка. Правила можно вынести в «Общие правила». При удалении папки её правила остаются в общих.");
         AddFaq(body, "Изменения сохраняются автоматически?", "Список, папки, отключённые правила и оформление сохраняются между запусками. Черновик начинает влиять на трафик после «Применить в YAML». Перед записью профиль проверяется ядром; остаются три последние резервные копии.");
         AddFaq(body, "Почему правило не действует?", "Проверь, что профиль работает в режиме rule, TUN включён, VPN запущен и изменения применены. Иногда сервису нужны дополнительные домены. Если другое правило совпало раньше, оно может иметь приоритет.");
         AddFaq(body, "Почему после удаления правила трафик всё ещё идёт через VPN?", "У профиля есть остальные правила и действие по умолчанию (MATCH). Они сохраняются: удаление правила программы не заставляет весь её трафик идти напрямую. Сложные RULE-SET, GEOIP и другие правила не показаны в этом редакторе; их нужно проверять в самом YAML.");
-        AddFaq(body, "Как настроить внешний вид?", "В настройках можно выбрать тему и масштаб. Масштаб меняет кнопки, списки, окна и шрифты. Журнал событий можно скрыть переключателем в нижней части окна.");
-        AddFaq(body, "Как обновлять приложение?", "Ручная проверка доступна в настройках. Автоматическая проверка выполняется при запуске, если ты её включил. При доступном релизе программа предлагает открыть страницу загрузки.");
+        AddFaq(body, "Как настроить внешний вид и открыть журнал?", "В настройках можно выбрать тему и масштаб. Масштаб меняет кнопки, списки, окна и шрифты. Вкладка «Журнал и соединения» показывает события ядра и активные соединения с процессами, адресами, правилами и маршрутами.");
+        AddFaq(body, "Как работают трей и автозапуск?", "Крестик сворачивает окно в трей, оставляя VPN работать. В меню значка «Выход» останавливает VPN и закрывает приложение. В настройках → «Запуск» можно включить запуск при входе в Windows и подключение последнего сохранённого профиля. Черновик при автоподключении не применяется.");
+        AddFaq(body, "Как перенести настройки?", "В настройках → «VPN-профиль» → «Перенос» нажми «Экспорт настроек». Файл .morphocyte содержит выбранный профиль с данными подключения, правила, папки и параметры приложения. На другом компьютере выбери «Импорт настроек» и «Сохранить». Создаётся отдельная копия профиля; неприменённые правила остаются черновиком. Ядро берётся с нового компьютера. Файл содержит секреты VPN — передавай его только доверенному человеку.");
+        AddFaq(body, "Что показывают скорость, пинг и доступность?", "Скорость — текущий трафик через ядро, включая прямые маршруты. Пинг — задержка HTTPS-запроса через VPN, а доступность — доля успешных запросов среди последних 20 проверок. Проверки идут каждые 20 секунд при открытом окне. Это не тест максимальной скорости и не измерение потерь пакетов.");
+        AddFaq(body, "Как обновлять приложение?", "Автообновление проверяет GitHub при запуске и каждые 30 минут. Найденную версию устанавливает, когда VPN выключен и диалоги закрыты. Верхнее уведомление можно отложить до следующего запуска. В настройках → «Обновления» можно отключить автообновление, проверить релиз вручную и установить его по кнопке; ручная установка остановит VPN. Личные профили и настройки сохраняются. После обновления запусти VPN вручную.");
         var dialog = DialogChrome.CreateWindow(owner, "ЧАСТЫЕ ВОПРОСЫ", 680, 690, 530, 480, ResizeMode.CanResize);
         var close = DialogChrome.MakeButton("ЗАКРЫТЬ", false);
         close.Click += (_, _) => dialog.Close();
@@ -76,6 +76,7 @@ internal static class UtilityDialogs
         var selectedConfig = configPath;
         var selectedCore = corePath;
         ImportedProfile? importedProfile = null;
+        ConfigurationPackage? pendingTransfer = null;
         var selectedTheme = ThemeManager.Normalize(theme);
         var selectedScale = AppSettings.NormalizeScale(interfaceScale);
         SettingsDialogSelection? result = null;
@@ -84,77 +85,81 @@ internal static class UtilityDialogs
         var layout = new Grid { Margin = new Thickness(22, 12, 22, 16) };
         layout.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         layout.RowDefinitions.Add(new RowDefinition());
-        var navigation = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 0, 0, 14) };
-        var pages = new Grid();
-        Grid.SetRow(pages, 1);
+        var navigation = new WrapPanel { Margin = new Thickness(0, 0, 0, 10) };
+        var sections = new StackPanel { Margin = new Thickness(8, 4, 8, 4) };
+        var settingsScroll = Scroll(sections);
+        settingsScroll.Name = "SettingsScroll";
+        Grid.SetRow(settingsScroll, 1);
         layout.Children.Add(navigation);
-        layout.Children.Add(pages);
+        layout.Children.Add(settingsScroll);
 
-        var appearance = new StackPanel();
-        var profile = new StackPanel();
-        var updates = new StackPanel();
-        var pageViews = new[] { Scroll(appearance), Scroll(profile), Scroll(updates) };
-        foreach (var body in new[] { appearance, profile, updates })
-            body.Margin = new Thickness(8, 4, 8, 4);
-        foreach (var page in pageViews)
+        var appearance = new StackPanel { Name = "SettingsAppearance" };
+        var profile = new StackPanel { Name = "SettingsProfile" };
+        var updates = new StackPanel { Name = "SettingsUpdates" };
+        var startup = new StackPanel { Name = "SettingsStartup" };
+        var sectionViews = new[] { appearance, profile, updates, startup };
+        var names = new[] { "Внешний вид", "VPN-профиль", "Обновления", "Запуск" };
+        for (var i = 0; i < sectionViews.Length; i++)
         {
-            // Keep room for the horizontal transition so its first/last frame stays
-            // inside the settings viewport instead of clipping text or button edges.
-            page.Margin = new Thickness(14, 0, 14, 0);
-            page.Visibility = Visibility.Collapsed;
-            pages.Children.Add(page);
+            var section = sectionViews[i];
+            section.Margin = new Thickness(0, 0, 0, 18);
+            var heading = new TextBlock { Text = names[i], FontSize = 16, FontWeight = FontWeights.SemiBold,
+                Margin = new Thickness(2, 4, 0, 12) };
+            heading.SetResourceReference(TextBlock.ForegroundProperty, "ThemeText");
+            section.Children.Add(heading);
+            sections.Children.Add(section);
         }
         var tabs = new List<Button>();
-        var names = new[] { "Внешний вид", "VPN-профиль", "Обновления" };
-        var selectedPage = -1;
-        void SelectTab(int index)
+        void HighlightSection(int index)
         {
-            if (index < 0 || index >= pageViews.Length || index == selectedPage) return;
-            var previousPage = selectedPage;
-            selectedPage = index;
-            for (var i = 0; i < pageViews.Length; i++)
+            for (var i = 0; i < tabs.Count; i++)
             {
                 tabs[i].SetResourceReference(Control.BackgroundProperty, i == index ? "ThemeSurfaceSelected" : "ThemeButton");
                 tabs[i].SetResourceReference(Control.BorderBrushProperty, i == index ? "ThemeAccent" : "ThemeButtonBorder");
             }
-            if (previousPage >= 0)
-            {
-                var previous = pageViews[previousPage];
-                previous.BeginAnimation(UIElement.OpacityProperty, null);
-                previous.Visibility = Visibility.Collapsed;
-                previous.Opacity = 1;
-                previous.RenderTransform = Transform.Identity;
-            }
-
-            var current = pageViews[index];
-            current.Visibility = Visibility.Visible;
-            current.IsHitTestVisible = true;
-            if (previousPage < 0)
-            {
-                current.Opacity = 1;
-                current.RenderTransform = Transform.Identity;
-                return;
-            }
-
-            var slide = new TranslateTransform(index > previousPage ? 14 : -14, 0);
-            current.RenderTransform = slide;
-            current.Opacity = 0;
-            var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
-            current.BeginAnimation(UIElement.OpacityProperty,
-                new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(180)) { EasingFunction = easing });
-            slide.BeginAnimation(TranslateTransform.XProperty,
-                new DoubleAnimation(slide.X, 0, TimeSpan.FromMilliseconds(210)) { EasingFunction = easing });
         }
         for (var i = 0; i < names.Length; i++)
         {
             var index = i;
             var tab = DialogChrome.MakeButton(names[i], false);
-            tab.Margin = new Thickness(0, 0, 8, 0);
-            tab.Click += (_, _) => SelectTab(index);
+            tab.Margin = new Thickness(0, 0, 8, 4);
+            tab.Click += (_, _) =>
+            {
+                dialog.UpdateLayout();
+                settingsScroll.ScrollToVerticalOffset(sectionViews[index].TranslatePoint(new Point(), sections).Y);
+            };
             tabs.Add(tab);
             navigation.Children.Add(tab);
         }
-        SelectTab(0);
+        settingsScroll.ScrollChanged += (_, _) =>
+        {
+            var index = 0;
+            for (var i = 1; i < sectionViews.Length; i++)
+                if (sectionViews[i].TranslatePoint(new Point(), sections).Y <= settingsScroll.VerticalOffset + 20) index = i;
+            if (settingsScroll.ScrollableHeight > 0 && settingsScroll.VerticalOffset >= settingsScroll.ScrollableHeight - 1)
+                index = sectionViews.Length - 1;
+            HighlightSection(index);
+        };
+        HighlightSection(0);
+
+        CheckBox LabeledOption(string text, bool value)
+        {
+            var label = new TextBlock { Text = text, TextWrapping = TextWrapping.Wrap, FontSize = 13 };
+            label.SetResourceReference(TextBlock.ForegroundProperty, "ThemeText");
+            var option = new CheckBox { Content = label, IsChecked = value, Focusable = true,
+                HorizontalContentAlignment = HorizontalAlignment.Stretch, Margin = new Thickness(0, 12, 0, 0) };
+            System.Windows.Automation.AutomationProperties.SetName(option, text);
+            return option;
+        }
+        var launchAtSignIn = LabeledOption("Запускать приложение при входе в Windows", owner.LaunchAtSignIn);
+        var autoConnect = LabeledOption("Подключать VPN с последним сохранённым профилем", owner.AutoConnectOnStartup);
+        autoConnect.IsEnabled = launchAtSignIn.IsChecked == true;
+        launchAtSignIn.Checked += (_, _) => autoConnect.IsEnabled = true;
+        launchAtSignIn.Unchecked += (_, _) => autoConnect.IsEnabled = false;
+        var startupOptions = new StackPanel();
+        startupOptions.Children.Add(launchAtSignIn);
+        startupOptions.Children.Add(autoConnect);
+        startup.Children.Add(Card("АВТОЗАПУСК", null, startupOptions));
 
         var themePicker = new ComboBox { ItemsSource = ThemeManager.ThemeNames, SelectedItem = selectedTheme, Margin = new Thickness(0, 9, 0, 0) };
         themePicker.SelectionChanged += (_, _) =>
@@ -163,10 +168,11 @@ internal static class UtilityDialogs
             selectedTheme = next;
             ThemeManager.Apply(next);
         };
-        appearance.Children.Add(Card("ТЕМА", "Цвета меняются сразу — можно посмотреть оформление перед сохранением.", themePicker));
-        var scaleOptions = new[] { .8, .9, 1, 1.1, 1.25, 1.5 };
+        appearance.Children.Add(Card("ТЕМА", null, themePicker));
+        var scaleOptions = new List<double> { .8, .9, 1, 1.1, 1.25, 1.5 };
+        if (!scaleOptions.Contains(selectedScale)) { scaleOptions.Add(selectedScale); scaleOptions.Sort(); }
         var scalePicker = new ComboBox { ItemsSource = scaleOptions.Select(value => $"{value * 100:0}%").ToArray(), Margin = new Thickness(0, 9, 0, 0) };
-        scalePicker.SelectedIndex = Enumerable.Range(0, scaleOptions.Length).MinBy(index => Math.Abs(scaleOptions[index] - selectedScale));
+        scalePicker.SelectedIndex = scaleOptions.IndexOf(selectedScale);
         var sample = new TextBlock { Text = "Морфоцит OS · Пример текста", FontSize = 15 * selectedScale, FontWeight = FontWeights.SemiBold, Margin = new Thickness(0, 12, 0, 0), TextWrapping = TextWrapping.Wrap };
         sample.SetResourceReference(TextBlock.ForegroundProperty, "ThemeText");
         scalePicker.SelectionChanged += (_, _) =>
@@ -175,10 +181,17 @@ internal static class UtilityDialogs
             selectedScale = scaleOptions[scalePicker.SelectedIndex];
             sample.FontSize = 15 * selectedScale;
         };
+        void SelectScale(double value)
+        {
+            selectedScale = value;
+            if (!scaleOptions.Contains(value)) { scaleOptions.Add(value); scaleOptions.Sort(); }
+            scalePicker.ItemsSource = scaleOptions.Select(item => $"{item * 100:0}%").ToArray();
+            scalePicker.SelectedIndex = scaleOptions.IndexOf(value);
+        }
         var scaleBody = new StackPanel();
         scaleBody.Children.Add(scalePicker);
         scaleBody.Children.Add(sample);
-        appearance.Children.Add(Card("МАСШТАБ ИНТЕРФЕЙСА", "Меняет весь интерфейс: шрифты, кнопки, списки и дополнительные окна. Применяется после сохранения.", scaleBody));
+        appearance.Children.Add(Card("МАСШТАБ ИНТЕРФЕЙСА", null, scaleBody));
 
         var configValue = PathValue(selectedConfig);
         var coreValue = PathValue(selectedCore);
@@ -186,7 +199,7 @@ internal static class UtilityDialogs
         {
             var picker = new OpenFileDialog { Filter = "YAML (*.yaml;*.yml)|*.yaml;*.yml", CheckFileExists = true };
             if (File.Exists(selectedConfig)) picker.InitialDirectory = Path.GetDirectoryName(selectedConfig);
-            if (picker.ShowDialog(dialog) == true) { selectedConfig = picker.FileName; importedProfile = null; UpdatePath(configValue, selectedConfig); }
+            if (picker.ShowDialog(dialog) == true) { selectedConfig = picker.FileName; importedProfile = null; pendingTransfer = null; UpdatePath(configValue, selectedConfig); }
         }));
         var importActions = new WrapPanel { Margin = new Thickness(0, 0, 0, 10) };
         var importProfile = DialogChrome.MakeButton("Импорт профиля", true);
@@ -194,6 +207,7 @@ internal static class UtilityDialogs
         importProfile.Click += (_, _) =>
         {
             if (ProfileImportDialog.Show(dialog) is not { } imported) return;
+            pendingTransfer = null;
             importedProfile = imported;
             configValue.Text = "Новый профиль: " + imported.Description + " · будет создан после сохранения";
             configValue.ToolTip = null;
@@ -202,6 +216,7 @@ internal static class UtilityDialogs
         template.Margin = new Thickness(0, 0, 0, 8);
         template.Click += (_, _) =>
         {
+            pendingTransfer = null;
             importedProfile = new ImportedProfile(BundledResources.TemplateText, "Нейтральный шаблон", false);
             configValue.Text = "Новый шаблон без сервера · будет создан после сохранения";
             configValue.ToolTip = null;
@@ -229,28 +244,21 @@ internal static class UtilityDialogs
             finally { if (!lifetime.IsCancellationRequested) bundled.IsEnabled = true; }
         };
         profile.Children.Add(bundled);
-        profile.Children.Add(Paragraph(coreRunning ? "Перед сменой ядра останови VPN." : "Профиль и ядро выбираются независимо. Название YAML и имя файла приложения могут быть любыми."));
-        profile.Children.Add(Paragraph("Профиль содержит секретные данные подключения. Не отправляй его незнакомым людям. Программа сохраняет настройки только на этом компьютере."));
+        if (coreRunning) profile.Children.Add(Paragraph("Перед сменой ядра останови VPN."));
 
-        var automatic = new CheckBox { IsChecked = autoCheckUpdates, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(0, 0, 12, 0) };
-        var autoRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(0, 9, 0, 0) };
-        autoRow.Children.Add(automatic);
-        var autoCaption = new TextBlock { Text = "Проверять автоматически при запуске", FontSize = 13, VerticalAlignment = VerticalAlignment.Center };
-        autoCaption.SetResourceReference(TextBlock.ForegroundProperty, "ThemeText");
-        autoRow.Children.Add(autoCaption);
-        updates.Children.Add(Card("АВТООБНОВЛЕНИЕ", "При запуске проверяет новые версии. Кнопка загрузки появляется только при наличии обновления. Архив загружается прямо с GitHub и проверяется. Установка выполняется после подтверждения перезапуска: VPN остановится, личные профили и настройки сохранятся.", autoRow));
+        var automatic = LabeledOption("Автоматическое обновление", autoCheckUpdates);
+        updates.Children.Add(Card("ОБНОВЛЕНИЯ", null, automatic));
         var status = new TextBlock { Text = ReleaseUpdateService.SourceStatus, Foreground = Muted, FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 10, 0, 12) };
         status.SetResourceReference(TextBlock.ForegroundProperty, "ThemeMuted");
         var check = DialogChrome.MakeButton("Проверить обновления", false);
         check.HorizontalAlignment = HorizontalAlignment.Left;
-        var download = DialogChrome.MakeButton("Загрузить актуальную версию", true);
-        download.Visibility = Visibility.Collapsed;
+        var download = DialogChrome.MakeButton("ОБНОВИТЬ ПРИЛОЖЕНИЕ", true);
         download.Margin = new Thickness(0, 9, 0, 0);
         void RefreshUpdate(UpdateCheckResult? found)
         {
-            download.Visibility = found is { UpdateAvailable: true, Asset: not null } ? Visibility.Visible : Visibility.Collapsed;
-            download.Content = "Загрузить актуальную версию: " + found?.LatestVersion;
-            if (found is not null) status.Text = found.Message;
+            download.Visibility = Visibility.Visible;
+            download.Content = found is { UpdateAvailable: true, Asset: not null } ? "ОБНОВИТЬ ДО " + found.LatestVersion : "ОБНОВИТЬ ПРИЛОЖЕНИЕ";
+            status.Text = found?.Message ?? ReleaseUpdateService.SourceStatus;
         }
         RefreshUpdate(owner.AvailableUpdate);
         owner.UpdateStateChanged += RefreshUpdate;
@@ -308,10 +316,64 @@ internal static class UtilityDialogs
         Grid.SetColumn(save, 3);
         footer.Children.Add(cancel);
         footer.Children.Add(save);
+        SettingsDialogSelection CurrentSelection() => new(selectedConfig, selectedCore, selectedTheme,
+            selectedScale, automatic.IsChecked == true, importedProfile, launchAtSignIn.IsChecked == true,
+            autoConnect.IsChecked == true, pendingTransfer);
+        var transferActions = new WrapPanel();
+        var export = DialogChrome.MakeButton("Экспорт настроек", false);
+        export.Margin = new Thickness(0, 0, 8, 4);
+        var import = DialogChrome.MakeButton("Импорт настроек", false);
+        import.Margin = new Thickness(0, 0, 0, 4);
+        transferActions.Children.Add(export);
+        transferActions.Children.Add(import);
+        profile.Children.Add(Card("ПЕРЕНОС", null, transferActions));
+        export.Click += async (_, _) =>
+        {
+            var picker = new SaveFileDialog { Filter = "Настройки MorphocyteOS (*.morphocyte)|*.morphocyte", DefaultExt = ".morphocyte",
+                AddExtension = true, FileName = "MorphocyteOS-" + DateTime.Now.ToString("yyyyMMdd-HHmmss") + ".morphocyte" };
+            if (picker.ShowDialog(dialog) != true) return;
+            if (!string.Equals(Path.GetExtension(picker.FileName), ".morphocyte", StringComparison.OrdinalIgnoreCase))
+            { saveFeedback.Text = "Выбери файл с расширением .morphocyte."; return; }
+            export.IsEnabled = false; import.IsEnabled = false; save.IsEnabled = false;
+            saveFeedback.Text = "Экспортирую…";
+            try
+            {
+                var package = await owner.CaptureConfigurationAsync(CurrentSelection());
+                await Task.Run(() => AtomicFile.Write(picker.FileName, ConfigurationTransfer.Serialize(package)), lifetime.Token);
+                if (!lifetime.IsCancellationRequested) saveFeedback.Text = "Экспорт завершён.";
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception) { if (!lifetime.IsCancellationRequested) saveFeedback.Text = "Не удалось экспортировать. Проверь доступ к файлу и профиль."; }
+            finally { if (!lifetime.IsCancellationRequested) { export.IsEnabled = true; import.IsEnabled = true; save.IsEnabled = true; } }
+        };
+        import.Click += async (_, _) =>
+        {
+            var picker = new OpenFileDialog { Filter = "Настройки MorphocyteOS (*.morphocyte)|*.morphocyte", CheckFileExists = true };
+            if (picker.ShowDialog(dialog) != true) return;
+            export.IsEnabled = false; import.IsEnabled = false; save.IsEnabled = false;
+            try
+            {
+                var package = await Task.Run(() => ConfigurationTransfer.Read(picker.FileName), lifetime.Token);
+                if (lifetime.IsCancellationRequested) return;
+                pendingTransfer = package; importedProfile = null;
+                selectedTheme = ThemeManager.Normalize(package.Options.Theme);
+                selectedScale = package.Options.InterfaceScale;
+                themePicker.SelectedItem = selectedTheme;
+                SelectScale(package.Options.InterfaceScale);
+                automatic.IsChecked = package.Options.AutoCheckUpdates;
+                launchAtSignIn.IsChecked = package.Options.LaunchAtSignIn;
+                autoConnect.IsChecked = package.Options.AutoConnectOnStartup;
+                configValue.Text = "Профиль из файла переноса";
+                configValue.ToolTip = null;
+                saveFeedback.Text = "Импорт готов. Нажми «Сохранить».";
+            }
+            catch (OperationCanceledException) { }
+            catch (Exception) { if (!lifetime.IsCancellationRequested) saveFeedback.Text = "Не удалось импортировать. Проверь файл переноса."; }
+            finally { if (!lifetime.IsCancellationRequested) { export.IsEnabled = true; import.IsEnabled = true; save.IsEnabled = true; } }
+        };
         save.Click += async (_, _) =>
         {
-            var selection = new SettingsDialogSelection(selectedConfig, selectedCore, selectedTheme,
-                selectedScale, automatic.IsChecked == true, importedProfile);
+            var selection = CurrentSelection();
             if (onSave is null)
             {
                 result = selection;
@@ -319,6 +381,7 @@ internal static class UtilityDialogs
                 return;
             }
             save.IsEnabled = false;
+            export.IsEnabled = false; import.IsEnabled = false;
             saveFeedback.Text = "Сохраняю…";
             try
             {
@@ -337,10 +400,12 @@ internal static class UtilityDialogs
                 selectedTheme = applied.Theme;
                 selectedScale = applied.InterfaceScale;
                 importedProfile = null;
+                pendingTransfer = null;
                 themePicker.SelectedItem = selectedTheme;
-                scalePicker.SelectedIndex = Enumerable.Range(0, scaleOptions.Length)
-                    .MinBy(index => Math.Abs(scaleOptions[index] - selectedScale));
+                SelectScale(selectedScale);
                 automatic.IsChecked = applied.AutoCheckUpdates;
+                launchAtSignIn.IsChecked = applied.LaunchAtSignIn;
+                autoConnect.IsChecked = applied.AutoConnectOnStartup;
                 UiScaleManager.Apply(dialog, (FrameworkElement)dialog.Content, selectedScale);
                 UpdatePath(configValue, selectedConfig);
                 UpdatePath(coreValue, selectedCore);
@@ -352,7 +417,7 @@ internal static class UtilityDialogs
             }
             finally
             {
-                if (!lifetime.IsCancellationRequested) save.IsEnabled = true;
+                if (!lifetime.IsCancellationRequested) { save.IsEnabled = true; export.IsEnabled = true; import.IsEnabled = true; }
             }
         };
         dialog.Content = DialogChrome.BuildFrame(dialog, "НАСТРОЙКИ", layout, footer);

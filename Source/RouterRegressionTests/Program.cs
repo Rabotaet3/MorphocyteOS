@@ -142,7 +142,6 @@ if (OperatingSystem.IsWindows())
     Check(orphanCoreExited, "Windows closes Mihomo when the app process is terminated unexpectedly");
 }
 Check(document.Rules.Count == 3, "quoted YAML and named route parsed");
-Check(document.HttpProxyPort == 7890, "HTTP mixed-port is available for profile-bound tests");
 Check(document.Routes.Single() == "VPN NODE", "route names with spaces intact");
 var withoutProcessRule = ClashConfigDocument.Parse(path, configText.Replace("  - PROCESS-NAME,application.exe,VPN NODE\n", "", StringComparison.Ordinal));
 Check(!withoutProcessRule.Rules.Any(rule => rule.Kind == "PROCESS-NAME" && rule.Value.Equals("application.exe", StringComparison.OrdinalIgnoreCase))
@@ -168,21 +167,16 @@ withException.Add(new DomainRule { Kind = "DOMAIN-SUFFIX", Value = "outside.exam
 var exceptionRules = ReadRules(document.BuildText(withException));
 Check(Array.IndexOf(exceptionRules, "DOMAIN-SUFFIX,outside.example,DIRECT") < Array.IndexOf(exceptionRules, "PROCESS-NAME,application.exe,VPN NODE"),
     "new direct exception inserted before broad process rule");
-Check(document.AnalyzeRules(new[]
-{
-    new DomainRule { Kind = "PROCESS-NAME", Value = "application.exe", Route = "VPN NODE" },
-    new DomainRule { Kind = "DOMAIN-SUFFIX", Value = "late.example", Route = "DIRECT" }
-}).Count == 1, "diagnostics warns about late process exception");
 var temporarilyDisabled = document.Rules.Select(rule => rule.Copy()).ToList();
 temporarilyDisabled[0].Enabled = false;
 Check(!ReadRules(document.BuildText(temporarilyDisabled)).Contains("DOMAIN-SUFFIX,example.com,DIRECT"),
     "disabled rule omitted from applied YAML while UI state can retain it");
 var deleted = ReadRules(document.BuildText(document.Rules.Where(rule => rule.Value != "example.com")));
 Check(!deleted.Any(rule => rule.Contains("example.com")) && deleted[0].StartsWith("IP-CIDR"), "delete preserves opaque rule position");
-var backup = document.SaveRules(additions);
+var backup = document.CommitText(document.BuildText(additions));
 Check(File.ReadAllText(backup) == configText, "backup contains exact old config");
 document = ClashConfigDocument.Load(path);
-document.SaveRules(document.Rules); // Same-second saves must be safe.
+document.CommitText(document.BuildText(document.Rules)); // Same-second saves must be safe.
 Check(ReadRules(File.ReadAllText(path)).SequenceEqual(appended), "roundtrip save stable");
 for (var i = 0; i < 5; i++)
 {
@@ -221,7 +215,7 @@ try
 finally { backupLock.Dispose(); }
 document = ClashConfigDocument.Load(path);
 File.AppendAllText(path, "\n# external edit\n");
-Reject(() => document.SaveRules(document.Rules), "external change refuses overwrite");
+Reject(() => document.CommitText(document.BuildText(document.Rules)), "external change refuses overwrite");
 Check(File.ReadAllText(path).EndsWith("# external edit\n"), "external edit retained");
 foreach (var fixture in new[]
 {

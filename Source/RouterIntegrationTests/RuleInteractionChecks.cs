@@ -21,7 +21,7 @@ internal partial class Program
         var settings = AppSettings.Load(settingsPath);
         settings.AutoCheckUpdates = false;
         settings.CorePath = Path.GetFullPath(fakeExe);
-        settings.ShowEventLog = true;
+        settings.ShowEventLog = false;
         var configPath = Path.Combine(scratch, "interaction.yaml");
         File.WriteAllText(configPath, "proxies:\n  - name: VPN\n    type: socks5\n    server: 127.0.0.1\n    port: 9999\ntun:\n  enable: true\nrules:\n"
             + string.Join("\n", Enumerable.Range(1, 32).Select(i => $"  - DOMAIN-SUFFIX,site{i}.example,VPN")) + "\n  - MATCH,DIRECT\n");
@@ -59,9 +59,10 @@ internal partial class Program
             powerButton.ApplyTemplate();
             var powerSurface = powerButton.Template.FindName("B", powerButton) as Border;
             Check(powerSurface is { Margin.Left: >= 3, Margin.Right: >= 3, Margin.Top: >= 3, Margin.Bottom: >= 3 }
-                && powerSurface.RenderTransform is ScaleTransform,
-                "main buttons keep their hover-scale animation inside reserved paint bounds");
+                && powerSurface.RenderTransform.Value.IsIdentity,
+                "main buttons keep a stable surface inside their paint bounds");
             await (Task)Invoke("LoadConfigAsync", configPath)!;
+            count += await RunHoverBoundsChecks(window, scratch);
             async Task SmokeModal(string title, string method, object?[] arguments, string screenshot)
             {
                 var utilityDialogs = typeof(MainWindow).Assembly.GetType("MorphocyteRouter.UtilityDialogs")!;
@@ -94,8 +95,8 @@ internal partial class Program
                         saveButton.ApplyTemplate();
                         var saveSurface = saveButton.Template.FindName("B", saveButton) as Border;
                         Check(saveSurface is { Margin.Left: >= 3, Margin.Right: >= 3, Margin.Top: >= 3, Margin.Bottom: >= 3 }
-                            && saveSurface.RenderTransform is ScaleTransform,
-                            "settings buttons keep the hover texture animation within their reserved bounds");
+                            && saveSurface.RenderTransform.Value.IsIdentity,
+                            "settings buttons keep their surface within reserved bounds");
                         var picker = Descendants<ComboBox>(dialog).Single(combo => combo.Items.Cast<object>().Contains("Аврора"));
                         Check(picker.Items.Count == 9 && picker.Items.Cast<string>().Contains("Светлая морфоцитная")
                             && picker.Items.Cast<string>().Contains("Аврора") && picker.Items.Cast<string>().Contains("Космический градиент"),
@@ -108,11 +109,15 @@ internal partial class Program
                         var updatesTab = Descendants<Button>(dialog).Single(button => Equals(button.Content, "Обновления"));
                         updatesTab.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                         dialog.UpdateLayout();
-                        Check(Descendants<CheckBox>(dialog).Single().IsVisible
+                        Check(Descendants<CheckBox>(dialog).Single(option =>
+                            Descendants<TextBlock>(option).Any(text => text.Text == "Автоматическое обновление")).IsVisible
                             && Descendants<Button>(dialog).Single(button => Equals(button.Content, "Проверить обновления")).IsVisible,
                             "settings expose automatic and manual release checks");
-                        Check(Descendants<ScrollViewer>(dialog).Any(page => page.Visibility == Visibility.Visible
-                            && page.RenderTransform is TranslateTransform), "switching settings pages keeps its slide transition within an inset page viewport");
+                        var settingsScroll = Descendants<ScrollViewer>(dialog).Single(page => page.Name == "SettingsScroll");
+                        Check(settingsScroll.VerticalOffset > 0 && settingsScroll.Content is StackPanel { Children.Count: 4 }
+                            && Descendants<StackPanel>(dialog).Where(panel => panel.Name.StartsWith("Settings") && panel.Name != "SettingsScroll")
+                                .All(panel => panel.Visibility == Visibility.Visible),
+                            "settings navigation scrolls one page while all four sections remain present");
                     }
                     if (title == "ЧАСТЫЕ ВОПРОСЫ") CaptureInteraction(window, Path.Combine(scratch, "rounded-blurred-window.png"));
                     CaptureInteraction(dialog, Path.Combine(scratch, screenshot));
@@ -193,7 +198,8 @@ internal partial class Program
                 Descendants<Button>(settingsDialog).Single(button => Equals(button.Content, "Обновления"))
                     .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 settingsDialog.UpdateLayout();
-                Descendants<CheckBox>(settingsDialog).Single().IsChecked = true;
+                Descendants<CheckBox>(settingsDialog).Single(option =>
+                    Descendants<TextBlock>(option).Any(text => text.Text == "Автоматическое обновление")).IsChecked = true;
                 var save = Descendants<Button>(settingsDialog).Single(button => Equals(button.Content, "СОХРАНИТЬ"));
                 save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 savedSettingsDialogStayedOpen = settingsDialog.IsVisible;
@@ -238,7 +244,8 @@ internal partial class Program
                 Descendants<Button>(dialog).Single(button => Equals(button.Content, "Обновления"))
                     .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 dialog.UpdateLayout();
-                Descendants<CheckBox>(dialog).Single().IsChecked = false;
+                Descendants<CheckBox>(dialog).Single(option =>
+                    Descendants<TextBlock>(option).Any(text => text.Text == "Автоматическое обновление")).IsChecked = false;
                 CaptureInteraction(dialog, Path.Combine(scratch, "settings-scaled-release.png"));
                 save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 scaledSettingsDialogStayedOpen = dialog.IsVisible;
@@ -290,8 +297,8 @@ internal partial class Program
             Check(AppSettings.Load(settingsPath).GetFolderOrder(configPath).SequenceEqual(groupOrder),
                 "manual folder order is persisted per profile");
             var first = rules[0]; var second = rules[1];
-            Invoke("SelectRuleForPointer", first, false);
-            Invoke("SelectRuleForPointer", second, true);
+            Invoke("SelectRuleForPointer", first, ModifierKeys.None);
+            Invoke("SelectRuleForPointer", second, ModifierKeys.Control);
             Check(list.SelectedItems.Count == 2, "Ctrl selection retains two independent rules");
             var firstItem = Descendants<ListViewItem>(list).Single(item => ReferenceEquals(item.DataContext, first));
             var checkbox = Descendants<CheckBox>(firstItem).Single();
@@ -353,7 +360,7 @@ internal partial class Program
             folder = Descendants<Border>(list).Single(border => border.Name == "FolderDropSurface"
                 && border.DataContext is CollectionViewGroup group && Equals(group.Name, "Медиа"));
             var folderClose = Descendants<Button>(folder).Single(button => button.Tag is CollectionViewGroup);
-            var rowClose = Descendants<Button>(list).First(button => button.Tag is DomainRule member && member.Folder == "Медиа");
+            var rowClose = Descendants<Button>(list).First(button => Equals(button.Content, "×") && button.Tag is DomainRule member && member.Folder == "Медиа");
             var folderX = folderClose.TranslatePoint(new Point(folderClose.ActualWidth / 2, 0), list).X;
             var rowX = rowClose.TranslatePoint(new Point(rowClose.ActualWidth / 2, 0), list).X;
             Check(Math.Abs(folderX - rowX) < 1, "folder and rule delete icons share the same horizontal alignment");
@@ -361,7 +368,9 @@ internal partial class Program
             window.UpdateLayout();
             CaptureInteraction(window, Path.Combine(scratch, "folders-1.13.0-test.png"));
 
-            var logToggle = (ToggleButton)Field("LogVisibilityToggle");
+            var logToggle = (Button)Field("JournalTabButton");
+            logToggle.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await Idle();
             var logText = (TextBox)Field("LogText");
             var pendingCoreOutput = (ConcurrentQueue<string>)Field("_pendingCoreOutput");
             for (var i = 0; i < 500; i++) pendingCoreOutput.Enqueue($"batched-core-line-{i:D3}");
@@ -371,19 +380,18 @@ internal partial class Program
             Check(logText.Text.Contains("batched-core-line-499", StringComparison.Ordinal)
                 && logText.Text.Split(Environment.NewLine).Length <= 2500,
                 "batched core output is displayed in a bounded recent-log buffer");
-            var workspace = (FrameworkElement)Field("Workspace");
-            var oldWorkspaceHeight = workspace.ActualHeight;
-            logToggle.IsChecked = false;
-            logToggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            ((Button)Field("RoutesTabButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await Idle();
-            Check(logText.Visibility == Visibility.Collapsed && logToggle.IsVisible && workspace.ActualHeight > oldWorkspaceHeight,
-                "log switch hides the log and gives its space back to the rule list");
+            Check(!logText.IsVisible && logToggle.IsVisible && ((FrameworkElement)Field("RoutesPage")).IsVisible,
+                "routes tab uses the full workspace without a bottom log panel");
             Check(!AppSettings.Load(settingsPath).ShowEventLog, "log visibility preference survives settings reload");
             CaptureInteraction(window, Path.Combine(scratch, "log-hidden-1.13.0-test.png"));
-            logToggle.IsChecked = true;
-            logToggle.RaiseEvent(new RoutedEventArgs(ButtonBase.ClickEvent));
+            logToggle.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await Idle();
             Check(logText.IsVisible && logText.Text.Length > 0, "enabling the log restores its existing text");
+            CaptureInteraction(window, Path.Combine(scratch, "journal-tab.png"));
+            ((Button)Field("RoutesTabButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await Idle();
 
             var mediaExpander = Descendants<Expander>(list).Single(expander =>
                 ((GroupItem)FindAncestor(expander, typeof(GroupItem))!).Content is CollectionViewGroup group && Equals(group.Name, "Медиа"));
@@ -426,6 +434,60 @@ internal partial class Program
         }
     }
 
+    private static async Task<int> RunHoverBoundsChecks(Window window, string scratch)
+    {
+        var hoverKey = (DependencyPropertyKey)typeof(UIElement).GetField("IsMouseOverPropertyKey", BindingFlags.Static | BindingFlags.NonPublic | BindingFlags.Public)!.GetValue(null)!;
+        var count = 0;
+        foreach (var scale in new[] { 1d, 1.5d })
+        {
+            UiScaleManager.Apply(window, (FrameworkElement)window.Content, scale);
+            window.UpdateLayout();
+            var surfaces = new List<(Control Control, Border Surface, Rect Bounds, bool Hover)>();
+            foreach (var control in Descendants<Control>(window).Where(control => control is Button or ListViewItem))
+            {
+                control.ApplyTemplate();
+                foreach (var name in new[] { "B", "ToolSurface", "ArrowSurface", "ContainerSurface" })
+                {
+                    if (control.Template.FindName(name, control) is not Border { IsVisible: true, ActualWidth: > 0 } surface) continue;
+                    surfaces.Add((control, surface, surface.TransformToAncestor(control).TransformBounds(new Rect(surface.RenderSize)), (bool)control.GetValue(UIElement.IsMouseOverProperty)));
+                }
+            }
+            try
+            {
+                foreach (var item in surfaces) item.Control.SetValue(hoverKey, true);
+                // Measure after the old enlargement animation would have finished.
+                await Task.Delay(220);
+                window.UpdateLayout();
+                // Native input can reset the injected state of a caption button
+                // when resizing moves it away from the real cursor. Only count
+                // surfaces whose hover trigger is still active when measured.
+                var hoveredSurfaces = surfaces.Where(item => (bool)item.Control.GetValue(UIElement.IsMouseOverProperty)).ToArray();
+                if (hoveredSurfaces.Length < 100 || hoveredSurfaces.Select(item => item.Surface.Name).Distinct().Count() != 4)
+                    throw new Exception("Hover checks must exercise main buttons, sidebar tools, folder arrows and rule rows.");
+                var flat = hoveredSurfaces.First(item => item.Surface.Name == "B" && item.Control.IsEnabled).Control;
+                if (flat.Template.FindName("ButtonTint", flat) is not Border { Opacity: >= .1 })
+                    throw new Exception("Hover checks must activate the template's actual highlight animation.");
+                foreach (var item in hoveredSurfaces)
+                {
+                    var hovered = item.Surface.TransformToAncestor(item.Control).TransformBounds(new Rect(item.Surface.RenderSize));
+                    if (Math.Abs(hovered.X - item.Bounds.X) > .01 || Math.Abs(hovered.Y - item.Bounds.Y) > .01
+                        || Math.Abs(hovered.Width - item.Bounds.Width) > .01 || Math.Abs(hovered.Height - item.Bounds.Height) > .01
+                        || hovered.Left < -.01 || hovered.Top < -.01 || hovered.Right > item.Control.ActualWidth + .01 || hovered.Bottom > item.Control.ActualHeight + .01)
+                        throw new Exception($"Hover changed or overflowed {item.Surface.Name} ({item.Control.Name}, {(item.Control as ContentControl)?.Content}), hover={item.Control.GetValue(UIElement.IsMouseOverProperty)}, before={item.Bounds}, after={hovered}, control={item.Control.RenderSize}, at {scale * 100:0}% scale.");
+                }
+                CaptureInteraction(window, Path.Combine(scratch, $"hover-bounds-{scale * 100:0}.png"));
+                Console.WriteLine($"PASS: {hoveredSurfaces.Length} hovered button and rule surfaces retain their bounds at {scale * 100:0}% scale");
+                count++;
+            }
+            finally
+            {
+                foreach (var item in surfaces) item.Control.SetValue(hoverKey, item.Hover);
+            }
+        }
+        UiScaleManager.Apply(window, (FrameworkElement)window.Content, 1);
+        return count;
+    }
+
     private static IEnumerable<T> Descendants<T>(DependencyObject root) where T : DependencyObject
     {
         for (var i = 0; i < VisualTreeHelper.GetChildrenCount(root); i++)
@@ -450,8 +512,14 @@ internal partial class Program
     private static void CaptureInteraction(Window window, string path)
     {
         window.UpdateLayout();
-        var root = (FrameworkElement)window.Content;
-        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(root.ActualWidth), (int)Math.Ceiling(root.ActualHeight), 96, 96, PixelFormats.Pbgra32);
+        CaptureInteraction((FrameworkElement)window.Content, path);
+    }
+
+    private static void CaptureInteraction(FrameworkElement root, string path)
+    {
+        root.UpdateLayout();
+        var bounds = root.LayoutTransform.TransformBounds(new Rect(root.RenderSize));
+        var bitmap = new RenderTargetBitmap((int)Math.Ceiling(bounds.Width), (int)Math.Ceiling(bounds.Height), 96, 96, PixelFormats.Pbgra32);
         bitmap.Render(root);
         var encoder = new PngBitmapEncoder();
         encoder.Frames.Add(BitmapFrame.Create(bitmap));

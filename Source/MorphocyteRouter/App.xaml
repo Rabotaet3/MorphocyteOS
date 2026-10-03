@@ -3,21 +3,6 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              StartupUri="MainWindow.xaml" ShutdownMode="OnMainWindowClose">
     <Application.Resources>
-        <SolidColorBrush x:Key="Ink" Color="#EAF7F2"/>
-        <SolidColorBrush x:Key="Muted" Color="#7F9B94"/>
-        <SolidColorBrush x:Key="Mint" Color="#73FFBF"/>
-        <SolidColorBrush x:Key="Cyan" Color="#67E8F9"/>
-        <SolidColorBrush x:Key="Panel" Color="#B3152525"/>
-        <SolidColorBrush x:Key="Line" Color="#293F3C"/>
-        <LinearGradientBrush x:Key="MintGradient" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#91FFD6" Offset="0"/>
-            <GradientStop Color="#61F1B4" Offset="0.58"/>
-            <GradientStop Color="#67E8F9" Offset="1"/>
-        </LinearGradientBrush>
-        <LinearGradientBrush x:Key="PanelGradient" StartPoint="0,0" EndPoint="1,1">
-            <GradientStop Color="#D0182A26" Offset="0"/>
-            <GradientStop Color="#B40E1715" Offset="1"/>
-        </LinearGradientBrush>
 
         <Style TargetType="ToolTip">
             <Setter Property="Background" Value="{DynamicResource ThemeTooltipBackground}"/>
@@ -41,9 +26,7 @@
                 <Setter.Value>
                     <ControlTemplate TargetType="Button">
                         <Border x:Name="B" Margin="3" CornerRadius="9" Background="{TemplateBinding Background}"
-                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}"
-                                RenderTransformOrigin="0.5,0.5">
-                            <Border.RenderTransform><ScaleTransform/></Border.RenderTransform>
+                                BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
                             <Grid>
                                 <Border x:Name="ButtonTint" Background="{DynamicResource ThemeAccent}" CornerRadius="7" Opacity="0" IsHitTestVisible="False"/>
                                 <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Center" VerticalAlignment="Center" RecognizesAccessKey="True"/>
@@ -56,8 +39,6 @@
                                     <BeginStoryboard>
                                         <Storyboard>
                                             <DoubleAnimation Storyboard.TargetName="ButtonTint" Storyboard.TargetProperty="Opacity" To="0.12" Duration="0:0:0.13"/>
-                                            <DoubleAnimation Storyboard.TargetName="B" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)" To="1.04" Duration="0:0:0.13"/>
-                                            <DoubleAnimation Storyboard.TargetName="B" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)" To="1.04" Duration="0:0:0.13"/>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </Trigger.EnterActions>
@@ -65,8 +46,6 @@
                                     <BeginStoryboard>
                                         <Storyboard>
                                             <DoubleAnimation Storyboard.TargetName="ButtonTint" Storyboard.TargetProperty="Opacity" To="0" Duration="0:0:0.15"/>
-                                            <DoubleAnimation Storyboard.TargetName="B" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleX)" To="1" Duration="0:0:0.15"/>
-                                            <DoubleAnimation Storyboard.TargetName="B" Storyboard.TargetProperty="RenderTransform.(ScaleTransform.ScaleY)" To="1" Duration="0:0:0.15"/>
                                         </Storyboard>
                                     </BeginStoryboard>
                                 </Trigger.ExitActions>
@@ -260,21 +239,32 @@
 
         <Style TargetType="CheckBox">
             <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
             <Setter Property="Template">
                 <Setter.Value>
                     <ControlTemplate TargetType="CheckBox">
-                        <Grid Width="18" Height="18">
+                        <Grid MinHeight="18">
+                            <Grid.ColumnDefinitions><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                            <Grid Width="18" Height="18" VerticalAlignment="Center">
                             <Border x:Name="CheckBorder" Background="{DynamicResource ThemeCheckboxBackground}" BorderBrush="{DynamicResource ThemeCheckboxBorder}" BorderThickness="1" CornerRadius="5"/>
                             <Path x:Name="CheckMark" Data="M 3,9 L 7,13 L 15,4" Stroke="{DynamicResource ThemeCheckMark}" StrokeThickness="2"
                                   StrokeStartLineCap="Round" StrokeEndLineCap="Round" Visibility="Collapsed"/>
+                            </Grid>
+                            <ContentPresenter x:Name="CheckContent" Grid.Column="1" Margin="10,0,0,0" VerticalAlignment="Center"
+                                              HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}"
+                                              RecognizesAccessKey="True"/>
                         </Grid>
                         <ControlTemplate.Triggers>
+                            <Trigger Property="HasContent" Value="False"><Setter TargetName="CheckContent" Property="Visibility" Value="Collapsed"/></Trigger>
                             <Trigger Property="IsChecked" Value="True">
                                 <Setter TargetName="CheckBorder" Property="Background" Value="{DynamicResource ThemeAccent}"/>
                                 <Setter TargetName="CheckBorder" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
                                 <Setter TargetName="CheckMark" Property="Visibility" Value="Visible"/>
                             </Trigger>
                             <Trigger Property="IsMouseOver" Value="True">
+                                <Setter TargetName="CheckBorder" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
+                            </Trigger>
+                            <Trigger Property="IsKeyboardFocusWithin" Value="True">
                                 <Setter TargetName="CheckBorder" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
                             </Trigger>
                             <Trigger Property="IsEnabled" Value="False">
