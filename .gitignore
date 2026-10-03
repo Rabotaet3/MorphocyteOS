@@ -6,12 +6,15 @@ artifacts/
 .preview/
 .update-cache/
 .vs/
+.tools/
+dotnet-install.ps1
 
 # Local editor and OS files
 .DS_Store
 Thumbs.db
 
 # Private profiles, local settings, logs and credentials
+*.morphocyte
 *.yaml
 *.yml
 !Source/MorphocyteRouter/Assets/profile-template.yaml
