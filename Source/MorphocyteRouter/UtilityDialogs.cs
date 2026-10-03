@@ -6,7 +6,7 @@ using System.Windows.Media;
 
 namespace MorphocyteRouter;
 
-internal sealed record SettingsDialogSelection(string ConfigPath, string CorePath, string Theme, double InterfaceScale, bool AutoCheckUpdates, ImportedProfile? Imported = null, bool LaunchAtSignIn = false, bool AutoConnectOnStartup = true, ConfigurationPackage? Transfer = null);
+internal sealed record SettingsDialogSelection(string ConfigPath, string CorePath, string Theme, double InterfaceScale, bool AutoCheckUpdates, ImportedProfile? Imported = null, bool LaunchAtSignIn = false, bool AutoConnectOnStartup = true, ConfigurationPackage? Transfer = null, bool AutoReconnect = true);
 
 internal static class UtilityDialogs
 {
@@ -44,7 +44,7 @@ internal static class UtilityDialogs
     {
         var body = new StackPanel { Margin = new Thickness(22, 12, 22, 18) };
         AddFaq(body, "С чего начать?", "Ядро Mihomo поставляется рядом с приложением отдельным EXE, а нейтральный YAML-шаблон встроен. Нажми «Импорт профиля», вставь свою VLESS-ссылку или JSON Xray и создай YAML. Либо выбери готовый YAML в настройках. Чужих серверов и ключей в программе нет.");
-        AddFaq(body, "Что делает импорт?", "Принимает HTTPS-подписку (YAML Clash/Mihomo, список VLESS или Base64), VLESS-ссылку или JSON Xray с одним VLESS-сервером. Создаёт отдельный локальный YAML с TUN. Из подписки переносятся серверы, а не чужие правила, DNS или inbounds. По умолчанию трафик идёт напрямую; через VPN идут добавленные правила. Подписка загружается по нажатию; автоматически не обновляется. Исходный профиль не перезаписывается.");
+        AddFaq(body, "Что делает импорт?", "Принимает HTTPS-подписку (YAML Clash/Mihomo, список VLESS или Base64), VLESS-ссылку или JSON Xray с одним VLESS-сервером. Создаёт отдельный локальный YAML с TUN. Из подписки переносятся серверы, а не чужие правила, DNS или inbounds. По умолчанию трафик идёт напрямую; через VPN идут добавленные правила. Подписка загружается по нажатию; автоматически не обновляется. Для повторного обновления используй «Обновить подписку» в настройках; правила и папки сохраняются.");
         AddFaq(body, "Как направить сайт через VPN?", "Введи домен, например example.com, выбери «Весь домен», маршрут VPN и нажми «Добавить». Затем нажми «Применить в YAML». «Весь домен» включает поддомены, «Точное имя» — только этот адрес, «По слову» — совпадение части домена.");
         AddFaq(body, "Как добавить целую программу?", "Нажми «Выбрать .exe» или «Запущенные процессы». Выбранные приложения добавляются в черновик правил; можно выбрать несколько через Ctrl/Shift. Затем нажми «Применить в YAML». Правило охватывает соединения этой программы.");
         AddFaq(body, "Как изменить маршрут правила?", "Нажми маршрут справа в строке правила и выбери VPN, «Напрямую» или «Блокировать». Если строка входит в выделенную группу, маршрут изменится у всех выделенных правил. Изменения начнут действовать после «Применить в YAML».");
@@ -52,12 +52,15 @@ internal static class UtilityDialogs
         AddFaq(body, "Как работают папки и выделение?", "Перетащи правило на другое, чтобы создать папку, или в существующую папку. Ctrl + клик выбирает несколько правил, Shift + клик — диапазон. Галочка выбранного правила переключает всю выделенную группу. Галочка папки переключает все её правила, включая скрытые поиском.");
         AddFaq(body, "Как перемещать и удалять папки?", "Тяни заголовок папки вверх или вниз для изменения порядка. Правила можно вынести в «Общие правила». При удалении папки её правила остаются в общих.");
         AddFaq(body, "Изменения сохраняются автоматически?", "Список, папки, отключённые правила и оформление сохраняются между запусками. Черновик начинает влиять на трафик после «Применить в YAML». Перед записью профиль проверяется ядром; остаются три последние резервные копии.");
+        AddFaq(body, "Как отменить изменение правил?", "Кнопки «Отменить» и ↷ восстанавливают изменения правил и папок до применения YAML. Ctrl+Z отменяет изменение, Ctrl+Y повторяет. После применения начинается новая история.");
         AddFaq(body, "Почему правило не действует?", "Проверь, что профиль работает в режиме rule, TUN включён, VPN запущен и изменения применены. Иногда сервису нужны дополнительные домены. Если другое правило совпало раньше, оно может иметь приоритет.");
         AddFaq(body, "Почему после удаления правила трафик всё ещё идёт через VPN?", "У профиля есть остальные правила и действие по умолчанию (MATCH). Они сохраняются: удаление правила программы не заставляет весь её трафик идти напрямую. Сложные RULE-SET, GEOIP и другие правила не показаны в этом редакторе; их нужно проверять в самом YAML.");
         AddFaq(body, "Как настроить внешний вид и открыть журнал?", "В настройках можно выбрать тему и масштаб. Масштаб меняет кнопки, списки, окна и шрифты. Вкладка «Журнал и соединения» показывает события ядра и активные соединения с процессами, адресами, правилами и маршрутами.");
         AddFaq(body, "Как работают трей и автозапуск?", "Крестик сворачивает окно в трей, оставляя VPN работать. В меню значка «Выход» останавливает VPN и закрывает приложение. В настройках → «Запуск» можно включить запуск при входе в Windows и подключение последнего сохранённого профиля. Черновик при автоподключении не применяется.");
         AddFaq(body, "Как перенести настройки?", "В настройках → «VPN-профиль» → «Перенос» нажми «Экспорт настроек». Файл .morphocyte содержит выбранный профиль с данными подключения, правила, папки и параметры приложения. На другом компьютере выбери «Импорт настроек» и «Сохранить». Создаётся отдельная копия профиля; неприменённые правила остаются черновиком. Ядро берётся с нового компьютера. Файл содержит секреты VPN — передавай его только доверенному человеку.");
         AddFaq(body, "Что показывают скорость, пинг и доступность?", "Скорость — текущий трафик через ядро, включая прямые маршруты. Пинг — задержка HTTPS-запроса через VPN, а доступность — доля успешных запросов среди последних 20 проверок. Проверки идут каждые 20 секунд при открытом окне. Это не тест максимальной скорости и не измерение потерь пакетов.");
+        AddFaq(body, "Что делать, если VPN не отвечает?", "Во вкладке «Журнал и соединения» нажми «Проверить подключение». Проверка проходит по этапам: ядро, выбор VPN, сервер, DNS и HTTPS. «Копировать диагностику» копирует только результат проверки, без профиля, ссылок, адресов серверов и ключей.");
+        AddFaq(body, "Что происходит после сна или смены сети?", "Приложение проверяет работавшее подключение и при необходимости перезапускает своё ядро, до трёх попыток. Ручное отключение VPN отменяет восстановление. Неприменённые правила остаются черновиком. В настройках → «Запуск» восстановление можно отключить.");
         AddFaq(body, "Как обновлять приложение?", "Автообновление проверяет GitHub при запуске и каждые 30 минут. Найденную версию устанавливает, когда VPN выключен и диалоги закрыты. Верхнее уведомление можно отложить до следующего запуска. В настройках → «Обновления» можно отключить автообновление, проверить релиз вручную и установить его по кнопке; ручная установка остановит VPN. Личные профили и настройки сохраняются. После обновления запусти VPN вручную.");
         var dialog = DialogChrome.CreateWindow(owner, "ЧАСТЫЕ ВОПРОСЫ", 680, 690, 530, 480, ResizeMode.CanResize);
         var close = DialogChrome.MakeButton("ЗАКРЫТЬ", false);
@@ -160,6 +163,8 @@ internal static class UtilityDialogs
         startupOptions.Children.Add(launchAtSignIn);
         startupOptions.Children.Add(autoConnect);
         startup.Children.Add(Card("АВТОЗАПУСК", null, startupOptions));
+        var autoReconnect = LabeledOption("Восстанавливать VPN после сна и смены сети", owner.AutoReconnect);
+        startup.Children.Add(Card("ПОДКЛЮЧЕНИЕ", null, autoReconnect));
 
         var themePicker = new ComboBox { ItemsSource = ThemeManager.ThemeNames, SelectedItem = selectedTheme, Margin = new Thickness(0, 9, 0, 0) };
         themePicker.SelectionChanged += (_, _) =>
@@ -318,7 +323,25 @@ internal static class UtilityDialogs
         footer.Children.Add(save);
         SettingsDialogSelection CurrentSelection() => new(selectedConfig, selectedCore, selectedTheme,
             selectedScale, automatic.IsChecked == true, importedProfile, launchAtSignIn.IsChecked == true,
-            autoConnect.IsChecked == true, pendingTransfer);
+            autoConnect.IsChecked == true, pendingTransfer, autoReconnect.IsChecked == true);
+        var subscriptionActions = new WrapPanel();
+        var sourceButton = DialogChrome.MakeButton("Ссылка подписки", false);
+        var refreshSubscription = DialogChrome.MakeButton("Обновить подписку", false);
+        sourceButton.Margin = new Thickness(0, 0, 8, 6); refreshSubscription.Margin = new Thickness(0, 0, 0, 6);
+        var subscriptionFeedback = new TextBlock { FontSize = 12, TextWrapping = TextWrapping.Wrap };
+        subscriptionFeedback.SetResourceReference(TextBlock.ForegroundProperty, "ThemeMuted");
+        bool SavedProfileSelected() => importedProfile is null && pendingTransfer is null
+            && string.Equals(selectedConfig, owner.CurrentProfilePath, StringComparison.OrdinalIgnoreCase)
+            && string.Equals(selectedCore, owner.CurrentCorePath, StringComparison.OrdinalIgnoreCase);
+        sourceButton.Click += (_, _) =>
+        {
+            if (!SavedProfileSelected()) { subscriptionFeedback.Text = "Сначала сохрани выбранный профиль."; return; }
+            owner.ShowSubscriptionSource(dialog);
+            subscriptionFeedback.Text = owner.HasSubscriptionSource ? "Ссылка сохранена." : "Ссылка не сохранена.";
+        };
+        subscriptionActions.Children.Add(sourceButton); subscriptionActions.Children.Add(refreshSubscription);
+        var subscriptionBody = new StackPanel(); subscriptionBody.Children.Add(subscriptionActions); subscriptionBody.Children.Add(subscriptionFeedback);
+        profile.Children.Add(Card("ПОДПИСКА", null, subscriptionBody));
         var transferActions = new WrapPanel();
         var export = DialogChrome.MakeButton("Экспорт настроек", false);
         export.Margin = new Thickness(0, 0, 8, 4);
@@ -327,6 +350,22 @@ internal static class UtilityDialogs
         transferActions.Children.Add(export);
         transferActions.Children.Add(import);
         profile.Children.Add(Card("ПЕРЕНОС", null, transferActions));
+        refreshSubscription.Click += async (_, _) =>
+        {
+            if (!SavedProfileSelected()) { subscriptionFeedback.Text = "Сначала сохрани выбранный профиль."; return; }
+            if (!owner.HasSubscriptionSource) { subscriptionFeedback.Text = "Укажи ссылку подписки."; return; }
+            refreshSubscription.IsEnabled = false; sourceButton.IsEnabled = false; save.IsEnabled = false; export.IsEnabled = false; import.IsEnabled = false;
+            subscriptionFeedback.Text = "Обновляю подписку…";
+            try
+            {
+                var updated = await owner.RefreshSubscriptionAsync(lifetime.Token);
+                if (!lifetime.IsCancellationRequested) subscriptionFeedback.Text = updated ? "Подписка обновлена." : "Подписка не изменена.";
+            }
+            finally
+            {
+                if (!lifetime.IsCancellationRequested) { refreshSubscription.IsEnabled = true; sourceButton.IsEnabled = true; save.IsEnabled = true; export.IsEnabled = true; import.IsEnabled = true; }
+            }
+        };
         export.Click += async (_, _) =>
         {
             var picker = new SaveFileDialog { Filter = "Настройки MorphocyteOS (*.morphocyte)|*.morphocyte", DefaultExt = ".morphocyte",
@@ -334,7 +373,7 @@ internal static class UtilityDialogs
             if (picker.ShowDialog(dialog) != true) return;
             if (!string.Equals(Path.GetExtension(picker.FileName), ".morphocyte", StringComparison.OrdinalIgnoreCase))
             { saveFeedback.Text = "Выбери файл с расширением .morphocyte."; return; }
-            export.IsEnabled = false; import.IsEnabled = false; save.IsEnabled = false;
+            export.IsEnabled = false; import.IsEnabled = false; save.IsEnabled = false; refreshSubscription.IsEnabled = false; sourceButton.IsEnabled = false;
             saveFeedback.Text = "Экспортирую…";
             try
             {
@@ -344,13 +383,13 @@ internal static class UtilityDialogs
             }
             catch (OperationCanceledException) { }
             catch (Exception) { if (!lifetime.IsCancellationRequested) saveFeedback.Text = "Не удалось экспортировать. Проверь доступ к файлу и профиль."; }
-            finally { if (!lifetime.IsCancellationRequested) { export.IsEnabled = true; import.IsEnabled = true; save.IsEnabled = true; } }
+            finally { if (!lifetime.IsCancellationRequested) { export.IsEnabled = true; import.IsEnabled = true; save.IsEnabled = true; refreshSubscription.IsEnabled = true; sourceButton.IsEnabled = true; } }
         };
         import.Click += async (_, _) =>
         {
             var picker = new OpenFileDialog { Filter = "Настройки MorphocyteOS (*.morphocyte)|*.morphocyte", CheckFileExists = true };
             if (picker.ShowDialog(dialog) != true) return;
-            export.IsEnabled = false; import.IsEnabled = false; save.IsEnabled = false;
+            export.IsEnabled = false; import.IsEnabled = false; save.IsEnabled = false; refreshSubscription.IsEnabled = false; sourceButton.IsEnabled = false;
             try
             {
                 var package = await Task.Run(() => ConfigurationTransfer.Read(picker.FileName), lifetime.Token);
@@ -363,13 +402,14 @@ internal static class UtilityDialogs
                 automatic.IsChecked = package.Options.AutoCheckUpdates;
                 launchAtSignIn.IsChecked = package.Options.LaunchAtSignIn;
                 autoConnect.IsChecked = package.Options.AutoConnectOnStartup;
+                autoReconnect.IsChecked = package.Options.AutoReconnect;
                 configValue.Text = "Профиль из файла переноса";
                 configValue.ToolTip = null;
                 saveFeedback.Text = "Импорт готов. Нажми «Сохранить».";
             }
             catch (OperationCanceledException) { }
             catch (Exception) { if (!lifetime.IsCancellationRequested) saveFeedback.Text = "Не удалось импортировать. Проверь файл переноса."; }
-            finally { if (!lifetime.IsCancellationRequested) { export.IsEnabled = true; import.IsEnabled = true; save.IsEnabled = true; } }
+            finally { if (!lifetime.IsCancellationRequested) { export.IsEnabled = true; import.IsEnabled = true; save.IsEnabled = true; refreshSubscription.IsEnabled = true; sourceButton.IsEnabled = true; } }
         };
         save.Click += async (_, _) =>
         {
@@ -381,7 +421,7 @@ internal static class UtilityDialogs
                 return;
             }
             save.IsEnabled = false;
-            export.IsEnabled = false; import.IsEnabled = false;
+            export.IsEnabled = false; import.IsEnabled = false; refreshSubscription.IsEnabled = false; sourceButton.IsEnabled = false;
             saveFeedback.Text = "Сохраняю…";
             try
             {
@@ -406,6 +446,7 @@ internal static class UtilityDialogs
                 automatic.IsChecked = applied.AutoCheckUpdates;
                 launchAtSignIn.IsChecked = applied.LaunchAtSignIn;
                 autoConnect.IsChecked = applied.AutoConnectOnStartup;
+                autoReconnect.IsChecked = applied.AutoReconnect;
                 UiScaleManager.Apply(dialog, (FrameworkElement)dialog.Content, selectedScale);
                 UpdatePath(configValue, selectedConfig);
                 UpdatePath(coreValue, selectedCore);
@@ -417,7 +458,7 @@ internal static class UtilityDialogs
             }
             finally
             {
-                if (!lifetime.IsCancellationRequested) { save.IsEnabled = true; export.IsEnabled = true; import.IsEnabled = true; }
+                if (!lifetime.IsCancellationRequested) { save.IsEnabled = true; export.IsEnabled = true; import.IsEnabled = true; refreshSubscription.IsEnabled = true; sourceButton.IsEnabled = true; }
             }
         };
         dialog.Content = DialogChrome.BuildFrame(dialog, "НАСТРОЙКИ", layout, footer);

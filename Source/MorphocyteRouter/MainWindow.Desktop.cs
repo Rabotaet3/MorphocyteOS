@@ -30,7 +30,7 @@ public partial class MainWindow
             _trayPower = new Forms.ToolStripMenuItem("Запустить VPN");
             _trayPower.Click += async (_, _) => await RunExclusiveAsync(async () =>
             {
-                if (_core.HasTrackedProcess) await StopCoreAsync(); else await StartCoreAsync();
+                if (_core.HasTrackedProcess || _recoveryLifetime is not null) { CancelConnectionIntent(); await StopCoreAsync(); } else await StartCoreAsync();
             });
             menu.Items.Add(_trayPower);
             menu.Items.Add("Журнал", null, (_, _) => { RestoreFromTray(); ChangeMainPage(true); });
@@ -77,6 +77,7 @@ public partial class MainWindow
 
     internal void RequestExit()
     {
+        CancelConnectionIntent();
         _exitRequested = true;
         Close();
     }
@@ -85,7 +86,7 @@ public partial class MainWindow
     {
         if (_tray is null || _trayPower is null) return;
         _tray.Text = "MorphocyteOS · " + (_core.IsRunning ? "ядро работает" : "VPN выключен");
-        _trayPower.Text = _core.HasTrackedProcess ? "Остановить VPN" : "Запустить VPN";
+        _trayPower.Text = _core.HasTrackedProcess ? "Остановить VPN" : _recoveryLifetime is not null ? "Отменить восстановление" : "Запустить VPN";
         _trayPower.Enabled = !_busy && !_closing && (_core.HasTrackedProcess || _document is { HasVpnConnection: true });
     }
 

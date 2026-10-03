@@ -517,13 +517,16 @@
                         </Border>
 
                         <Grid Grid.Row="4" Margin="4,14,4,2">
+                            <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                             <Grid.ColumnDefinitions>
                                 <ColumnDefinition Width="*"/>
                                 <ColumnDefinition Width="Auto"/>
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
-                            <Button x:Name="UndoButton" Grid.Column="1" Style="{StaticResource FlatButton}" Width="112" Height="44" Margin="0,0,9,0" Content="↶  ОТМЕНИТЬ" Click="UndoDelete_Click" IsEnabled="False" ToolTip="Вернуть последнее удалённое правило"/>
-                            <Button x:Name="ApplyButton" Grid.Column="2" Style="{StaticResource PrimaryButton}" Width="190" Height="44" Content="ПРИМЕНИТЬ В YAML" Click="ApplyButton_Click" IsEnabled="False"/>
+                            <TextBlock x:Name="ChangesSummaryText" Grid.Row="0" Grid.ColumnSpan="3" FontSize="10" Foreground="{DynamicResource ThemeMuted}" TextWrapping="Wrap" Margin="0,0,0,7" Visibility="Collapsed"/>
+                            <Button x:Name="RedoRulesButton" Grid.Row="1" Grid.Column="0" Style="{StaticResource FlatButton}" Width="40" Height="44" HorizontalAlignment="Right" Margin="0,0,9,0" Content="↷" FontSize="20" FontFamily="Segoe UI Symbol" ToolTip="Повторить изменение · Ctrl+Y" Click="RedoRules_Click" IsEnabled="False"/>
+                            <Button x:Name="UndoButton" Grid.Row="1" Grid.Column="1" Style="{StaticResource FlatButton}" Width="112" Height="44" Margin="0,0,9,0" Content="↶  ОТМЕНИТЬ" Click="UndoDelete_Click" IsEnabled="False" ToolTip="Отменить изменение правил · Ctrl+Z"/>
+                            <Button x:Name="ApplyButton" Grid.Row="1" Grid.Column="2" Style="{StaticResource PrimaryButton}" Width="190" Height="44" Content="ПРИМЕНИТЬ В YAML" Click="ApplyButton_Click" IsEnabled="False"/>
                         </Grid>
                     </Grid>
                     <Border x:Name="JournalPage" Visibility="Collapsed" Background="{DynamicResource ThemeLogPanel}" BorderBrush="{DynamicResource ThemePanelBorder}" BorderThickness="1" CornerRadius="15" Padding="16">
@@ -531,7 +534,17 @@
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="2*"/><RowDefinition Height="Auto"/><RowDefinition Height="3*"/>
                             </Grid.RowDefinitions>
-                            <TextBlock Text="ЖУРНАЛ И СОЕДИНЕНИЯ" FontSize="23" FontWeight="Light" Foreground="{DynamicResource ThemeText}"/>
+                            <StackPanel>
+                                <TextBlock Text="ЖУРНАЛ И СОЕДИНЕНИЯ" FontSize="23" FontWeight="Light" Foreground="{DynamicResource ThemeText}"/>
+                                <WrapPanel Margin="0,9,0,0">
+                                    <Button x:Name="RunDiagnosticButton" Style="{StaticResource FlatButton}" Content="ПРОВЕРИТЬ ПОДКЛЮЧЕНИЕ" Padding="10,5" Margin="0,0,8,5" Click="RunDiagnostic_Click"/>
+                                    <Button x:Name="CopyDiagnosticButton" Style="{StaticResource FlatButton}" Content="КОПИРОВАТЬ ДИАГНОСТИКУ" Padding="10,5" Margin="0,0,8,5" Click="CopyDiagnostic_Click" IsEnabled="False"/>
+                                    <Button x:Name="CancelDiagnosticButton" Style="{StaticResource FlatButton}" Content="ОТМЕНА" Padding="10,5" Margin="0,0,0,5" Click="CancelDiagnostic_Click" Visibility="Collapsed"/>
+                                </WrapPanel>
+                                <ScrollViewer x:Name="DiagnosticResultsScroll" MaxHeight="115" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" Margin="0,3,0,0">
+                                    <TextBlock x:Name="DiagnosticResultsText" FontSize="11" Foreground="{DynamicResource ThemeText}" TextWrapping="Wrap"/>
+                                </ScrollViewer>
+                            </StackPanel>
                             <Grid Grid.Row="1" Margin="0,10,0,9">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                 <TextBox x:Name="ConnectionSearchBox" ToolTip="Фильтр: процесс, адрес, правило или маршрут" TextChanged="ConnectionSearch_TextChanged" Padding="9,6"/>

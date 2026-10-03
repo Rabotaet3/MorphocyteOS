@@ -318,6 +318,7 @@ public partial class MainWindow
 
     private void Window_PreviewKeyDown(object sender, KeyEventArgs e)
     {
+        if (HandleRuleHistoryKey(e)) return;
         if (e.Key != Key.Escape || !_dragActive) return;
         CancelRuleDrag();
         e.Handled = true;

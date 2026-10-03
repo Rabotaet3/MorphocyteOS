@@ -33,7 +33,6 @@ public partial class MainWindow : Window
     private const int MaxCoreLinesPerRefresh = 1000;
     private readonly string _logPath;
     private ClashConfigDocument? _document;
-    private (DomainRule Rule, int Index)? _lastDeleted;
     private ScrollViewer? _rulesScrollViewer;
     private ScrollViewer? _logScrollViewer;
     private DateTime _startedAt;
@@ -83,6 +82,7 @@ public partial class MainWindow : Window
         _logRefreshTimer.Start();
         InitializeDiagnostics();
         InitializeAutomaticUpdates();
+        InitializeConnectionRecovery();
         LogText.Loaded += LogText_Loaded;
 
         _core.Output += message => _pendingCoreOutput.Enqueue(message);
@@ -122,7 +122,7 @@ public partial class MainWindow : Window
             if (_settings.AutoCheckUpdates) await CheckForUpdatesOnStartupAsync();
         };
         Closing += MainWindow_Closing;
-        Closed += (_, _) => { _logRefreshTimer.Stop(); _automaticUpdateTimer?.Stop(); DisposeDesktopIntegration(); ResetDiagnostics(); };
+        Closed += (_, _) => { _logRefreshTimer.Stop(); _automaticUpdateTimer?.Stop(); DisposeDesktopIntegration(); DisposeConnectionRecovery(); ResetDiagnostics(); };
         Deactivated += (_, _) => CancelRuleDrag();
         UpdateControls();
     }
@@ -236,10 +236,11 @@ public partial class MainWindow : Window
         EmptyRulesMessage.Opacity = 1;
         CheckConnectionButton.IsEnabled = _core.IsRunning && !_busy && !_closing && !_checkingConnection;
         RefreshConnectionsButton.IsEnabled = _core.IsRunning && !_closing;
-        PowerButton.Content = _core.HasTrackedProcess ? "ОСТАНОВИТЬ VPN" : "ЗАПУСТИТЬ VPN";
+        PowerButton.Content = _core.HasTrackedProcess ? "ОСТАНОВИТЬ VPN"
+            : _recoveryLifetime is not null ? "ОТМЕНИТЬ ВОССТАНОВЛЕНИЕ" : "ЗАПУСТИТЬ VPN";
         RestartButton.IsEnabled = _core.IsRunning;
         ApplyButton.IsEnabled = _dirty && _document is not null;
-        UndoButton.IsEnabled = _lastDeleted is not null && !_busy && !_closing;
+        RefreshRuleHistoryControls();
         RefreshConnectionCard();
         RefreshTrayState();
     }
@@ -247,6 +248,7 @@ public partial class MainWindow : Window
     private async Task LoadConfigAsync(string path)
     {
         if (_dirty) await SaveDraftAsync();
+        CancelConnectionIntent();
         var loaded = await Task.Run(() => ClashConfigDocument.Load(path)).WaitAsync(TimeSpan.FromSeconds(10), _lifetime.Token);
         var errors = loaded.Validate();
         if (errors.Count > 0) throw new InvalidDataException(string.Join(" ", errors));
@@ -270,9 +272,9 @@ public partial class MainWindow : Window
             var preferredAction = _settings.PreferredRoute is "DIRECT" or "REJECT" ? _settings.PreferredRoute : "VPN";
             RouteCombo.SelectedItem = RouteCombo.Items.OfType<ComboBoxItem>().First(item => Equals(item.Tag, preferredAction));
             UpdateRouteHint(preferredAction);
-            _lastDeleted = null;
             _draftSaved = restoreDraft;
             SetDirty(restoreDraft || loaded.HadMarkdownFence);
+            ResetRuleHistory();
             if (state is null || state.SourceHash == loaded.SourceHash)
                 _settings.PutRuleState(path, loaded.SourceHash, _rules);
             await SaveSettingsAsync();
@@ -340,12 +342,12 @@ public partial class MainWindow : Window
             CaptureFolderExpansionStates();
             ReplaceRules(merged);
             _settings.PutRuleState(document.Path, _document.SourceHash, merged);
-            _lastDeleted = null;
             SetDirty(false);
             _settings.RemoveDraft(document.Path);
             await SaveSettingsAsync();
             SetLog("Правила проверены и сохранены. Резервная копия: " + Path.GetFileName(backup));
             if (wasRunning && restart && !_closing) await StartCoreAsync();
+            ResetRuleHistory();
         }
         catch
         {
@@ -376,12 +378,13 @@ public partial class MainWindow : Window
 
     private async Task StartCoreAsync(bool applyDraft = true)
     {
+        var startToken = _recoveringConnection && _recoveryLifetime is not null ? _recoveryLifetime.Token : _lifetime.Token;
         if (_closing) return;
         if (_core.IsRunning) return;
         if (!File.Exists(_settings.CorePath)) throw new FileNotFoundException("Выбери ядро Mihomo в настройках.");
         if (!File.Exists(_settings.ConfigPath)) throw new FileNotFoundException("Выбери YAML-конфигурацию.");
         if (_dirty && applyDraft) await ApplyChangesAsync(restart: false);
-        _lifetime.Token.ThrowIfCancellationRequested();
+        startToken.ThrowIfCancellationRequested();
         var actual = await Task.Run(() => ClashConfigDocument.Load(_settings.ConfigPath));
         if (_document?.SourceHash != actual.SourceHash)
             await LoadConfigAsync(_settings.ConfigPath);
@@ -389,23 +392,26 @@ public partial class MainWindow : Window
         if (routingErrors.Count > 0) throw new InvalidDataException(string.Join("\n", routingErrors));
 
         SetStatus("ПРОВЕРКА…", "Проверяю конфигурацию", "#FFD166");
-        var check = await CoreProcessManager.ValidateAsync(_settings.CorePath, _settings.ConfigPath, _lifetime.Token);
+        var check = await CoreProcessManager.ValidateAsync(_settings.CorePath, _settings.ConfigPath, startToken);
         if (!check.Success)
         {
             SetStatus("ОШИБКА YAML", "Ядро не запущено", "#FF6B8A");
             throw new InvalidDataException(check.Message);
         }
-        _lifetime.Token.ThrowIfCancellationRequested();
+        startToken.ThrowIfCancellationRequested();
         if (!await ConfirmAndStopOtherMihomoAsync()) return;
         try
         {
+            _ignoreRecoveryNetworkUntil = DateTime.UtcNow.AddSeconds(15);
             _diagnostics = new CoreDiagnostics();
             var runtimeDirectory = Path.Combine(_settings.StorageDirectory, ".runtime");
             Directory.CreateDirectory(runtimeDirectory);
             _runtimeConfigPath = Path.Combine(runtimeDirectory, "active-" + Guid.NewGuid().ToString("N") + ".yaml");
-            await File.WriteAllTextAsync(_runtimeConfigPath, actual.BuildRuntimeText(_diagnostics.Port, _diagnostics.Secret), new UTF8Encoding(false), _lifetime.Token);
+            await File.WriteAllTextAsync(_runtimeConfigPath, actual.BuildRuntimeText(_diagnostics.Port, _diagnostics.Secret), new UTF8Encoding(false), startToken);
             await _core.StartAsync(CoreProcessManager.CreateStartInfo(_settings.CorePath, _runtimeConfigPath,
-                Path.GetDirectoryName(_settings.ConfigPath)), _lifetime.Token);
+                Path.GetDirectoryName(_settings.ConfigPath)), startToken);
+            _connectionRequested = true;
+            _ignoreRecoveryNetworkUntil = DateTime.UtcNow.AddSeconds(15);
             _startedAt = DateTime.Now;
             _uptimeTimer.Start();
             SetStatus("ЯДРО РАБОТАЕТ", "Правила VPN загружены", "#73FFBF");
@@ -428,6 +434,7 @@ public partial class MainWindow : Window
         {
             var instances = CoreProcessManager.FindOtherInstances(_settings.CorePath);
             if (instances.Count == 0) return true;
+            if (_recoveringConnection) { SetLog("Восстановление остановлено: найдено другое ядро."); return false; }
             if (_startupMode) RestoreFromTray();
 
             var unverified = instances.Where(instance => string.IsNullOrWhiteSpace(instance.ExecutablePath)).ToArray();
@@ -471,6 +478,12 @@ public partial class MainWindow : Window
         var stopped = await _core.StopAsync();
         if (stopped)
         {
+            if (_selectedConnection.Length > 0 && _settings.ProfileSubscriptions.TryGetValue(_settings.ConfigPath, out var source))
+            {
+                source.SelectedServer = _selectedConnection;
+                try { await SaveSettingsAsync(); }
+                catch { SetLog("Не удалось сохранить выбор сервера. Остановка VPN выполнена."); }
+            }
             ResetDiagnostics();
             _uptimeTimer.Stop();
             SetStatus("VPN ВЫКЛЮЧЕН", "Процесс ядра завершён", "#667A74");
@@ -604,6 +617,7 @@ public partial class MainWindow : Window
         _draftSaved = false;
         SetDirty(true);
         EnsureFolderOrder(_rules);
+        TrackRuleEdit(_dirty);
         RefreshCount(refreshView);
         await SaveDraftAsync();
     }
@@ -611,6 +625,7 @@ public partial class MainWindow : Window
     {
         if (_document is null || string.Equals(source, target, StringComparison.Ordinal)) return;
         EnsureFolderOrder(_rules);
+        TrackRuleEdit(_dirty);
         var sourceIndex = _folderOrder.FindIndex(name => string.Equals(name, source, StringComparison.OrdinalIgnoreCase));
         var targetIndex = _folderOrder.FindIndex(name => string.Equals(name, target, StringComparison.OrdinalIgnoreCase));
         if (sourceIndex < 0 || targetIndex < 0) return;
@@ -618,6 +633,7 @@ public partial class MainWindow : Window
         targetIndex = _folderOrder.FindIndex(name => string.Equals(name, target, StringComparison.OrdinalIgnoreCase));
         _folderOrder.Insert(targetIndex + (after ? 1 : 0), source);
         RefreshRulesView();
+        TrackRuleEdit(_dirty);
         _settings.PutFolderOrder(_document.Path, _folderOrder);
         await SaveSettingsAsync();
         SetLog($"Папка «{source}» перемещена {(after ? "после" : "перед")} «{target}».");
@@ -705,7 +721,6 @@ public partial class MainWindow : Window
         if (_rules.Any(rule => rule.Kind == kind && rule.Value.Equals(value, StringComparison.OrdinalIgnoreCase)))
             throw new InvalidOperationException("Такое правило уже есть в списке. Его маршрут показан справа.");
         _rules.Add(new DomainRule { Kind = kind, Value = value, Route = route });
-        _lastDeleted = null;
         await RecordEditAsync();
         DomainInput.Clear();
         SetLog("Правило добавлено в черновик.");
@@ -713,8 +728,6 @@ public partial class MainWindow : Window
     private async void DeleteRule_Click(object sender, RoutedEventArgs e) => await RunExclusiveAsync(async () =>
     {
         if (sender is not Button { Tag: DomainRule rule }) return;
-        var index = _rules.IndexOf(rule);
-        _lastDeleted = (rule.Copy(), index);
         _rules.Remove(rule);
         await RecordEditAsync();
         SetLog("Правило удалено из черновика. Другие совпадающие правила продолжают действовать.");
@@ -824,14 +837,7 @@ public partial class MainWindow : Window
         await RecordEditAsync();
         SetLog($"Папка «{folderName}» удалена; {members.Length} правил(а) оставлено в общих правилах.");
     });
-    private async void UndoDelete_Click(object sender, RoutedEventArgs e) => await RunExclusiveAsync(async () =>
-    {
-        if (_lastDeleted is not { } deleted) return;
-        _rules.Insert(Math.Clamp(deleted.Index, 0, _rules.Count), deleted.Rule);
-        _lastDeleted = null;
-        await RecordEditAsync();
-        SetLog("Удалённое правило восстановлено.");
-    });
+    private async void UndoDelete_Click(object sender, RoutedEventArgs e) => await UndoRuleEditAsync();
     private async void RouteCombo_SelectionChanged(object sender, SelectionChangedEventArgs e)
     {
         if (RouteCombo.SelectedItem is not ComboBoxItem { Tag: string route }) return;
@@ -871,7 +877,7 @@ public partial class MainWindow : Window
     private async void ApplyButton_Click(object sender, RoutedEventArgs e) => await RunExclusiveAsync(() => ApplyChangesAsync());
     private async void PowerButton_Click(object sender, RoutedEventArgs e) => await RunExclusiveAsync(async () =>
     {
-        if (_core.HasTrackedProcess) await StopCoreAsync(); else await StartCoreAsync();
+        if (_core.HasTrackedProcess || _recoveryLifetime is not null) { CancelConnectionIntent(); await StopCoreAsync(); } else await StartCoreAsync();
     });
     private async void RestartButton_Click(object sender, RoutedEventArgs e) => await RunExclusiveAsync(async () =>
     {
@@ -912,6 +918,8 @@ public partial class MainWindow : Window
                 StartupRegistration.SetEnabled(choice.LaunchAtSignIn);
             _settings.LaunchAtSignIn = choice.LaunchAtSignIn;
             _settings.AutoConnectOnStartup = choice.AutoConnectOnStartup;
+            _settings.AutoReconnect = choice.AutoReconnect;
+            if (!_settings.AutoReconnect) _recoveryLifetime?.Cancel();
             ThemeManager.Apply(_settings.Theme);
             ApplyInterfaceScale(_settings.InterfaceScale);
             await SaveSettingsAsync();
@@ -932,7 +940,7 @@ public partial class MainWindow : Window
             SetLog("Настройки сохранены.");
             applied = new SettingsDialogSelection(_settings.ConfigPath, _settings.CorePath, _settings.Theme,
                 _settings.InterfaceScale, _settings.AutoCheckUpdates, LaunchAtSignIn: _settings.LaunchAtSignIn,
-                AutoConnectOnStartup: _settings.AutoConnectOnStartup);
+                AutoConnectOnStartup: _settings.AutoConnectOnStartup, AutoReconnect: _settings.AutoReconnect);
         });
         return applied;
     }
@@ -942,6 +950,7 @@ public partial class MainWindow : Window
         if (!File.Exists(_settings.CorePath)) _settings.CorePath = await BundledResources.EnsureCoreAsync(_lifetime.Token);
         var path = await ProfileStorage.CreateAsync(imported, _settings.CorePath, _settings.StorageDirectory, _lifetime.Token);
         _settings.PreferredRoute = "VPN";
+        if (imported.SubscriptionUrl is { } url) _settings.ProfileSubscriptions[path] = SubscriptionSource.Create(url, DateTimeOffset.UtcNow);
         await LoadConfigAsync(path);
         SetLog("Создан новый локальный YAML. Остальные профили сохранены. Добавь сайты или приложения в правила VPN.");
     }
@@ -972,7 +981,6 @@ public partial class MainWindow : Window
             .Select(name => new DomainRule { Kind = "PROCESS-NAME", Value = name, Route = route }).ToArray();
         foreach (var rule in added) _rules.Add(rule);
         if (added.Length == 0) { SetLog("Выбранные приложения уже есть в правилах."); return; }
-        _lastDeleted = null;
         await RecordEditAsync();
         RuleKindCombo.SelectedIndex = 3;
         DomainInput.Clear();
@@ -994,6 +1002,7 @@ public partial class MainWindow : Window
         if (_tray is not null && !_exitRequested && !_closing) { HideToTray(); return; }
         if (_closing) return;
         _closing = true;
+        CancelConnectionIntent();
         _lifetime.Cancel();
         UpdateControls();
         await _operations.WaitAsync(); // Wait for a pending operation; cancellation prevents a late start.

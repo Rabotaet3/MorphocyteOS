@@ -11,6 +11,7 @@ internal sealed class ConfigurationPackage
     public string Format { get; set; } = "";
     public int SchemaVersion { get; set; }
     public string ApplicationVersion { get; set; } = "";
+    public string? SubscriptionUrl { get; set; }
     public string Yaml { get; set; } = "";
     public bool HasDraft { get; set; }
     public List<TransferRule> Rules { get; set; } = null!;
@@ -26,6 +27,7 @@ internal sealed class TransferOptions
     public bool AutoCheckUpdates { get; set; }
     public bool LaunchAtSignIn { get; set; }
     public bool AutoConnectOnStartup { get; set; }
+    public bool AutoReconnect { get; set; } = true;
     public string PreferredRoute { get; set; } = "VPN";
     public bool ShowEventLog { get; set; }
 }
@@ -132,6 +134,7 @@ internal static class ConfigurationTransfer
             || package.Rules is null || package.Rules.Count > 10000 || package.FolderOrder is null || package.FolderOrder.Count > 10000
             || package.Options is null || package.Files is null || package.Files.Count > 128)
             throw new InvalidDataException("Некорректный состав файла переноса.");
+        if (package.SubscriptionUrl is { } url) _ = SubscriptionImporter.ValidateUrl(url);
         var options = package.Options;
         if (!double.IsFinite(options.InterfaceScale) || options.InterfaceScale is < .8 or > 1.5
             || options.Theme is null || options.Theme.Length > 128 || options.PreferredRoute is not ("VPN" or "DIRECT" or "REJECT"))

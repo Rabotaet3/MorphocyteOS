@@ -11,7 +11,7 @@ using YamlDotNet.RepresentationModel;
 
 namespace MorphocyteRouter;
 
-// Download only after an explicit import. Never retain/log the secret subscription URL.
+// Download only after an explicit import or refresh. The app stores the source separately using Windows data protection.
 internal static class SubscriptionImporter
 {
     internal const int MaxBytes = 1_048_576;
@@ -55,7 +55,7 @@ internal static class SubscriptionImporter
             {
                 deadline.Token.ThrowIfCancellationRequested();
                 using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-                request.Headers.UserAgent.ParseAdd("MorphocyteOS/1.1.1");
+                request.Headers.UserAgent.ParseAdd("MorphocyteOS/" + BuildInfo.Version);
                 request.Headers.Accept.ParseAdd("application/yaml, application/json, text/plain, */*");
                 using var response = await (client ?? Client).SendAsync(request,
                     HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
@@ -80,7 +80,7 @@ internal static class SubscriptionImporter
                     data.Write(buffer, 0, count);
                 }
                 var downloaded = Utf8.GetString(data.ToArray());
-                return await Task.Run(() => ParseContent(downloaded), deadline.Token).ConfigureAwait(false);
+                return (await Task.Run(() => ParseContent(downloaded), deadline.Token).ConfigureAwait(false)) with { SubscriptionUrl = text };
             }
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)

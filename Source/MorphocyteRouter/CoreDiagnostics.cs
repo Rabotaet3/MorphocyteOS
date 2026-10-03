@@ -30,6 +30,25 @@ internal sealed class CoreDiagnostics : IDisposable
         _client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", Secret);
     }
 
+    internal async Task<string> ReadVersionAsync(CancellationToken token)
+    {
+        using var version = await ReadJsonAsync("version", token);
+        var value = Text(version.RootElement, "version");
+        if (value.Length == 0) throw new InvalidDataException("Ядро не сообщило версию.");
+        return value;
+    }
+
+    internal async Task<bool> CheckDnsAsync(CancellationToken token)
+    {
+        using var response = await ReadJsonAsync("dns/query?name=www.gstatic.com&type=A", token, allowDnsDisabled: true);
+        var root = response.RootElement;
+        if (Text(root, "message") == "DNS section is disabled") return false;
+        if (root.TryGetProperty("Status", out var status) && status.TryGetInt32(out var code) && code == 0
+            && root.TryGetProperty("Answer", out var answers) && answers.ValueKind == JsonValueKind.Array
+            && answers.EnumerateArray().Any(answer => answer.TryGetProperty("type", out var type)
+                && type.TryGetInt32(out var kind) && kind is 1 or 28)) return true;
+        throw new IOException("DNS ядра не разрешил проверочное имя.");
+    }
     internal async Task<CoreSnapshot> ReadAsync(string? group, CancellationToken token)
     {
         using var version = await ReadJsonAsync("version", token);
@@ -63,7 +82,9 @@ internal sealed class CoreDiagnostics : IDisposable
         var bytes = await response.Content.ReadAsByteArrayAsync(deadline.Token);
         if (bytes.Length > 32768) throw new IOException("Некорректный ответ проверки.");
         using var json = JsonDocument.Parse(bytes);
-        return json.RootElement.GetProperty("delay").GetInt32();
+        var delay = json.RootElement.GetProperty("delay").GetInt32();
+        if (delay is < 0 or > 120000) throw new InvalidDataException("Некорректная задержка ответа ядра.");
+        return delay;
     }
 
     internal async Task<TrafficSample> ReadTrafficAsync(CancellationToken token)
@@ -92,10 +113,10 @@ internal sealed class CoreDiagnostics : IDisposable
         }
     }
 
-    private async Task<JsonDocument> ReadJsonAsync(string path, CancellationToken token)
+    private async Task<JsonDocument> ReadJsonAsync(string path, CancellationToken token, bool allowDnsDisabled = false)
     {
         using var response = await _client.GetAsync(path, HttpCompletionOption.ResponseHeadersRead, token);
-        response.EnsureSuccessStatusCode();
+        if (!(allowDnsDisabled && response.StatusCode == HttpStatusCode.InternalServerError)) response.EnsureSuccessStatusCode();
         if (response.Content.Headers.ContentLength is > 2_097_152) throw new IOException("Слишком большой ответ ядра.");
         using var memory = new MemoryStream();
         await using var stream = await response.Content.ReadAsStreamAsync(token);

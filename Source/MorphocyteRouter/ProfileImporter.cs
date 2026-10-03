@@ -8,6 +8,7 @@ namespace MorphocyteRouter;
 internal sealed record ImportedProfile(string Yaml, string Description, bool InsecureTls)
 {
     internal bool NeedsName { get; init; }
+    internal string? SubscriptionUrl { get; init; }
 }
 
 // Connection import only. Xray routing/inbounds/DNS are not equivalent to Mihomo
@@ -106,7 +107,7 @@ internal static class ProfileImporter
         if (nodes.Children.Count != 1 || nodes.Children[0] is not YamlMappingNode node)
             throw new InvalidDataException("Название задаётся для одного подключения.");
         Put(node, "name", name);
-        return BuildConnections(new[] { node }, profile.Description, profile.InsecureTls);
+        return BuildConnections(new[] { node }, profile.Description, profile.InsecureTls) with { SubscriptionUrl = profile.SubscriptionUrl };
     }
 
     private static ImportedProfile FromJson(string text)

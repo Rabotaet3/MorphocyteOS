@@ -65,7 +65,7 @@ public partial class MainWindow
     internal bool CanInstallAutomatically => _settings.AutoCheckUpdates && _availableUpdate is { } update
         && update.LatestVersion != _deferredUpdateVersion && update.LatestVersion != _attemptedAutoUpdateVersion
         && update.LatestVersion != _settings.AutoUpdateBlockedVersion
-        && !_core.HasTrackedProcess && !_busy && !_closing && !_dialogBackdropVisible && !_autoInstallRunning;
+        && !_core.HasTrackedProcess && !_busy && !_closing && !_dialogBackdropVisible && !_autoInstallRunning && _recoveryLifetime is null;
 
     private void InitializeAutomaticUpdates()
     {
@@ -131,6 +131,7 @@ public partial class MainWindow
                 // start the same automatic update again after the old app restarts.
                 if (_settings.AutoCheckUpdates) _settings.AutoUpdateBlockedVersion = prepared.Manifest.Version;
                 await SaveSettingsAsync();
+                CancelConnectionIntent();
                 if (!await StopCoreAsync()) throw new IOException("Обновление отменено: остановка ядра не подтверждена.");
                 var protectedFiles = new List<string> { _settings.ConfigPath };
                 var bundled = Path.Combine(AppContext.BaseDirectory, BundledResources.CoreFileName);

@@ -16,6 +16,13 @@ public sealed class ProfileRuleState
     public List<DomainRule> Rules { get; set; } = new();
 }
 
+public sealed partial class SubscriptionSource
+{
+    public string ProtectedUrl { get; set; } = "";
+    public DateTimeOffset? UpdatedAt { get; set; }
+    public string SelectedServer { get; set; } = "";
+}
+
 public sealed class AppSettings
 {
     public string ConfigPath { get; set; } = "";
@@ -28,6 +35,8 @@ public sealed class AppSettings
     public bool ShowEventLog { get; set; }
     public bool LaunchAtSignIn { get; set; }
     public bool AutoConnectOnStartup { get; set; } = true;
+    public bool AutoReconnect { get; set; } = true;
+    public Dictionary<string, SubscriptionSource> ProfileSubscriptions { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     // Legacy fields migrate 1.5.x drafts on load.
     public bool HasRuleDraft { get; set; }
     public string DraftConfigPath { get; set; } = "";
@@ -89,6 +98,7 @@ public sealed class AppSettings
             state.SourceHash ??= "";
             state.Rules = NormalizeRules(state.Rules);
         });
+        settings.ProfileSubscriptions = NormalizeProfiles(settings.ProfileSubscriptions, source => { source.ProtectedUrl ??= ""; source.SelectedServer ??= ""; });
         settings.ProfileFolderOrders = NormalizeProfiles(settings.ProfileFolderOrders, _ => { });
         foreach (var key in settings.ProfileFolderOrders.Keys.ToArray())
             settings.ProfileFolderOrders[key] = settings.ProfileFolderOrders[key]

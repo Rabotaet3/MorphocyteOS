@@ -157,6 +157,7 @@ public partial class MainWindow
 
     private void ResetDiagnostics()
     {
+        _manualDiagnosticLifetime?.Cancel();
         _diagnosticLifetime?.Cancel();
         _diagnosticLifetime?.Dispose();
         _diagnosticLifetime = null;

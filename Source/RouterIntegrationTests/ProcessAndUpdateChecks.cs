@@ -72,7 +72,7 @@ internal partial class Program
                 await Task.Delay(250);
                 dialog.UpdateLayout();
                 Check(settingsScroll.VerticalOffset > 0 && Application.Current.Windows.Count == dialogCount
-                    && Descendants<CheckBox>(dialog).Count() == 3,
+                    && Descendants<CheckBox>(dialog).Count() == 4,
                     "section buttons scroll the shared settings page without opening or hiding separate pages");
                 Check(!Descendants<TextBlock>(dialog).Any(text => text.Text.Contains("30 минут") || text.Text.StartsWith("Цвета меняются")
                     || text.Text.StartsWith("Меняет весь интерфейс") || text.Text.StartsWith("Приложение запускается в трее"))

@@ -9,7 +9,7 @@ public partial class MainWindow
     {
         var options = new TransferOptions { Theme = selection.Theme, InterfaceScale = selection.InterfaceScale,
             AutoCheckUpdates = selection.AutoCheckUpdates, LaunchAtSignIn = selection.LaunchAtSignIn,
-            AutoConnectOnStartup = selection.AutoConnectOnStartup, ShowEventLog = _settings.ShowEventLog,
+            AutoConnectOnStartup = selection.AutoConnectOnStartup, AutoReconnect = selection.AutoReconnect, ShowEventLog = _settings.ShowEventLog,
             PreferredRoute = _settings.PreferredRoute is "DIRECT" or "REJECT" ? _settings.PreferredRoute : "VPN" };
         if (selection.Transfer is { } pending)
             return Task.Run(() =>
@@ -25,7 +25,9 @@ public partial class MainWindow
             {
                 var path = Path.Combine(_settings.StorageDirectory, "profile.yaml");
                 var document = ClashConfigDocument.Parse(path, imported.Yaml);
-                return ConfigurationTransfer.Capture(path, imported.Yaml, document.Rules, Array.Empty<string>(), options, false);
+                var package = ConfigurationTransfer.Capture(path, imported.Yaml, document.Rules, Array.Empty<string>(), options, false);
+                package.SubscriptionUrl = imported.SubscriptionUrl;
+                return package;
             }, _lifetime.Token);
         if (string.IsNullOrWhiteSpace(selection.ConfigPath)) throw new InvalidOperationException("Сначала выбери профиль VPN.");
         var configPath = Path.GetFullPath(selection.ConfigPath);
@@ -36,6 +38,7 @@ public partial class MainWindow
         var draft = _settings.GetDraft(configPath);
         var state = _settings.GetRuleState(configPath);
         var isDirty = _dirty;
+        var subscriptionUrl = _settings.ProfileSubscriptions.GetValueOrDefault(configPath)?.ReadUrl();
         return Task.Run(() =>
         {
             using var stream = new MemoryStream(ConfigurationTransfer.ReadBounded(configPath, 4 * 1024 * 1024));
@@ -47,7 +50,9 @@ public partial class MainWindow
             var restoreDraft = draft is not null && (draft.SourceHash.Length == 0 || draft.SourceHash == document.SourceHash);
             var rules = snapshot ?? (restoreDraft ? draft!.Rules : state is not null && state.SourceHash == document.SourceHash
                 ? MergeRuleUiState(document.Rules, state.Rules) : document.Rules.ToList());
-            return ConfigurationTransfer.Capture(configPath, yaml, rules, folders, options, current ? isDirty : restoreDraft);
+            var package = ConfigurationTransfer.Capture(configPath, yaml, rules, folders, options, current ? isDirty : restoreDraft);
+            package.SubscriptionUrl = subscriptionUrl;
+            return package;
         }, _lifetime.Token);
     }
 
@@ -59,6 +64,7 @@ public partial class MainWindow
         if (package.HasDraft) _settings.PutDraft(path, document.SourceHash, rules);
         else _settings.PutRuleState(path, document.SourceHash, rules);
         _settings.PreferredRoute = package.Options.PreferredRoute;
+        if (package.SubscriptionUrl is { } url) _settings.ProfileSubscriptions[path] = SubscriptionSource.Create(url);
         await LoadConfigAsync(path);
         SelectMainPage(package.Options.ShowEventLog);
         SetLog("Настройки и профиль импортированы. " + (package.HasDraft ? "Правила восстановлены как черновик." : "Сохранённая конфигурация восстановлена."));
