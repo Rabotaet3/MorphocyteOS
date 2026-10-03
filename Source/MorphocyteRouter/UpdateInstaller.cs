@@ -12,6 +12,7 @@ internal sealed class UpdatePlan
     public int ParentId { get; set; }
     public long ParentStartTicks { get; set; }
     public string Version { get; set; } = "";
+    public string HandoffToken { get; set; } = "";
     public List<string> ProtectedFiles { get; set; } = new();
 }
 
@@ -19,25 +20,65 @@ internal record UpdateOutcome(bool Success, string Message);
 
 internal static class UpdateInstaller
 {
-    internal static string Start(PreparedUpdate prepared, string installDirectory, string executableName, IEnumerable<string> protectedFiles)
+    internal static async Task<string> StartAsync(PreparedUpdate prepared, string installDirectory, string executableName,
+        IEnumerable<string> protectedFiles, CancellationToken token)
     {
-        using var parent = Process.GetCurrentProcess();
-        var executable = Path.Combine(Path.GetFullPath(installDirectory), executableName);
-        var helper = Path.Combine(prepared.Directory, "installer.exe");
-        File.Copy(executable, helper, false);
-        var plan = new UpdatePlan
+        var handoff = await Task.Run(() =>
         {
-            InstallDirectory = Path.GetFullPath(installDirectory), ExecutableName = executableName,
-            OriginalExecutableHash = UpdatePackage.Hash(executable), ParentId = parent.Id,
-            ParentStartTicks = parent.StartTime.ToUniversalTime().Ticks, Version = prepared.Manifest.Version,
-            ProtectedFiles = protectedFiles.Where(path => !string.IsNullOrWhiteSpace(path)).Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
-        };
-        var planPath = Path.Combine(prepared.Directory, "plan.json");
-        File.WriteAllText(planPath, JsonSerializer.Serialize(plan));
-        var info = new ProcessStartInfo(helper) { UseShellExecute = true, WorkingDirectory = prepared.Directory, WindowStyle = ProcessWindowStyle.Hidden };
-        info.ArgumentList.Add("--apply-update"); info.ArgumentList.Add(planPath);
-        using var child = Process.Start(info) ?? throw new IOException("Не удалось запустить установку обновления.");
-        return planPath;
+            using var parent = Process.GetCurrentProcess();
+            var executable = Path.Combine(Path.GetFullPath(installDirectory), executableName);
+            var helper = Path.Combine(prepared.Directory, "installer.exe");
+            File.Copy(executable, helper, false);
+            var plan = new UpdatePlan
+            {
+                InstallDirectory = Path.GetFullPath(installDirectory).TrimEnd(Path.DirectorySeparatorChar), ExecutableName = executableName,
+                OriginalExecutableHash = UpdatePackage.Hash(executable), ParentId = parent.Id,
+                ParentStartTicks = parent.StartTime.ToUniversalTime().Ticks, Version = prepared.Manifest.Version,
+                HandoffToken = Guid.NewGuid().ToString("N"),
+                ProtectedFiles = protectedFiles.Where(path => !string.IsNullOrWhiteSpace(path)).Select(Path.GetFullPath).Distinct(StringComparer.OrdinalIgnoreCase).ToList()
+            };
+            var planPath = Path.Combine(prepared.Directory, "plan.json");
+            File.WriteAllText(planPath, JsonSerializer.Serialize(plan));
+            var info = new ProcessStartInfo(helper) { UseShellExecute = true, WorkingDirectory = prepared.Directory, WindowStyle = ProcessWindowStyle.Hidden };
+            info.ArgumentList.Add("--apply-update"); info.ArgumentList.Add(planPath);
+            var child = Process.Start(info) ?? throw new IOException("Не удалось запустить установку обновления.");
+            return (child, planPath, plan.HandoffToken);
+        }, token);
+        using var child = handoff.child;
+        try
+        {
+            await WaitForReadyAsync(child, Path.Combine(prepared.Directory, "ready.txt"), handoff.HandoffToken, token);
+            return handoff.planPath;
+        }
+        catch
+        {
+            // This is the exact helper launched above, never another application's process.
+            if (!child.HasExited)
+            {
+                try { child.Kill(entireProcessTree: true); await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)); }
+                catch { /* The caller retains the cache if the helper still has files open. */ }
+            }
+            throw;
+        }
+    }
+
+    internal static async Task WaitForReadyAsync(Process child, string readyPath, string handoffToken,
+        CancellationToken token, TimeSpan? timeout = null)
+    {
+        var deadline = Stopwatch.StartNew();
+        while (deadline.Elapsed < (timeout ?? TimeSpan.FromSeconds(45)))
+        {
+            token.ThrowIfCancellationRequested();
+            if (child.HasExited) throw new IOException("Обновлятор завершился до начала установки. Приложение остаётся открытым; повтори обновление или распакуй новый комплект вручную.");
+            try
+            {
+                if (File.Exists(readyPath) && new FileInfo(readyPath).Length == handoffToken.Length
+                    && await File.ReadAllTextAsync(readyPath, token) == handoffToken) return;
+            }
+            catch (IOException) { /* Retry a readiness file that is still being written. */ }
+            await Task.Delay(50, token);
+        }
+        throw new IOException("Обновлятор не подтвердил запуск. Приложение остаётся открытым; повтори установку.");
     }
 
     internal static async Task<int> RunAsync(string planPath)
@@ -55,6 +96,16 @@ internal static class UpdateInstaller
                 throw new InvalidDataException("Неподдерживаемый план обновления.");
             plan = JsonSerializer.Deserialize<UpdatePlan>(await File.ReadAllTextAsync(planPath)) ?? throw new InvalidDataException("Пустой план обновления.");
             ValidatePlan(plan);
+            var incoming = UpdatePackage.ParseManifest(await File.ReadAllBytesAsync(Path.Combine(operation, "payload", UpdatePackage.ManifestName)));
+            if (incoming.Version != plan.Version) throw new InvalidDataException("Версия плана не совпадает с архивом.");
+            UpdatePackage.VerifyFiles(Path.Combine(operation, "payload"), incoming);
+            var acknowledged = false;
+            async Task AcknowledgeAsync()
+            {
+                if (acknowledged) return;
+                await File.WriteAllTextAsync(Path.Combine(operation, "ready.txt"), plan.HandoffToken);
+                acknowledged = true;
+            }
             try
             {
                 using var parent = Process.GetProcessById(plan.ParentId);
@@ -65,6 +116,7 @@ internal static class UpdateInstaller
                         if (parent.StartTime.ToUniversalTime().Ticks != plan.ParentStartTicks ||
                             !string.Equals(parent.MainModule?.FileName, Path.Combine(plan.InstallDirectory, plan.ExecutableName), StringComparison.OrdinalIgnoreCase))
                             throw new IOException("Процесс приложения изменился. Обновление отменено.");
+                        await AcknowledgeAsync();
                         await parent.WaitForExitAsync().WaitAsync(TimeSpan.FromMinutes(2));
                     }
                 }
@@ -72,6 +124,7 @@ internal static class UpdateInstaller
                 catch (System.ComponentModel.Win32Exception) when (parent.HasExited) { }
             }
             catch (ArgumentException) { /* The original app has already exited. */ }
+            await AcknowledgeAsync();
             var executable = Path.Combine(plan.InstallDirectory, plan.ExecutableName);
             if (!UpdatePackage.Hash(executable).Equals(plan.OriginalExecutableHash, StringComparison.OrdinalIgnoreCase))
                 throw new IOException("Файл приложения изменился после подготовки обновления.");

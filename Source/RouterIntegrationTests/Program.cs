@@ -22,14 +22,14 @@ internal partial class Program
         var code = 1;
         _ = app.Dispatcher.InvokeAsync(async () =>
         {
-            try { await Run(args[0], args.Contains("--improvements-only")); code = 0; }
+            try { await Run(args[0], args.Contains("--improvements-only"), args.Contains("--visual-only")); code = 0; }
             catch (Exception ex) { Console.Error.WriteLine(ex); }
             finally { app.Dispatcher.InvokeShutdown(); }
         });
         Dispatcher.Run();
         return code;
     }
-    static async Task Run(string fakeExe, bool improvementsOnly = false)
+    static async Task Run(string fakeExe, bool improvementsOnly = false, bool visualOnly = false)
     {
         var scratch = Path.Combine(AppContext.BaseDirectory, "integration-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(scratch);
@@ -57,8 +57,10 @@ internal partial class Program
         void Check(bool condition, string name) { if (!condition) throw new Exception("FAIL: " + name); Console.WriteLine("PASS: " + name); passed++; }
         try
         {
+            if (visualOnly) { await RunVisualLayoutChecks(scratch, fakeExe); return; }
             passed += await RunImprovementChecks(scratch, fakeExe);
             if (improvementsOnly) { Console.WriteLine($"TOTAL: {passed} improvement checks passed."); return; }
+            passed += await RunVisualLayoutChecks(scratch, fakeExe);
             passed += await RunFreshLaunchChecks(scratch);
             passed += await RunProfileImportChecks(scratch, fakeExe);
             passed += await RunConfigurationTransferChecks(scratch, fakeExe);

@@ -298,13 +298,14 @@
                     </Grid.ColumnDefinitions>
 
                     <Border Grid.Column="0" Background="{DynamicResource ThemePanelGradient}" BorderBrush="{DynamicResource ThemePanelBorder}" BorderThickness="1" CornerRadius="18" Padding="20">
+                        <Grid>
+                            <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                         <ScrollViewer x:Name="SidebarScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <Grid>
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
-                                <RowDefinition Height="*" MinHeight="66"/>
                             </Grid.RowDefinitions>
 
                             <StackPanel>
@@ -345,7 +346,11 @@
                                 </StackPanel>
                             </Border>
 
-                            <Grid x:Name="SidebarTools" Grid.Row="3" VerticalAlignment="Bottom" Margin="0,0,0,2">
+
+
+                        </Grid>
+                        </ScrollViewer>
+                            <Grid x:Name="SidebarTools" Grid.Row="1" VerticalAlignment="Bottom" Margin="0,14,0,2">
                                 <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
                                 <Button Grid.Column="0" Style="{StaticResource SidebarToolButton}" Click="FaqButton_Click" ToolTip="ЧаВо?">
                                     <TextBlock Text="?" FontSize="25" FontWeight="SemiBold" Foreground="{DynamicResource ThemeAccent}"/>
@@ -354,9 +359,7 @@
                                     <TextBlock Text="⚙" FontFamily="Segoe UI Symbol" FontSize="23" Foreground="{DynamicResource ThemeAccent}"/>
                                 </Button>
                             </Grid>
-
                         </Grid>
-                        </ScrollViewer>
                     </Border>
 
                     <Grid Grid.Column="2">
@@ -524,9 +527,16 @@
                                 <ColumnDefinition Width="Auto"/>
                             </Grid.ColumnDefinitions>
                             <TextBlock x:Name="ChangesSummaryText" Grid.Row="0" Grid.ColumnSpan="3" FontSize="10" Foreground="{DynamicResource ThemeMuted}" TextWrapping="Wrap" Margin="0,0,0,7" Visibility="Collapsed"/>
-                            <Button x:Name="RedoRulesButton" Grid.Row="1" Grid.Column="0" Style="{StaticResource FlatButton}" Width="40" Height="44" HorizontalAlignment="Right" Margin="0,0,9,0" Content="↷" FontSize="20" FontFamily="Segoe UI Symbol" ToolTip="Повторить изменение · Ctrl+Y" Click="RedoRules_Click" IsEnabled="False"/>
-                            <Button x:Name="UndoButton" Grid.Row="1" Grid.Column="1" Style="{StaticResource FlatButton}" Width="112" Height="44" Margin="0,0,9,0" Content="↶  ОТМЕНИТЬ" Click="UndoDelete_Click" IsEnabled="False" ToolTip="Отменить изменение правил · Ctrl+Z"/>
-                            <Button x:Name="ApplyButton" Grid.Row="1" Grid.Column="2" Style="{StaticResource PrimaryButton}" Width="190" Height="44" Content="ПРИМЕНИТЬ В YAML" Click="ApplyButton_Click" IsEnabled="False"/>
+                            <Button x:Name="RedoRulesButton" Grid.Row="1" Grid.Column="0" Style="{StaticResource FlatButton}" Width="44" Height="44" Padding="0" HorizontalAlignment="Right" Margin="0,0,9,0" AutomationProperties.Name="Повторить изменение" ToolTip="Повторить изменение · Ctrl+Y" Click="RedoRules_Click" IsEnabled="False">
+                                <Path Width="16" Height="16" Stretch="Uniform" Data="M 16,6 L 9,6 C 4,6 2,8 2,11 C 2,14 4,16 8,16 L 10,16 M 16,6 L 12,2 M 16,6 L 12,10" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                            </Button>
+                            <Button x:Name="UndoButton" Grid.Row="1" Grid.Column="1" Style="{StaticResource FlatButton}" MinWidth="112" Height="44" Padding="12,5" Margin="0,0,9,0" AutomationProperties.Name="Отменить изменение" Click="UndoDelete_Click" IsEnabled="False" ToolTip="Отменить изменение правил · Ctrl+Z">
+                                <StackPanel Orientation="Horizontal">
+                                    <Path Width="16" Height="16" Margin="0,0,7,0" VerticalAlignment="Center" Stretch="Uniform" Data="M 2,6 L 9,6 C 14,6 16,8 16,11 C 16,14 14,16 10,16 L 8,16 M 2,6 L 6,2 M 2,6 L 6,10" Stroke="{Binding Foreground, RelativeSource={RelativeSource AncestorType=Button}}" StrokeThickness="1.6" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round"/>
+                                    <TextBlock Text="ОТМЕНИТЬ" VerticalAlignment="Center"/>
+                                </StackPanel>
+                            </Button>
+                            <Button x:Name="ApplyButton" Grid.Row="1" Grid.Column="2" Style="{StaticResource PrimaryButton}" MinWidth="190" Height="44" Content="ПРИМЕНИТЬ В YAML" Click="ApplyButton_Click" IsEnabled="False"/>
                         </Grid>
                     </Grid>
                     <Border x:Name="JournalPage" Visibility="Collapsed" Background="{DynamicResource ThemeLogPanel}" BorderBrush="{DynamicResource ThemePanelBorder}" BorderThickness="1" CornerRadius="15" Padding="16">

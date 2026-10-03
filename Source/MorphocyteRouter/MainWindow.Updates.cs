@@ -141,7 +141,7 @@ public partial class MainWindow
                 var executable = Environment.ProcessPath ?? throw new IOException("Не удалось определить файл приложения.");
                 if (!Path.GetDirectoryName(executable)!.Equals(Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))
                     throw new IOException("Для обновления запусти приложение через EXE, а не через dotnet.");
-                _ = await Task.Run(() => UpdateInstaller.Start(prepared, AppContext.BaseDirectory, Path.GetFileName(executable), protectedFiles));
+                _ = await UpdateInstaller.StartAsync(prepared, AppContext.BaseDirectory, Path.GetFileName(executable), protectedFiles, _lifetime.Token);
                 handedToInstaller = true;
                 _closing = true; _allowClose = true; _lifetime.Cancel(); _uptimeTimer.Stop(); _logRefreshTimer.Stop();
                 foreach (Window window in OwnedWindows.Cast<Window>().ToArray()) window.Close();

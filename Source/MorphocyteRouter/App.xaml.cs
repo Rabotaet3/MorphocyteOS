@@ -10,7 +10,6 @@ public partial class App : Application
     {
         if (e.Args.Length == 2 && e.Args[0] == "--apply-update")
         {
-            StartupUri = null;
             ShutdownMode = ShutdownMode.OnExplicitShutdown;
             int code;
             try { code = await UpdateInstaller.RunAsync(e.Args[1]); }
@@ -30,6 +29,8 @@ public partial class App : Application
             UtilityDialogs.ShowNotice(MainWindow, "MorphocyteOS — ошибка", args.Exception.Message);
             args.Handled = true;
         };
+        // The updater starts without a window; only a normal launch gets a StartupUri.
+        StartupUri = new Uri("MainWindow.xaml", UriKind.Relative);
         base.OnStartup(e);
     }
 

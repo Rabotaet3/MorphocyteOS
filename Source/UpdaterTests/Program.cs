@@ -6,6 +6,7 @@ using System.Text;
 using System.Text.Json;
 using MorphocyteRouter;
 
+if (args.Length == 3 && args[0] == "--verify-wpf-updater") return await WpfStartupChecks.RunAsync(args[1], args[2]);
 if (args.Length == 2 && args[0] == "--apply-update") return await UpdateInstaller.RunAsync(args[1]);
 if (args.Length == 2 && args[0] == "--live-release-check")
 {
@@ -15,6 +16,19 @@ if (args.Length == 2 && args[0] == "--live-release-check")
     var prepared = await UpdateDownloader.PrepareAsync(client, release, Path.GetFullPath(args[1]), null, default);
     Console.WriteLine($"Live GitHub release {prepared.Manifest.Version}: downloaded and verified {prepared.Manifest.Files.Count} hashed files. No installation performed.");
     UpdateDownloader.DeleteOperation(Path.GetFullPath(args[1]), prepared.Directory);
+    return 0;
+}
+if (args.Length == 3 && args[0] == "--fixture-handoff")
+{
+    try
+    {
+        var payload = Path.Combine(args[1], "payload");
+        var prepared = new PreparedUpdate(args[1], UpdatePackage.ParseManifest(File.ReadAllBytes(Path.Combine(payload, UpdatePackage.ManifestName))));
+        await UpdateInstaller.StartAsync(prepared, AppContext.BaseDirectory, Path.GetFileName(Environment.ProcessPath!), Array.Empty<string>(), default);
+        File.WriteAllText(args[2], "ready");
+    }
+    catch (IOException) { File.WriteAllText(args[2], "helper failed; parent remains alive"); }
+    while (!File.Exists(args[2] + ".exit")) await Task.Delay(25);
     return 0;
 }
 if (args.Length == 2 && args[0] == "--fixture-parent")
@@ -235,6 +249,44 @@ try
             Check(File.Exists(Path.Combine(workerRoot, "restarted.txt")) && File.ReadAllText(Path.Combine(workerRoot, "README.md")) == "readme-1.1.0", "helper relaunches the updated EXE with update result");
         }
         finally { File.WriteAllText(ready + ".exit", "exit"); if (!parent.HasExited) await parent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)); }
+    }
+    // Use the actual outgoing handoff API, including a helper that cannot start.
+    foreach (var canStart in new[] { true, false })
+    {
+        var name = canStart ? "handoff-ready" : "handoff-crash";
+        var workerOld = Files("1.0.0"); workerOld["MorphocyteOS.exe"] = File.ReadAllBytes(Environment.ProcessPath!);
+        var workerNew = Files("1.1.0"); workerNew["MorphocyteOS.exe"] = workerOld["MorphocyteOS.exe"];
+        var workerRoot = Stage(name + "/Морфоцит-ВПН-Обход", "1.0.0", workerOld);
+        var operation = Path.Combine(scratch, name, Guid.NewGuid().ToString("N"));
+        Stage(Path.GetRelativePath(scratch, operation) + "/payload", "1.1.0", workerNew);
+        foreach (var sidecar in Directory.EnumerateFiles(AppContext.BaseDirectory, "UpdaterTests.*").Where(file => !file.EndsWith(".exe") && !file.EndsWith(".pdb")))
+        {
+            File.Copy(sidecar, Path.Combine(workerRoot, Path.GetFileName(sidecar)));
+            if (canStart) File.Copy(sidecar, Path.Combine(operation, Path.GetFileName(sidecar)));
+        }
+        var ready = Path.Combine(workerRoot, "handoff.txt");
+        var info = new ProcessStartInfo(Path.Combine(workerRoot, "MorphocyteOS.exe")) { UseShellExecute = false, CreateNoWindow = true };
+        info.ArgumentList.Add("--fixture-handoff"); info.ArgumentList.Add(operation); info.ArgumentList.Add(ready);
+        using var parent = Process.Start(info)!;
+        try
+        {
+            var timer = Stopwatch.StartNew();
+            while (!File.Exists(ready) && !parent.HasExited && timer.Elapsed < TimeSpan.FromSeconds(15)) await Task.Delay(25);
+            Check(File.Exists(ready) && !parent.HasExited, name + ": outgoing handoff completes while its parent remains alive");
+            Check(File.ReadAllText(ready) == (canStart ? "ready" : "helper failed; parent remains alive")
+                && File.ReadAllText(Path.Combine(workerRoot, "README.md")) == "readme-1.0.0", name + ": no early parent close or premature file mutation");
+            File.WriteAllText(ready + ".exit", "exit"); await parent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(15));
+            if (canStart)
+            {
+                timer.Restart();
+                while (!File.Exists(Path.Combine(workerRoot, "restarted.txt")) && timer.Elapsed < TimeSpan.FromSeconds(15)) await Task.Delay(25);
+                Check(File.Exists(Path.Combine(workerRoot, "restarted.txt")) && File.ReadAllText(Path.Combine(workerRoot, "README.md")) == "readme-1.1.0",
+                    "confirmed outgoing handoff replaces files and restarts the app in place");
+            }
+            else Check(!File.Exists(Path.Combine(workerRoot, "restarted.txt")) && File.ReadAllText(Path.Combine(workerRoot, "README.md")) == "readme-1.0.0",
+                "failed outgoing helper leaves the installed release untouched");
+        }
+        finally { File.WriteAllText(ready + ".exit", "exit"); if (!parent.HasExited) await parent.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(10)); }
     }
     Console.WriteLine($"Passed {checks} updater checks. No external requests or live VPN changes.");
 }
