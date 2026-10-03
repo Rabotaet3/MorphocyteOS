@@ -42,10 +42,23 @@ internal partial class Program
         {"dns":{"servers":["119.29.29.29"]},"outbounds":[{"protocol":"vless","settings":{"vnext":[{"address":"192.0.2.50","port":8443,"users":[{"id":"12345678-1234-4234-8234-123456789abc","encryption":"none"}]}]},"streamSettings":{"network":"ws","security":"tls","tlsSettings":{"allowInsecure":false,"serverName":"vpn.example"},"wsSettings":{"path":"/ws50","host":"vpn.example","headers":{}}},"mux":{"enabled":false}},{"protocol":"freedom"}],"routing":{"rules":[{"outboundTag":"proxy","domain":["geosite:google"]}]}}
         """;
         var jsonImport = ProfileImporter.Parse(json);
-        Check(jsonImport.Yaml == imported.Yaml, "Xray JSON and the equivalent VLESS URI produce identical connection profiles");
+        Check(jsonImport.NeedsName, "Xray connection without display name requests a user name");
+        Check(jsonImport.Yaml == ProfileImporter.Parse(link.Split('#')[0]).Yaml, "Xray JSON and an unnamed VLESS URI produce identical connection profiles");
+        Check(Field(proxy, "name") == "Sample", "single VLESS URI preserves its server label");
+        var labelledRoot = new YamlStream(); labelledRoot.Load(new StringReader(imported.Yaml));
+        var labelledGroup = (YamlMappingNode)((YamlSequenceNode)((YamlMappingNode)labelledRoot.Documents[0].RootNode).Children[new YamlScalarNode("proxy-groups")]).Children[0];
+        Check(((YamlScalarNode)((YamlSequenceNode)labelledGroup.Children[new YamlScalarNode("proxies")]).Children[0]).Value == "Sample", "VPN group references the imported server label");
         Check(!jsonImport.Yaml.Contains("119.29.29.29") && !jsonImport.Yaml.Contains("geosite:google"), "Xray DNS/routing are not silently carried into system routing");
-        Check(ProfileImporter.Parse("```json\n" + json + "\n```").Yaml == imported.Yaml, "JSON code fences can be pasted directly");
-        Check(ProfileImporter.Parse(link + "&unused").Yaml == imported.Yaml, "URI fragment is not treated as a connection query");
+        Check(ProfileImporter.Parse("```json\n" + json + "\n```").Yaml == jsonImport.Yaml, "JSON code fences can be pasted directly");
+        Check(Field(Proxy(ProfileImporter.Parse(link + "&unused").Yaml), "name") == "Sample&unused", "URI fragment is a label, not a connection query");
+        var encodedName = Uri.EscapeDataString("🇳🇱 — Нидерланды");
+        Check(Field(Proxy(ProfileImporter.Parse(link.Split('#')[0] + "#" + encodedName).Yaml), "name") == "🇳🇱 — Нидерланды", "emoji and Cyrillic server labels are decoded once");
+        Check(Field(Proxy(ProfileImporter.Parse(link.Split('#')[0] + "#%252Fname").Yaml), "name") == "%2Fname", "server label is not URL-decoded twice");
+        Check(Field(Proxy(ProfileImporter.Parse(link.Split('#')[0] + "#%20%20").Yaml), "name") == "Подключение", "empty server label keeps neutral fallback");
+        Check(Field(Proxy(ProfileImporter.Parse(link.Split('#')[0] + "#VPN").Yaml), "name") == "VPN (2)", "server label does not collide with VPN policy group");
+        Reject(link.Split('#')[0] + "#bad%0Aname", "control characters in single-link label rejected");
+        Reject(link.Split('#')[0] + "#bad%2Cname", "comma in single-link label rejected before creating broken routing");
+        Reject(link.Split('#')[0] + "#" + new string('x', 257), "overlong single-link label rejected");
         Reject(link.Replace("id-does-not-occur", "x").Replace(id, "not-a-uuid"), "invalid UUID is rejected without an invalid profile");
         Reject(link.Replace("8443", "99999"), "invalid server port is rejected");
         Reject(link.Replace("path=%2Fws50", "path=%ZZ"), "malformed percent escaping is rejected");
@@ -92,9 +105,10 @@ internal partial class Program
         try { await ProfileStorage.CreateAsync(new ImportedProfile("INVALID", "Bad", false), fakeExe, failedStorage, CancellationToken.None); }
         catch (InvalidDataException) { rejected = true; }
         Check(rejected && !Directory.EnumerateFiles(Path.Combine(failedStorage, "Profiles"), "*.yaml").Any(), "failed validation removes its candidate without publishing a broken profile");
-        foreach (var item in new[] { imported, tcp, grpc, upgrade, reality, new ImportedProfile(BundledResources.TemplateText, "Template", false) })
+        foreach (var item in new[] { imported, tcp, grpc, upgrade, reality, ProfileImporter.Parse(link.Split('#')[0] + "#" + encodedName), ProfileImporter.Parse(link.Split('#')[0] + "#VPN"), new ImportedProfile(BundledResources.TemplateText, "Template", false) })
         {
-            var path = await ProfileStorage.CreateAsync(item, core, Path.Combine(scratch, "real-core-imports"), CancellationToken.None);
+            var named = item.NeedsName ? ProfileImporter.NameConnection(item, "Тестовый сервер") : item;
+            var path = await ProfileStorage.CreateAsync(named, core, Path.Combine(scratch, "real-core-imports"), CancellationToken.None);
             Check(File.Exists(path), "actual bundled Mihomo validates imported " + item.Description + " without starting VPN");
         }
         var settings = AppSettings.Load(Path.Combine(scratch, "import-ui", "settings.json"));
@@ -116,6 +130,12 @@ internal partial class Program
                 if (dialog is null) return;
                 timer.Stop(); seen = true;
                 var input = Descendants<TextBox>(dialog).Single(value => value.Name == "ImportProfileInput");
+                var submit = Descendants<Button>(dialog).Single(value => Equals(value.Content, "СОЗДАТЬ ПРОФИЛЬ"));
+                input.Text = "https://127.0.0.1/private-token";
+                submit.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Check(dialog.IsVisible && input.IsEnabled && submit.IsEnabled, "HTTPS validation error keeps import dialog usable");
+                Check(Descendants<TextBlock>(dialog).Any(value => value.Text.Contains("публичном HTTPS-сервере"))
+                    && !Descendants<TextBlock>(dialog).Any(value => value.Text.Contains("private-token")), "HTTPS import shows safe error without leaking the URL");
                 input.Text = link;
                 dialog.UpdateLayout(); CaptureInteraction(dialog, Path.Combine(scratch, "profile-import-dialog.png"));
                 Descendants<Button>(dialog).Single(value => Equals(value.Content, "СОЗДАТЬ ПРОФИЛЬ")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -168,8 +188,88 @@ internal partial class Program
             await gate.WaitAsync(); gate.Release(); settingsTimer.Stop(); closeSettingsAfterSave?.Stop();
             Check(settingsSeen && settingsDialogStayedOpenAfterSave && settings.ConfigPath != savedPath && File.Exists(savedPath) && !ClashConfigDocument.Load(settings.ConfigPath).HasVpnConnection,
                 "saving a new template from settings preserves the existing connected profile");
+            count += await RunConnectionNameChecks(window, settings, link.Split('#')[0]);
         }
         finally { typeof(MainWindow).GetField("_allowClose", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, true); window.Close(); }
+        return count;
+    }
+
+    private static async Task<int> RunConnectionNameChecks(MainWindow window, AppSettings settings, string link)
+    {
+        var count = 0;
+        void Check(bool ok, string message) { if (!ok) throw new Exception("FAIL: " + message); count++; Console.WriteLine("PASS: " + message); }
+        var oldPath = settings.ConfigPath;
+        var oldText = File.ReadAllText(oldPath);
+        var phase = 0;
+        Exception? failure = null;
+        var deadline = DateTime.UtcNow.AddSeconds(10);
+        var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
+        timer.Tick += (_, _) =>
+        {
+            try
+            {
+                if (DateTime.UtcNow > deadline) throw new Exception("Name dialog test timed out");
+                var import = window.OwnedWindows.Cast<Window>().FirstOrDefault(value => value.Title == "ИМПОРТ ПРОФИЛЯ");
+                var naming = import?.OwnedWindows.Cast<Window>().FirstOrDefault(value => value.Title == "НАЗВАНИЕ ПОДКЛЮЧЕНИЯ");
+                if (phase == 0 && import is not null)
+                {
+                    Descendants<TextBox>(import).Single(value => value.Name == "ImportProfileInput").Text = link;
+                    phase = 1;
+                    Descendants<Button>(import).Single(value => Equals(value.Content, "СОЗДАТЬ ПРОФИЛЬ")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                }
+                else if (phase == 1 && naming is not null)
+                {
+                    var input = Descendants<TextBox>(naming).Single(value => value.Name == "ConnectionNameInput");
+                    var accept = Descendants<Button>(naming).Single(value => Equals(value.Content, "ПРОДОЛЖИТЬ"));
+                    Check(input.Text == "", "missing link name opens an empty naming prompt instead of silently naming the server");
+                    accept.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    Check(naming.IsVisible, "empty name keeps naming dialog open");
+                    input.Text = "VPN";
+                    accept.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                    Check(naming.IsVisible, "reserved name keeps naming dialog open with validation");
+                    phase = 2;
+                    Descendants<Button>(naming).Single(value => Equals(value.Content, "ОТМЕНА")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                }
+                else if (phase == 2 && import is not null && naming is null)
+                {
+                    var submit = Descendants<Button>(import).Single(value => Equals(value.Content, "СОЗДАТЬ ПРОФИЛЬ"));
+                    if (!submit.IsEnabled) return;
+                    Check(settings.ConfigPath == oldPath && File.ReadAllText(oldPath) == oldText, "cancelled name prompt leaves selected profile unchanged");
+                    phase = 3;
+                    submit.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                }
+                else if (phase == 3 && naming is not null)
+                {
+                    Descendants<TextBox>(naming).Single(value => value.Name == "ConnectionNameInput").Text = "🇳🇱 Мой VPN";
+                    phase = 4;
+                    Descendants<Button>(naming).Single(value => Equals(value.Content, "ПРОДОЛЖИТЬ")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                }
+                else if (phase == 4 && import is null) timer.Stop();
+            }
+            catch (Exception ex)
+            {
+                failure = ex; timer.Stop();
+                var import = window.OwnedWindows.Cast<Window>().FirstOrDefault(value => value.Title == "ИМПОРТ ПРОФИЛЯ");
+                foreach (var nested in import?.OwnedWindows.Cast<Window>().ToArray() ?? Array.Empty<Window>()) nested.Close();
+                import?.Close();
+            }
+        };
+        timer.Start();
+        try
+        {
+            typeof(MainWindow).GetMethod("ImportProfile_Click", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, new object[] { window, new RoutedEventArgs() });
+            var gate = (SemaphoreSlim)typeof(MainWindow).GetField("_operations", BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
+            await gate.WaitAsync(); gate.Release();
+            if (failure is not null) throw failure;
+            Check(phase == 4 && settings.ConfigPath != oldPath && File.ReadAllText(oldPath) == oldText, "named import creates a separate profile and preserves previous YAML");
+            var parsed = new YamlStream(); parsed.Load(new StringReader(File.ReadAllText(settings.ConfigPath)));
+            var root = (YamlMappingNode)parsed.Documents[0].RootNode;
+            var node = (YamlMappingNode)((YamlSequenceNode)root.Children[new YamlScalarNode("proxies")]).Children[0];
+            var group = (YamlMappingNode)((YamlSequenceNode)root.Children[new YamlScalarNode("proxy-groups")]).Children[0];
+            Check(((YamlScalarNode)node.Children[new YamlScalarNode("name")]).Value == "🇳🇱 Мой VPN"
+                && ((YamlScalarNode)((YamlSequenceNode)group.Children[new YamlScalarNode("proxies")]).Children[0]).Value == "🇳🇱 Мой VPN", "name entered through the real UI reaches the server and VPN group");
+        }
+        finally { timer.Stop(); }
         return count;
     }
 }

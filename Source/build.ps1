@@ -31,6 +31,7 @@ function Run-Dotnet {
 }
 
 if (-not $SkipTests) {
+    Run-Dotnet -Arguments @('run', '--project', 'SubscriptionImportTests/SubscriptionImportTests.csproj', '-c', 'Release', '-p:PublishSingleFile=false')
     Run-Dotnet -Arguments @('run', '--project', 'RouterRegressionTests/RouterRegressionTests.csproj', '-c', 'Release')
     Run-Dotnet -Arguments @('run', '--project', 'UpdateServiceTests/UpdateServiceTests.csproj', '-c', 'Release')
     Run-Dotnet -Arguments @('run', '--project', 'UpdaterTests/UpdaterTests.csproj', '-c', 'Release')

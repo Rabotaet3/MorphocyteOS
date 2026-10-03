@@ -5,7 +5,10 @@ using YamlDotNet.RepresentationModel;
 
 namespace MorphocyteRouter;
 
-internal sealed record ImportedProfile(string Yaml, string Description, bool InsecureTls);
+internal sealed record ImportedProfile(string Yaml, string Description, bool InsecureTls)
+{
+    internal bool NeedsName { get; init; }
+}
 
 // Connection import only. Xray routing/inbounds/DNS are not equivalent to Mihomo
 // and are deliberately not silently translated into system-wide traffic rules.
@@ -27,7 +30,7 @@ internal static class ProfileImporter
         }
         if (text.StartsWith("vless://", StringComparison.OrdinalIgnoreCase)) return FromLink(text);
         if (text.StartsWith('{')) return FromJson(text);
-        throw new InvalidDataException("Поддерживаются vless:// и JSON Xray с одним VLESS-подключением. HTTPS-подписки и другие протоколы пока не поддерживаются; готовый YAML можно выбрать в настройках.");
+        throw new InvalidDataException("Поддерживаются vless:// и JSON Xray с одним VLESS-подключением. HTTPS-ссылку вставь в окно импорта профиля; готовый YAML можно выбрать в настройках.");
     }
 
     private static ImportedProfile FromLink(string text)
@@ -57,6 +60,7 @@ internal static class ProfileImporter
         var node = MakeNode(uri.Host.Trim('[', ']'), uri.Port, Uri.UnescapeDataString(uri.UserInfo), network, security,
             Get("sni"), insecure, string.IsNullOrWhiteSpace(Get("fp")) ? security == "none" ? "" : "chrome" : Get("fp"),
             Get("alpn"), Get("flow"), Get("pbk"), Get("sid"));
+        Put(node, "name", ConnectionNameFromLink(uri));
         AddTransport(node, network, Get("path", "/"), Get("host"), Get("serviceName"), null);
         if (query.ContainsKey("mode") && Get("mode") != "gun") throw new InvalidDataException("Поддерживается обычный gRPC (mode=gun), без multiMode.");
         if (query.ContainsKey("ed") || query.ContainsKey("eh"))
@@ -67,7 +71,42 @@ internal static class ProfileImporter
             Put(ws, "max-early-data", bytes.ToString(System.Globalization.CultureInfo.InvariantCulture));
             Put(ws, "early-data-header-name", SafeText(Get("eh", "Sec-WebSocket-Protocol")));
         }
-        return Build(node, network, security, insecure);
+        return Build(node, network, security, insecure) with { NeedsName = !HasLinkName(uri) };
+    }
+
+    internal static bool HasLinkName(Uri uri) => !string.IsNullOrWhiteSpace(Uri.UnescapeDataString(uri.Fragment.TrimStart('#')));
+
+    internal static string ConnectionNameFromLink(Uri uri, string fallback = NodeName)
+    {
+        var name = Uri.UnescapeDataString(uri.Fragment.TrimStart('#')).Trim();
+        if (string.IsNullOrWhiteSpace(name)) return fallback;
+        return ValidateConnectionName(name, renameReserved: true);
+    }
+
+    internal static string ValidateConnectionName(string name, bool renameReserved = false)
+    {
+        name = name.Trim();
+        if (name.Length == 0) throw new InvalidDataException("Введи название подключения.");
+        if (name.Length > 256 || name.Any(char.IsControl) || name.Contains(','))
+            throw new InvalidDataException("Название должно быть до 256 символов, без запятых и управляющих символов.");
+        if (name.ToUpperInvariant() is "VPN" or "DIRECT" or "REJECT" or "GLOBAL")
+        {
+            if (renameReserved) return name + " (2)";
+            throw new InvalidDataException("Это имя занято группой или системным действием. Выбери другое название.");
+        }
+        return name;
+    }
+
+    internal static ImportedProfile NameConnection(ImportedProfile profile, string name)
+    {
+        name = ValidateConnectionName(name);
+        var yaml = new YamlStream(); yaml.Load(new StringReader(profile.Yaml));
+        var root = (YamlMappingNode)yaml.Documents[0].RootNode;
+        var nodes = (YamlSequenceNode)root.Children[new YamlScalarNode("proxies")];
+        if (nodes.Children.Count != 1 || nodes.Children[0] is not YamlMappingNode node)
+            throw new InvalidDataException("Название задаётся для одного подключения.");
+        Put(node, "name", name);
+        return BuildConnections(new[] { node }, profile.Description, profile.InsecureTls);
     }
 
     private static ImportedProfile FromJson(string text)
@@ -138,7 +177,7 @@ internal static class ProfileImporter
                 Put(opts, "max-early-data", bytes.ToString(System.Globalization.CultureInfo.InvariantCulture));
                 Put(opts, "early-data-header-name", SafeText(Text(ws, "earlyDataHeaderName", "Sec-WebSocket-Protocol")));
             }
-            return Build(node, network, security, insecure);
+            return Build(node, network, security, insecure) with { NeedsName = true };
         }
     }
 
@@ -200,17 +239,20 @@ internal static class ProfileImporter
     }
 
     private static ImportedProfile Build(YamlMappingNode node, string network, string security, bool insecure)
+        => BuildConnections(new[] { node }, $"VLESS · {network.ToUpperInvariant()} · {security.ToUpperInvariant()}", insecure);
+
+    internal static ImportedProfile BuildConnections(IReadOnlyCollection<YamlMappingNode> nodes, string description, bool insecure)
     {
         var yaml = new YamlStream(); yaml.Load(new StringReader(BundledResources.TemplateText));
         var root = (YamlMappingNode)yaml.Documents[0].RootNode;
-        root.Children[new YamlScalarNode("proxies")] = new YamlSequenceNode(node);
+        root.Children[new YamlScalarNode("proxies")] = new YamlSequenceNode(nodes);
         var group = (YamlMappingNode)((YamlSequenceNode)root.Children[new YamlScalarNode("proxy-groups")]).Children[0];
-        group.Children[new YamlScalarNode("proxies")] = new YamlSequenceNode(new YamlScalarNode(NodeName));
+        group.Children[new YamlScalarNode("proxies")] = new YamlSequenceNode(nodes.Select(node => node.Children[new YamlScalarNode("name")]));
         using var writer = new StringWriter(); yaml.Save(writer, assignAnchors: false);
         var text = writer.ToString();
         var document = ClashConfigDocument.Parse("import.yaml", text);
         if (document.Validate().Count > 0 || document.ValidateForRouting().Count > 0) throw new InvalidDataException("Не удалось сформировать профиль маршрутизации.");
-        return new ImportedProfile(text, $"VLESS · {network.ToUpperInvariant()} · {security.ToUpperInvariant()}", insecure);
+        return new ImportedProfile(text, description, insecure);
     }
 
     private static JsonElement Property(JsonElement obj, string key) => obj.ValueKind == JsonValueKind.Object && obj.TryGetProperty(key, out var value) ? value : default;

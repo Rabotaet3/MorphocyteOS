@@ -11,6 +11,8 @@ internal static class ProfileImportDialog
     {
         var dialog = DialogChrome.CreateWindow(owner, "ИМПОРТ ПРОФИЛЯ", 690, 600, 570, 440, ResizeMode.CanResize);
         ImportedProfile? result = null;
+        using var lifetime = new CancellationTokenSource();
+        dialog.Closed += (_, _) => lifetime.Cancel();
         var body = new Grid { Margin = new Thickness(22, 16, 22, 18) };
         body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
@@ -18,14 +20,14 @@ internal static class ProfileImportDialog
         body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var explanation = new TextBlock
         {
-            Text = "Вставь свою ссылку vless:// или JSON Xray. Программа создаст YAML с TUN и маршрутизацией по правилам. Поддерживаются TCP, WebSocket, gRPC, HTTPUpgrade, TLS и Reality.",
+            Text = "Вставь HTTPS-ссылку на подписку, ссылку vless:// или JSON Xray. Программа создаст отдельный YAML с TUN и списком серверов.",
             FontSize = 13, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 10)
         };
         explanation.SetResourceReference(TextBlock.ForegroundProperty, "ThemeText");
         body.Children.Add(explanation);
         var note = new TextBlock
         {
-            Text = "Импортируется подключение, а не DNS / routing / inbounds Xray. По умолчанию трафик идёт напрямую; нужные сайты и приложения добавь в правила VPN. HTTPS-подписки пока не поддерживаются.",
+            Text = "Из подписки импортируются серверы, а не чужие правила или DNS. Поддерживаются YAML Clash/Mihomo, списки VLESS и Base64. По умолчанию трафик идёт напрямую; нужные приложения добавь в правила VPN.",
             FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 14)
         };
         note.SetResourceReference(TextBlock.ForegroundProperty, "ThemeMuted");
@@ -36,10 +38,10 @@ internal static class ProfileImportDialog
             VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled,
             FontSize = 13, FontFamily = new System.Windows.Media.FontFamily("Consolas"), MaxLength = ProfileImporter.MaxInputLength,
             VerticalContentAlignment = VerticalAlignment.Top, Padding = new Thickness(12),
-            ToolTip = "Личные ключи сохраняются только в вашем локальном профиле."
+            ToolTip = "HTTPS-ссылка отправляется серверу подписки и его перенаправлениям. При VPN Fake-IP имя сайта проверяется через DNS Cloudflare/Google без пути и ключа ссылки. Не делись ссылкой: в ней может быть ключ доступа."
         };
         Grid.SetRow(input, 2); body.Children.Add(input);
-        var status = new TextBlock { Text = "Ссылка и ключи не отправляются в интернет при импорте.", FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 0) };
+        var status = new TextBlock { Text = "", FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 0) };
         status.SetResourceReference(TextBlock.ForegroundProperty, "ThemeMuted");
         Grid.SetRow(status, 3); body.Children.Add(status);
         var load = DialogChrome.MakeButton("Открыть JSON", false);
@@ -59,17 +61,40 @@ internal static class ProfileImportDialog
         var cancel = DialogChrome.MakeButton("ОТМЕНА", false);
         cancel.Click += (_, _) => dialog.Close();
         var import = DialogChrome.MakeButton("СОЗДАТЬ ПРОФИЛЬ", true);
-        import.Click += (_, _) =>
+        import.Click += async (_, _) =>
         {
+            var text = input.Text;
+            import.IsEnabled = false;
+            load.IsEnabled = false;
+            input.IsEnabled = false;
+            status.Text = text.TrimStart().StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? "Загружаю подписку… Можно отменить." : "Проверяю подключение…";
             try
             {
-                var profile = ProfileImporter.Parse(input.Text);
+                var profile = await SubscriptionImporter.ImportAsync(text, lifetime.Token);
+                if (lifetime.IsCancellationRequested) return;
+                if (profile.NeedsName)
+                {
+                    var name = ConnectionNameDialog.Show(dialog);
+                    if (lifetime.IsCancellationRequested) return;
+                    if (name is null) { status.Text = "Для создания профиля задай название подключения."; return; }
+                    profile = ProfileImporter.NameConnection(profile, name);
+                }
                 if (profile.InsecureTls && !UtilityDialogs.ShowConfirm(dialog, "ПРОВЕРКА СЕРТИФИКАТА ОТКЛЮЧЕНА",
                     "В профиле отключена проверка TLS-сертификата. Это снижает безопасность подключения. Сохранить именно эти настройки?", "СОХРАНИТЬ", "НАЗАД")) return;
                 result = profile; dialog.Close();
             }
-            catch (InvalidDataException ex) { status.Text = ex.Message; status.SetResourceReference(TextBlock.ForegroundProperty, "ThemeAccent"); }
-            catch { status.Text = "Не удалось импортировать подключение. Проверь формат и параметры профиля."; }
+            catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
+            catch (InvalidDataException ex) { if (!lifetime.IsCancellationRequested) { status.Text = ex.Message; status.SetResourceReference(TextBlock.ForegroundProperty, "ThemeAccent"); } }
+            catch { if (!lifetime.IsCancellationRequested) status.Text = "Не удалось импортировать подключение. Проверь формат и параметры профиля."; }
+            finally
+            {
+                if (!lifetime.IsCancellationRequested)
+                {
+                    import.IsEnabled = true;
+                    load.IsEnabled = true;
+                    input.IsEnabled = true;
+                }
+            }
         };
         var footer = new Grid(); footer.ColumnDefinitions.Add(new ColumnDefinition()); footer.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
         footer.Children.Add(load);
@@ -88,6 +113,7 @@ internal static class ProfileStorage
 {
     internal static async Task<string> CreateAsync(ImportedProfile imported, string corePath, string storageDirectory, CancellationToken token)
     {
+        if (imported.NeedsName) throw new InvalidDataException("Сначала задай название подключения.");
         var directory = Path.Combine(storageDirectory, "Profiles");
         Directory.CreateDirectory(directory);
         var name = "profile-" + DateTime.UtcNow.ToString("yyyyMMdd-HHmmss") + "-" + Guid.NewGuid().ToString("N")[..8];

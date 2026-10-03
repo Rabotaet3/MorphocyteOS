@@ -51,7 +51,7 @@ $sourceStage = Join-Path $output "MorphocyteOS-$version-source"
 New-Item -ItemType Directory -Path $sourceStage -Force | Out-Null
 $rootSourceFiles = @('.gitignore', 'LICENSE', 'README.md', 'THIRD-PARTY-NOTICES.md', 'BUILDING.md', 'RELEASE-NOTES.md')
 foreach ($name in $rootSourceFiles) { Copy-Item -LiteralPath (Join-Path $repo $name) -Destination (Join-Path $sourceStage $name) }
-$sourceDirectories = @('Source/MorphocyteRouter', 'Source/RouterRegressionTests', 'Source/RouterIntegrationTests',
+$sourceDirectories = @('Source/MorphocyteRouter', 'Source/SubscriptionImportTests', 'Source/RouterRegressionTests', 'Source/RouterIntegrationTests',
     'Source/UpdateServiceTests', 'Source/UpdaterTests', 'Source/FakeMihomo', 'Source/Packaging')
 foreach ($directory in $sourceDirectories) {
     foreach ($file in Get-ChildItem -LiteralPath (Join-Path $repo $directory) -Recurse -File -Force) {
@@ -60,7 +60,7 @@ foreach ($directory in $sourceDirectories) {
         $allowedSource = $relative -match '^Source/MorphocyteRouter/[^/]+\.(cs|xaml|csproj)$' -or
             $relative -in @('Source/MorphocyteRouter/app.manifest', 'Source/MorphocyteRouter/Assets/profile-template.yaml',
                 'Source/MorphocyteRouter/Assets/morphocyte.ico', 'Source/MorphocyteRouter/Assets/morphocyte-icon.png') -or
-            $relative -match '^Source/(RouterRegressionTests|RouterIntegrationTests|UpdateServiceTests|UpdaterTests|FakeMihomo)/[^/]+\.(cs|csproj)$' -or
+            $relative -match '^Source/(SubscriptionImportTests|RouterRegressionTests|RouterIntegrationTests|UpdateServiceTests|UpdaterTests|FakeMihomo)/[^/]+\.(cs|csproj)$' -or
             $relative -match '^Source/Packaging/Licenses/' -or
             $relative -in @('Source/Packaging/Engine/mihomo.exe', 'Source/Packaging/LICENSE.txt',
                 'Source/Packaging/THIRD-PARTY-NOTICES.md', 'Source/Packaging/ThirdPartySource/Build-Mihomo.ps1',

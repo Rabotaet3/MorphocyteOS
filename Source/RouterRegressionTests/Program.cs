@@ -71,7 +71,7 @@ rules:
 # tail
 dns:
   enable: false
-""";
+""".Replace("\r\n", "\n", StringComparison.Ordinal);
 string[] ReadRules(string yaml)
 {
     var stream = new YamlStream();

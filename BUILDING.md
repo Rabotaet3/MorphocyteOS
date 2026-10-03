@@ -21,7 +21,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Scripts\Release.ps1
 Для другого каталога:
 
 ```powershell
-powershell -NoProfile -ExecutionPolicy Bypass -File .\Scripts\Release.ps1 -OutputDirectory D:\Releases\MorphocyteOS-1.1.0
+powershell -NoProfile -ExecutionPolicy Bypass -File .\Scripts\Release.ps1 -OutputDirectory D:\Releases\MorphocyteOS-1.1.1
 ```
 
 Каталог результата должен быть пустым или отсутствовать. Скрипт не очищает существующие файлы: это защищает пользовательские профили от случайной перезаписи и исключает примесь старого содержимого к релизу. Для повторной сборки укажи новую пустую папку.
@@ -30,7 +30,7 @@ powershell -NoProfile -ExecutionPolicy Bypass -File .\Scripts\Release.ps1 -Outpu
 
 ## Изменения и выпуск
 
-Меняй исходники только в `Source/MorphocyteRouter`. Проекты `RouterRegressionTests`, `UpdateServiceTests`, `UpdaterTests`, `RouterIntegrationTests` и `FakeMihomo` служат для проверок. `UpdaterTests` проверяет загрузку, состав архива, защиту личных файлов, откат и полный цикл ожидания/установки/перезапуска на фиктивных EXE. `Source/build.ps1` собирает только комплект программы; `Scripts/Release.ps1` дополнительно готовит архивы и контрольные суммы.
+Меняй исходники только в `Source/MorphocyteRouter`. Проекты `SubscriptionImportTests`, `RouterRegressionTests`, `UpdateServiceTests`, `UpdaterTests`, `RouterIntegrationTests` и `FakeMihomo` служат для проверок. `SubscriptionImportTests` проверяет форматы подписок, безопасную загрузку, имена серверов и ошибки на фиктивных HTTP-ответах. `UpdaterTests` проверяет загрузку, состав архива, защиту личных файлов, откат и полный цикл ожидания/установки/перезапуска на фиктивных EXE. `Source/build.ps1` собирает только комплект программы; `Scripts/Release.ps1` дополнительно готовит архивы и контрольные суммы.
 
 Версия приложения задаётся в `Source/MorphocyteRouter/MorphocyteRouter.csproj`. При её изменении обнови README и описание релиза. При смене Mihomo обнови фиксированный SHA-256, соответствующие исходники и лицензии; при смене .NET Runtime — её закреплённую версию и лицензионные уведомления.
 
