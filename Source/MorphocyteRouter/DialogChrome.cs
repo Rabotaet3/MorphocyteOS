@@ -29,12 +29,30 @@ internal static class DialogChrome
 
     internal static Border BuildFrame(Window dialog, string title, UIElement content, UIElement? footer = null)
     {
-        var close = MakeButton("×", false);
+        var close = MakeButton("", false);
+        close.Name = "DialogCloseButton";
+        close.ToolTip = "Закрыть";
+        System.Windows.Automation.AutomationProperties.SetName(close, "Закрыть");
+        var cross = new System.Windows.Shapes.Path
+        {
+            Name = "DialogCloseGlyph", Width = 9, Height = 9, Stretch = Stretch.Uniform,
+            Data = Geometry.Parse("M 0,0 L 9,9 M 9,0 L 0,9"),
+            StrokeThickness = 1.6, StrokeStartLineCap = PenLineCap.Round, StrokeEndLineCap = PenLineCap.Round,
+            HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Center
+        };
+        // Do not round the glyph and its presenter independently at fractional
+        // UI scales: that moves the visible cross off the geometric centre.
+        cross.UseLayoutRounding = false;
+        cross.SnapsToDevicePixels = false;
+        cross.SetBinding(System.Windows.Shapes.Shape.StrokeProperty, new System.Windows.Data.Binding("Foreground") { Source = close });
+        close.Content = cross;
         close.MinWidth = 0;
         close.Width = 34;
         close.Height = 32;
         close.Padding = new Thickness(0);
         close.FontSize = 17;
+        close.VerticalAlignment = VerticalAlignment.Center;
+        close.UseLayoutRounding = false;
         close.Click += (_, _) => dialog.Close();
 
         var headerGrid = new Grid { Margin = new Thickness(20, 12, 12, 9), MinHeight = 34 };

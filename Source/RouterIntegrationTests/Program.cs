@@ -58,6 +58,7 @@ internal partial class Program
         try
         {
             passed += await RunThemePolishChecks(scratch, fakeExe);
+            passed += await RunShellThemeChecks(scratch);
             passed += await RunDiagnosticDialogChecks(scratch, fakeExe);
             if (visualOnly) { await RunVisualLayoutChecks(scratch, fakeExe); return; }
             passed += await RunImprovementChecks(scratch, fakeExe);

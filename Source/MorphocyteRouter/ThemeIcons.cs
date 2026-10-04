@@ -30,6 +30,9 @@ internal static class ThemeIcons
 
     internal static BitmapSource Logo(string theme, Color accent, bool light) => Get(theme, accent, light).Logo;
 
+    internal static byte[] CurrentIconBytes() => Get(ThemeManager.CurrentTheme,
+        ((SolidColorBrush)ThemeManager.GetBrush("ThemeAccent")).Color, ThemeManager.IsLightTheme).Icon;
+
     internal static Drawing.Icon CreateIcon(int size)
     {
         var accent = ((SolidColorBrush)ThemeManager.GetBrush("ThemeAccent")).Color;

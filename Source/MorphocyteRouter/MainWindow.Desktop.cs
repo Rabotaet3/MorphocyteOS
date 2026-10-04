@@ -18,6 +18,8 @@ public partial class MainWindow
     private ContextMenu? _trayMenu;
     private MenuItem? _trayPower, _traySettings;
     private Drawing.Icon? _smallWindowIcon, _largeWindowIcon;
+    private readonly Dictionary<(string Theme, int Size), Drawing.Icon> _desktopIcons = new();
+    private readonly ShellThemeRefresh _shellThemeRefresh = new();
     private bool _exitRequested, _startupMode, _desktopInitialized;
     private HwndSource? _windowSource;
     internal static readonly uint RestoreWindowMessage = RegisterWindowMessage("MorphocyteOS.RestoreWindow.1");
@@ -51,8 +53,8 @@ public partial class MainWindow
             menu.Items.Add(new Separator { Style = (Style)FindResource("TraySeparatorStyle") });
             var exit = Item("Выход", RequestExit);
             exit.SetResourceReference(Control.ForegroundProperty, "ThemeDanger");
-            menu.Opened += (_, _) => { RefreshTrayState(); menu.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(100))); };
-            _tray = new Forms.NotifyIcon { Icon = ThemeIcons.CreateIcon(32), Text = "MorphocyteOS", Visible = true };
+            menu.Opened += (_, _) => { RefreshTrayTheme(); RefreshTrayState(); menu.BeginAnimation(OpacityProperty, new DoubleAnimation(0, 1, TimeSpan.FromMilliseconds(100))); };
+            _tray = new Forms.NotifyIcon { Icon = DesktopIcon(32), Text = "MorphocyteOS", Visible = true };
             _tray.MouseUp += (_, args) =>
             {
                 if (args.Button != Forms.MouseButtons.Right || _closing) return;
@@ -89,21 +91,59 @@ public partial class MainWindow
 
     private void RefreshThemeIcons()
     {
+        RefreshTrayTheme();
         var logo = (ImageSource)Application.Current.Resources["ThemeLogo"];
         Icon = logo;
         var window = new WindowInteropHelper(this).Handle;
         if (window == IntPtr.Zero) return;
         var dpi = VisualTreeHelper.GetDpi(this).DpiScaleX;
-        var small = ThemeIcons.CreateIcon((int)Math.Round(SystemParameters.SmallIconWidth * dpi));
-        var large = ThemeIcons.CreateIcon((int)Math.Round(SystemParameters.IconWidth * dpi));
+        var small = DesktopIcon((int)Math.Round(SystemParameters.SmallIconWidth * dpi));
+        var large = DesktopIcon((int)Math.Round(SystemParameters.IconWidth * dpi));
         SendMessage(window, 0x80, IntPtr.Zero, small.Handle); // WM_SETICON / ICON_SMALL
         SendMessage(window, 0x80, new IntPtr(1), large.Handle);
-        _smallWindowIcon?.Dispose(); _largeWindowIcon?.Dispose();
+        SendMessage(window, 0x80, new IntPtr(2), small.Handle); // ICON_SMALL2
         _smallWindowIcon = small; _largeWindowIcon = large;
         if (_tray is not null)
         {
-            var old = _tray.Icon; _tray.Icon = ThemeIcons.CreateIcon((int)Math.Round(SystemParameters.SmallIconWidth * dpi)); old?.Dispose();
+            _tray.Icon = small;
         }
+        if (_desktopIntegrationEnabled)
+        {
+            _shellThemeRefresh.Request(() =>
+            {
+                if (_closing) return;
+                TaskbarIconIntegration.Apply(window, Environment.ProcessPath!, Path.Combine(_settings.StorageDirectory, "ShellIcons"));
+                // WPF's Icon property also schedules native icon updates. Send
+                // our current handles afterwards, not a captured older theme.
+                if (_smallWindowIcon is { } currentSmall && _largeWindowIcon is { } currentLarge)
+                {
+                    SendMessage(window, 0x80, IntPtr.Zero, currentSmall.Handle);
+                    SendMessage(window, 0x80, new IntPtr(1), currentLarge.Handle);
+                    SendMessage(window, 0x80, new IntPtr(2), currentSmall.Handle);
+                }
+            }, _ => SetLog("Не удалось обновить значок закреплённого ярлыка после повторных попыток. Значки окна и трея обновлены."));
+        }
+    }
+
+    private Drawing.Icon DesktopIcon(int size)
+    {
+        var key = (ThemeManager.CurrentTheme, size);
+        // Explorer consumes window-icon changes asynchronously. Keep each theme
+        // handle valid until the window and tray are closed, and reuse it on a
+        // round trip instead of destroying an icon still referenced by Shell.
+        if (!_desktopIcons.TryGetValue(key, out var icon))
+            _desktopIcons[key] = icon = ThemeIcons.CreateIcon(size);
+        return icon;
+    }
+
+    private void RefreshTrayTheme()
+    {
+        if (_trayMenu is null) return;
+        // A detached popup retains its first application-resource lookup. Give it
+        // its own live palette so replacements invalidate the template and items.
+        foreach (System.Collections.DictionaryEntry entry in Application.Current.Resources)
+            if (entry.Key is string key && key.StartsWith("Theme", StringComparison.Ordinal))
+                _trayMenu.Resources[key] = entry.Value;
     }
 
     private IntPtr HandleDesktopMessage(IntPtr window, int message, IntPtr wParam, IntPtr lParam, ref bool handled)
@@ -145,19 +185,21 @@ public partial class MainWindow
 
     private void DisposeDesktopIntegration()
     {
+        _shellThemeRefresh.Dispose();
         _diagnosticTimer?.Stop();
         _windowSource?.RemoveHook(HandleDesktopMessage);
         _windowSource = null;
         ThemeManager.Changed -= RefreshThemeIcons;
         _trayMenu?.SetCurrentValue(ContextMenu.IsOpenProperty, false);
         _trayMenu = null;
-        _smallWindowIcon?.Dispose(); _largeWindowIcon?.Dispose();
         _smallWindowIcon = null; _largeWindowIcon = null;
-        if (_tray is null) return;
-        _tray.Visible = false;
-        var icon = _tray.Icon;
-        _tray.Dispose();
-        icon?.Dispose();
-        _tray = null;
+        if (_tray is not null)
+        {
+            _tray.Visible = false;
+            _tray.Dispose();
+            _tray = null;
+        }
+        foreach (var icon in _desktopIcons.Values) icon.Dispose();
+        _desktopIcons.Clear();
     }
 }

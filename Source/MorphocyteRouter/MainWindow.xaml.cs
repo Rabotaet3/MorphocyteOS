@@ -1001,7 +1001,11 @@ public partial class MainWindow : Window
 
     private async void MainWindow_Closing(object? sender, CancelEventArgs e)
     {
-        if (_allowClose) return;
+        if (_allowClose)
+        {
+            if (_desktopIntegrationEnabled) TaskbarIconIntegration.ClearWindow(new System.Windows.Interop.WindowInteropHelper(this).Handle);
+            return;
+        }
         e.Cancel = true;
         if (_tray is not null && !_exitRequested && !_closing) { HideToTray(); return; }
         if (_closing) return;
