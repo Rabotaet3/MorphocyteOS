@@ -6,7 +6,8 @@ using YamlDotNet.RepresentationModel;
 
 namespace MorphocyteRouter;
 
-internal sealed record DiagnosticStep(string Name, string Result);
+internal enum DiagnosticState { Information, Success, Warning, Failure }
+internal sealed record DiagnosticStep(string Name, string Result, DiagnosticState State = DiagnosticState.Information);
 
 internal static class ConnectionDiagnostic
 {
@@ -17,26 +18,26 @@ internal static class ConnectionDiagnostic
         using var overallDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         overallDeadline.CancelAfter(TimeSpan.FromSeconds(45)); token = overallDeadline.Token;
         var results = new List<DiagnosticStep>();
-        void Add(string name, string result) { var step = new DiagnosticStep(name, result); results.Add(step); progress?.Invoke(step); }
+        void Add(string name, string result, DiagnosticState state = DiagnosticState.Information) { var step = new DiagnosticStep(name, result, state); results.Add(step); progress?.Invoke(step); }
         if (!running || diagnostics is null || document is null)
         {
             Add("Ядро", "VPN выключен. Запусти его перед проверкой.");
             return results;
         }
-        try { await diagnostics.ReadVersionAsync(token); Add("Ядро", "Работает, локальный API отвечает."); }
+        try { await diagnostics.ReadVersionAsync(token); Add("Ядро", "Работает, локальный API отвечает.", DiagnosticState.Success); }
         catch (Exception) when (!token.IsCancellationRequested)
-        { Add("Ядро", "Процесс работает, но локальный API недоступен. Проверь журнал."); return results; }
+        { Add("Ядро", "Процесс работает, но локальный API недоступен. Проверь журнал.", DiagnosticState.Failure); return results; }
         string selection;
         try
         {
             if (document.VpnRoute is not { } route) throw new InvalidDataException();
             selection = await diagnostics.ReadSelectionAsync(route, token);
             if (selection is "DIRECT" or "REJECT")
-            { Add("Маршрут", "В группе VPN выбрано прямое подключение или блокировка."); return results; }
-            Add("Маршрут", "VPN-подключение выбрано.");
+            { Add("Маршрут", "В группе VPN выбрано прямое подключение или блокировка.", DiagnosticState.Warning); return results; }
+            Add("Маршрут", "VPN-подключение выбрано.", DiagnosticState.Success);
         }
         catch (Exception) when (!token.IsCancellationRequested)
-        { Add("Маршрут", "Не удалось определить VPN-подключение."); return results; }
+        { Add("Маршрут", "Не удалось определить VPN-подключение.", DiagnosticState.Failure); return results; }
 
         var endpoint = Endpoint(document.Path, selection);
         if (endpoint is { } target && target.Type is not ("hysteria" or "hysteria2" or "tuic" or "wireguard"))
@@ -46,25 +47,25 @@ internal static class ConnectionDiagnostic
             {
                 if (connect is not null) await connect(target.Host, target.Port, deadline.Token);
                 else { using var socket = new TcpClient(); await socket.ConnectAsync(target.Host, target.Port, deadline.Token); }
-                Add("Сервер", "TCP-порт доступен. Это ещё не проверка авторизации VPN.");
+                Add("Сервер", "TCP-порт доступен. Это ещё не проверка авторизации VPN.", DiagnosticState.Success);
             }
             catch (Exception) when (!token.IsCancellationRequested)
-            { Add("Сервер", "TCP-порт не ответил. Итоговую доступность проверит HTTPS-запрос."); }
+            { Add("Сервер", "TCP-порт не ответил. Итоговую доступность проверит HTTPS-запрос.", DiagnosticState.Warning); }
         }
         else Add("Сервер", "Отдельная TCP-проверка не подходит этому подключению; проверяем через ядро.");
         try
         {
             var dns = await diagnostics.CheckDnsAsync(token);
-            Add("DNS", dns ? "DNS ядра отвечает." : "DNS ядра выключен; разрешение имени проверит HTTPS-запрос.");
+            Add("DNS", dns ? "DNS ядра отвечает." : "DNS ядра выключен; разрешение имени проверит HTTPS-запрос.", dns ? DiagnosticState.Success : DiagnosticState.Information);
         }
-        catch (Exception) when (!token.IsCancellationRequested) { Add("DNS", "DNS ядра не разрешил проверочное имя."); }
+        catch (Exception) when (!token.IsCancellationRequested) { Add("DNS", "DNS ядра не разрешил проверочное имя.", DiagnosticState.Warning); }
         try
         {
             var delay = await diagnostics.CheckProxyAsync(document.VpnRoute!, token);
-            Add("HTTPS через VPN", $"Запрос выполнен, {delay} мс.");
+            Add("HTTPS через VPN", $"Запрос выполнен, {delay} мс.", DiagnosticState.Success);
         }
         catch (Exception) when (!token.IsCancellationRequested)
-        { Add("HTTPS через VPN", "Запрос не прошёл. Проверь сервер, настройки подключения и журнал."); }
+        { Add("HTTPS через VPN", "Запрос не прошёл. Проверь сервер, настройки подключения и журнал.", DiagnosticState.Failure); }
         token.ThrowIfCancellationRequested();
         return results;
     }

@@ -145,7 +145,7 @@ internal partial class Program
             {
                 window.ApplyInterfaceScale(scale); window.Width = window.MinWidth; window.Height = window.MinHeight;
                 await Dispatcher.Yield(DispatcherPriority.ApplicationIdle); window.UpdateLayout();
-                var copy = (Button)Field("CopyDiagnosticButton"); var page = (FrameworkElement)Field("JournalPage");
+                var copy = (Button)Field("RunDiagnosticButton"); var page = (FrameworkElement)Field("JournalPage");
                 var bounds = copy.TransformToAncestor(page).TransformBounds(new Rect(copy.RenderSize));
                 Check(bounds.Right <= page.ActualWidth && bounds.Bottom <= page.ActualHeight && copy.IsVisible,
                     $"journal diagnostic actions fit inside the minimum window at {scale * 100:0}% scale");
@@ -158,8 +158,9 @@ internal partial class Program
             {
                 var dialog = Application.Current.Windows.OfType<Window>().FirstOrDefault(item => item.Title == "НАСТРОЙКИ");
                 if (dialog is null) return; settingsTimer.Stop();
-                var option = Descendants<CheckBox>(dialog).Single(item => Descendants<TextBlock>(item).Any(label => label.Text.StartsWith("Восстанавливать VPN")));
+                var option = Descendants<CheckBox>(dialog).Single(item => item.Name == "AutoReconnectOption");
                 Check(option.IsChecked == true, "settings display the default automatic-recovery preference");
+                Check(Descendants<TextBlock>(option).Any(label => label.Text.Contains("пробуждении компьютера")), "recovery label clearly refers to waking the computer rather than unexplained sleep");
                 foreach (var scale in new[] { 1d, 1.5d })
                 {
                     UiScaleManager.Apply(dialog, (FrameworkElement)dialog.Content, scale);

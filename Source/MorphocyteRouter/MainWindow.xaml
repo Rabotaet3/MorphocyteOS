@@ -10,6 +10,45 @@
         <shell:WindowChrome CaptionHeight="58" ResizeBorderThickness="8" GlassFrameThickness="0" CornerRadius="23" UseAeroCaptionButtons="False"/>
     </shell:WindowChrome.WindowChrome>
     <Window.Resources>
+        <Style x:Key="TrayMenuStyle" TargetType="ContextMenu">
+            <Setter Property="MinWidth" Value="248"/>
+            <Setter Property="FontFamily" Value="Segoe UI"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+            <Setter Property="Template"><Setter.Value>
+                <ControlTemplate TargetType="ContextMenu">
+                    <Border Margin="5" Padding="7" Background="{DynamicResource ThemeTrayBackground}" BorderBrush="{DynamicResource ThemeAppOutline}" BorderThickness="1" CornerRadius="15">
+                        <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value></Setter>
+        </Style>
+        <Style x:Key="TrayMenuItemStyle" TargetType="MenuItem">
+            <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+            <Setter Property="FontSize" Value="13"/>
+            <Setter Property="FontWeight" Value="Medium"/>
+            <Setter Property="MinHeight" Value="40"/>
+            <Setter Property="Margin" Value="0,2"/>
+            <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+            <Setter Property="Template"><Setter.Value>
+                <ControlTemplate TargetType="MenuItem">
+                    <Border x:Name="MenuSurface" Background="Transparent" BorderBrush="Transparent" BorderThickness="1" CornerRadius="9" Padding="13,8">
+                        <ContentPresenter ContentSource="Header" RecognizesAccessKey="True" VerticalAlignment="Center"/>
+                    </Border>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsHighlighted" Value="True">
+                            <Setter TargetName="MenuSurface" Property="Background" Value="{DynamicResource ThemeSurfaceHover}"/>
+                            <Setter TargetName="MenuSurface" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
+                        </Trigger>
+                        <Trigger Property="IsEnabled" Value="False"><Setter TargetName="MenuSurface" Property="Opacity" Value="0.4"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value></Setter>
+        </Style>
+        <Style x:Key="TraySeparatorStyle" TargetType="Separator">
+            <Setter Property="Margin" Value="11,5"/>
+            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Separator"><Border Height="1" Background="{DynamicResource ThemeSurfaceBorder}"/></ControlTemplate></Setter.Value></Setter>
+        </Style>
         <Style TargetType="ToolTip">
             <Setter Property="Background" Value="{DynamicResource ThemeTooltipBackground}"/>
             <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
@@ -242,7 +281,7 @@
                 <Path Stroke="{DynamicResource ThemeOrbitLine}" StrokeThickness="1" Data="M 750,0 C 820,150 950,160 1060,360"/>
             </Canvas>
 
-            <Image Source="Assets/morphocyte-icon.png" Width="430" Height="430" HorizontalAlignment="Right"
+            <Image Source="{DynamicResource ThemeLogo}" RenderOptions.BitmapScalingMode="HighQuality" Width="430" Height="430" HorizontalAlignment="Right"
                    VerticalAlignment="Bottom" Margin="0,0,-120,-145" Opacity="0.045" IsHitTestVisible="False"/>
 
             <Grid>
@@ -257,7 +296,7 @@
                         <ColumnDefinition Width="Auto"/>
                     </Grid.ColumnDefinitions>
                     <StackPanel Orientation="Horizontal" Margin="24,0" VerticalAlignment="Center">
-                        <Image Source="Assets/morphocyte-icon.png" Width="38" Height="38" Margin="0,0,12,0"/>
+                        <Image Source="{DynamicResource ThemeLogo}" RenderOptions.BitmapScalingMode="HighQuality" Width="44" Height="44" Margin="0,0,12,0"/>
                         <StackPanel VerticalAlignment="Center">
                             <TextBlock Foreground="{DynamicResource ThemeText}" FontWeight="Bold" FontSize="14">
                                 <Run Text="МОРФОЦИТ"/><Run Text=" OS" Foreground="{DynamicResource ThemeAccent}"/>
@@ -542,38 +581,90 @@
                     <Border x:Name="JournalPage" Visibility="Collapsed" Background="{DynamicResource ThemeLogPanel}" BorderBrush="{DynamicResource ThemePanelBorder}" BorderThickness="1" CornerRadius="15" Padding="16">
                         <Grid>
                             <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="2*"/><RowDefinition Height="Auto"/><RowDefinition Height="3*"/>
+                                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="3*"/><RowDefinition Height="Auto"/><RowDefinition Height="2*"/>
                             </Grid.RowDefinitions>
                             <StackPanel>
                                 <TextBlock Text="ЖУРНАЛ И СОЕДИНЕНИЯ" FontSize="23" FontWeight="Light" Foreground="{DynamicResource ThemeText}"/>
                                 <WrapPanel Margin="0,9,0,0">
                                     <Button x:Name="RunDiagnosticButton" Style="{StaticResource FlatButton}" Content="ПРОВЕРИТЬ ПОДКЛЮЧЕНИЕ" Padding="10,5" Margin="0,0,8,5" Click="RunDiagnostic_Click"/>
-                                    <Button x:Name="CopyDiagnosticButton" Style="{StaticResource FlatButton}" Content="КОПИРОВАТЬ ДИАГНОСТИКУ" Padding="10,5" Margin="0,0,8,5" Click="CopyDiagnostic_Click" IsEnabled="False"/>
-                                    <Button x:Name="CancelDiagnosticButton" Style="{StaticResource FlatButton}" Content="ОТМЕНА" Padding="10,5" Margin="0,0,0,5" Click="CancelDiagnostic_Click" Visibility="Collapsed"/>
                                 </WrapPanel>
-                                <ScrollViewer x:Name="DiagnosticResultsScroll" MaxHeight="115" VerticalScrollBarVisibility="Auto" Visibility="Collapsed" Margin="0,3,0,0">
-                                    <TextBlock x:Name="DiagnosticResultsText" FontSize="11" Foreground="{DynamicResource ThemeText}" TextWrapping="Wrap"/>
-                                </ScrollViewer>
                             </StackPanel>
                             <Grid Grid.Row="1" Margin="0,10,0,9">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                 <TextBox x:Name="ConnectionSearchBox" ToolTip="Фильтр: процесс, адрес, правило или маршрут" TextChanged="ConnectionSearch_TextChanged" Padding="9,6"/>
                                 <Button x:Name="RefreshConnectionsButton" Grid.Column="1" Style="{StaticResource FlatButton}" Content="ОБНОВИТЬ" Padding="12,6" Margin="8,0,0,0" Click="RefreshConnections_Click"/>
                             </Grid>
-                            <DataGrid x:Name="ConnectionsGrid" Grid.Row="2" IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="None" RowHeight="32" Background="{DynamicResource ThemeSurface}" Foreground="{DynamicResource ThemeText}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                            <Border Grid.Row="2" CornerRadius="12" BorderThickness="1" BorderBrush="{DynamicResource ThemeSurfaceBorder}" Background="{DynamicResource ThemeSurface}" Padding="1">
+                            <DataGrid x:Name="ConnectionsGrid" SizeChanged="ConnectionsGrid_SizeChanged" IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="None" RowHeight="38" ColumnHeaderHeight="40" BorderThickness="0" SelectionUnit="FullRow" Background="{DynamicResource ThemeSurface}" Foreground="{DynamicResource ThemeText}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
                                 <DataGrid.Resources>
-                                    <Style TargetType="DataGridColumnHeader"><Setter Property="Background" Value="{DynamicResource ThemeTagBackground}"/><Setter Property="Foreground" Value="{DynamicResource ThemeText}"/><Setter Property="Padding" Value="8"/></Style>
-                                    <Style TargetType="DataGridRow"><Setter Property="Background" Value="{DynamicResource ThemeSurface}"/><Setter Property="Foreground" Value="{DynamicResource ThemeText}"/></Style>
-                                    <Style TargetType="DataGridCell"><Setter Property="Padding" Value="5"/><Setter Property="BorderThickness" Value="0"/></Style>
+                                    <Style x:Key="ConnectionHeaderGrip" TargetType="Thumb">
+                                        <Setter Property="Width" Value="5"/><Setter Property="Cursor" Value="SizeWE"/>
+                                        <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Thumb"><Border Background="Transparent"/></ControlTemplate></Setter.Value></Setter>
+                                    </Style>
+                                    <Style TargetType="DataGridColumnHeader">
+                                        <Setter Property="Background" Value="{DynamicResource ThemeTagBackground}"/>
+                                        <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+                                        <Setter Property="HorizontalContentAlignment" Value="Center"/><Setter Property="VerticalContentAlignment" Value="Center"/>
+                                        <Setter Property="FontWeight" Value="SemiBold"/><Setter Property="FontSize" Value="12"/>
+                                        <Setter Property="Padding" Value="8,6"/><Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                                        <Setter Property="Template"><Setter.Value>
+                                            <ControlTemplate TargetType="DataGridColumnHeader">
+                                                <Grid>
+                                                    <Border x:Name="HeaderSurface" Background="{TemplateBinding Background}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" BorderThickness="0,0,1,1">
+                                                        <Grid Margin="{TemplateBinding Padding}">
+                                                            <ContentPresenter HorizontalAlignment="{TemplateBinding HorizontalContentAlignment}" VerticalAlignment="Center"/>
+                                                            <Path x:Name="SortGlyph" Data="M 0,4 L 3,0 L 6,4" Stroke="{DynamicResource ThemeAccent}" StrokeThickness="1.4" HorizontalAlignment="Right" VerticalAlignment="Center" Visibility="Collapsed"/>
+                                                        </Grid>
+                                                    </Border>
+                                                    <Thumb x:Name="PART_LeftHeaderGripper" Style="{StaticResource ConnectionHeaderGrip}" HorizontalAlignment="Left"/>
+                                                    <Thumb x:Name="PART_RightHeaderGripper" Style="{StaticResource ConnectionHeaderGrip}" HorizontalAlignment="Right"/>
+                                                </Grid>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="HeaderSurface" Property="Background" Value="{DynamicResource ThemeSurfaceActive}"/></Trigger>
+                                                    <Trigger Property="SortDirection" Value="Ascending"><Setter TargetName="SortGlyph" Property="Visibility" Value="Visible"/></Trigger>
+                                                    <Trigger Property="SortDirection" Value="Descending"><Setter TargetName="SortGlyph" Property="Visibility" Value="Visible"/><Setter TargetName="SortGlyph" Property="Data" Value="M 0,0 L 3,4 L 6,0"/></Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value></Setter>
+                                    </Style>
+                                    <Style TargetType="DataGridRow">
+                                        <Setter Property="Background" Value="{DynamicResource ThemeSurface}"/>
+                                        <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+                                        <Setter Property="BorderBrush" Value="Transparent"/><Setter Property="BorderThickness" Value="1"/>
+                                        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                                        <Setter Property="Template"><Setter.Value>
+                                            <ControlTemplate TargetType="DataGridRow">
+                                                <Grid>
+                                                    <Border Background="{TemplateBinding Background}" CornerRadius="7" Margin="1"/>
+                                                    <DataGridCellsPresenter Margin="0,1"/>
+                                                    <Border BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="7" Margin="1" IsHitTestVisible="False"/>
+                                                </Grid>
+                                            </ControlTemplate>
+                                        </Setter.Value></Setter>
+                                        <Style.Triggers>
+                                            <Trigger Property="IsMouseOver" Value="True"><Setter Property="Background" Value="{DynamicResource ThemeSurfaceHover}"/></Trigger>
+                                            <Trigger Property="IsSelected" Value="True"><Setter Property="Background" Value="{DynamicResource ThemeSurfaceSelected}"/><Setter Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/></Trigger>
+                                        </Style.Triggers>
+                                    </Style>
+                                    <Style TargetType="DataGridCell">
+                                        <Setter Property="Padding" Value="9,4"/><Setter Property="BorderThickness" Value="0"/>
+                                        <Setter Property="Background" Value="Transparent"/><Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
+                                        <Setter Property="FocusVisualStyle" Value="{x:Null}"/>
+                                        <Setter Property="Template"><Setter.Value>
+                                            <ControlTemplate TargetType="DataGridCell"><Border Background="{TemplateBinding Background}"><ContentPresenter Margin="{TemplateBinding Padding}" VerticalAlignment="Center"/></Border></ControlTemplate>
+                                        </Setter.Value></Setter>
+                                    </Style>
+                                    <Style x:Key="ConnectionCellTextStyle" TargetType="TextBlock"><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="VerticalAlignment" Value="Center"/><Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}"/></Style>
                                 </DataGrid.Resources>
                                 <DataGrid.Columns>
-                                    <DataGridTextColumn Header="Процесс" Binding="{Binding Process}" Width="110"/>
-                                    <DataGridTextColumn Header="Адрес" Binding="{Binding Destination}" Width="*" MinWidth="130"/>
-                                    <DataGridTextColumn Header="Сеть" Binding="{Binding Network}" Width="55"/>
-                                    <DataGridTextColumn Header="Правило" Binding="{Binding Rule}" Width="130"/>
-                                    <DataGridTextColumn Header="Маршрут" Binding="{Binding Route}" Width="120"/>
+                                    <DataGridTextColumn Header="Приложение" Binding="{Binding Process}" ElementStyle="{StaticResource ConnectionCellTextStyle}" Width="130" MinWidth="95"/>
+                                    <DataGridTextColumn Header="Адрес" Binding="{Binding Destination}" ElementStyle="{StaticResource ConnectionCellTextStyle}" Width="*" MinWidth="130"/>
+                                    <DataGridTextColumn Header="Протокол" Binding="{Binding Network}" ElementStyle="{StaticResource ConnectionCellTextStyle}" Width="85"/>
+                                    <DataGridTextColumn Header="Правило" Binding="{Binding Rule}" ElementStyle="{StaticResource ConnectionCellTextStyle}" Width="150" MinWidth="95"/>
+                                    <DataGridTextColumn Header="Маршрут" Binding="{Binding Route}" ElementStyle="{StaticResource ConnectionCellTextStyle}" Width="140" MinWidth="95"/>
                                 </DataGrid.Columns>
                             </DataGrid>
+                            </Border>
                             <Grid Grid.Row="3" Margin="0,11,0,8">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
                                 <TextBlock x:Name="ConnectionsStatusText" Text="Соединения появятся после запуска VPN. Короткие запросы могут завершиться между обновлениями." FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource ThemeMuted}" VerticalAlignment="Center" Margin="0,0,10,0"/>

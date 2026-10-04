@@ -78,6 +78,8 @@ internal static class ThemeManager
     };
 
     internal static string CurrentTheme { get; private set; } = ThemeNames[0];
+    internal static bool IsLightTheme { get; private set; }
+    internal static event Action? Changed;
 
     internal static string Normalize(string? name) =>
         ThemeNames.FirstOrDefault(candidate => string.Equals(candidate, name, StringComparison.OrdinalIgnoreCase)) ?? ThemeNames[0];
@@ -113,7 +115,7 @@ internal static class ThemeManager
         {
             ["ThemeCanvas"] = Brush(p.Canvas), ["ThemeAppOutline"] = accentGradient, ["ThemeAppInnerOutline"] = Brush(p.Border), ["ThemeAppGlow"] = Brush(p.Accent),
             ["ThemeAccentGlowColor"] = Parse(p.Accent), ["ThemeStatusNeutral"] = Brush(p.Muted),
-            ["ThemeBackgroundGradient"] = backgroundGradient, ["ThemeTitleBar"] = Brush(p.TitleBar),
+            ["ThemeBackgroundGradient"] = backgroundGradient, ["ThemeTrayBackground"] = backgroundGradient, ["ThemeTitleBar"] = Brush(p.TitleBar),
             ["ThemePanelSolid"] = Brush(p.Panel), ["ThemePanelGradient"] = panelGradient, ["ThemePanelBorder"] = Brush(p.BorderStrong),
             ["ThemeSurface"] = Brush(p.Surface), ["ThemeSurfaceBorder"] = Brush(p.Border), ["ThemeSurfaceHover"] = Brush(p.Hover),
             ["ThemeSurfaceHoverBorder"] = Brush(p.BorderStrong), ["ThemeSurfaceSelected"] = Brush(p.Selected),
@@ -147,8 +149,11 @@ internal static class ThemeManager
             ["ThemeShadowColor"] = Parse(p.Shadow), ["ThemeOrbitLine"] = BrushColor(Blend(Parse(p.Orbit), Parse(p.Canvas), 0.52))
         };
 
+        resources["ThemeLogo"] = ThemeIcons.Logo(theme, Parse(p.Accent), p.Light);
         foreach (var resource in resources) Application.Current.Resources[resource.Key] = resource.Value;
         CurrentTheme = theme;
+        IsLightTheme = p.Light;
+        Changed?.Invoke();
     }
 
     internal static Brush GetBrush(string key) => Application.Current?.Resources[key] as Brush ?? Brushes.Transparent;

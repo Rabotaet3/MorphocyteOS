@@ -75,7 +75,12 @@ internal static class UtilityDialogs
     {
         var dialog = DialogChrome.CreateWindow(owner, "НАСТРОЙКИ", 660, 650, 590, 500, ResizeMode.CanResize);
         using var lifetime = new CancellationTokenSource();
-        dialog.Closed += (_, _) => lifetime.Cancel();
+        dialog.Closed += (_, _) =>
+        {
+            // A dialog can also be destroyed by its owner after construction failed.
+            // In that case the method's using scope has already disposed the source.
+            try { lifetime.Cancel(); } catch (ObjectDisposedException) { }
+        };
         var selectedConfig = configPath;
         var selectedCore = corePath;
         ImportedProfile? importedProfile = null;
@@ -163,8 +168,9 @@ internal static class UtilityDialogs
         startupOptions.Children.Add(launchAtSignIn);
         startupOptions.Children.Add(autoConnect);
         startup.Children.Add(Card("АВТОЗАПУСК", null, startupOptions));
-        var autoReconnect = LabeledOption("Восстанавливать VPN после сна и смены сети", owner.AutoReconnect);
-        startup.Children.Add(Card("ПОДКЛЮЧЕНИЕ", null, autoReconnect));
+        var autoReconnect = LabeledOption("Переподключать VPN при пробуждении компьютера и смене сети", owner.AutoReconnect);
+        autoReconnect.Name = "AutoReconnectOption";
+        startup.Children.Add(Card("ПОДКЛЮЧЕНИЕ", "Если VPN был включён, приложение попробует восстановить его после выхода компьютера из спящего режима или перехода на другую сеть.", autoReconnect));
 
         var themePicker = new ComboBox { ItemsSource = ThemeManager.ThemeNames, SelectedItem = selectedTheme, Margin = new Thickness(0, 9, 0, 0) };
         themePicker.SelectionChanged += (_, _) =>

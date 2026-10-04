@@ -57,6 +57,8 @@ internal partial class Program
         void Check(bool condition, string name) { if (!condition) throw new Exception("FAIL: " + name); Console.WriteLine("PASS: " + name); passed++; }
         try
         {
+            passed += await RunThemePolishChecks(scratch, fakeExe);
+            passed += await RunDiagnosticDialogChecks(scratch, fakeExe);
             if (visualOnly) { await RunVisualLayoutChecks(scratch, fakeExe); return; }
             passed += await RunImprovementChecks(scratch, fakeExe);
             if (improvementsOnly) { Console.WriteLine($"TOTAL: {passed} improvement checks passed."); return; }

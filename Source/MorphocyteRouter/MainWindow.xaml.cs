@@ -54,6 +54,10 @@ public partial class MainWindow : Window
         _settings.Theme = ThemeManager.Normalize(_settings.Theme);
         ThemeManager.Apply(_settings.Theme);
         InitializeComponent();
+        ThemeManager.Changed += RefreshThemeIcons;
+        SourceInitialized += (_, _) => RefreshThemeIcons();
+        DpiChanged += (_, _) => RefreshThemeIcons();
+        RefreshThemeIcons();
         ApplyInterfaceScale(_settings.InterfaceScale);
         _rulesView = new ListCollectionView(_rules) { Filter = FilterUserRule };
         var folderGroups = new PropertyGroupDescription(nameof(DomainRule.FolderLabel))

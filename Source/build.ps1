@@ -30,6 +30,8 @@ function Run-Dotnet {
     if ($LASTEXITCODE -ne 0) { throw "dotnet failed ($LASTEXITCODE): $Arguments" }
 }
 
+Run-Dotnet -Arguments @('run', '--project', 'IconAssetBuilder/IconAssetBuilder.csproj', '-c', 'Release', '--', 'MorphocyteRouter/Assets/morphocyte-icon.png', 'MorphocyteRouter/Assets/morphocyte.ico')
+
 if (-not $SkipTests) {
     Run-Dotnet -Arguments @('run', '--project', 'SubscriptionImportTests/SubscriptionImportTests.csproj', '-c', 'Release', '-p:PublishSingleFile=false')
     Run-Dotnet -Arguments @('run', '--project', 'RouterRegressionTests/RouterRegressionTests.csproj', '-c', 'Release')

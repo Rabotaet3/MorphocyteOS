@@ -92,8 +92,8 @@ internal partial class Program
             Check(((ICollection)Field("_undoRules")).Count == 0 && ((TextBlock)Field("ChangesSummaryText")).Visibility == Visibility.Collapsed,
                 "applying rules starts a new clean history boundary and hides the pending summary");
             await window.RunConnectionDiagnosticAsync();
-            Check(((TextBlock)Field("DiagnosticResultsText")).Text.Contains("VPN выключен") && ((Button)Field("CopyDiagnosticButton")).IsEnabled,
-                "journal diagnostics reports an explicitly stopped VPN without making network requests");
+            Check(window.DiagnosticSteps.Single().Result.Contains("VPN выключен") && window.CanCopyDiagnostic,
+                "diagnostics reports an explicitly stopped VPN without making network requests or consuming journal space");
             CaptureInteraction(window, Path.Combine(scratch, "improvements-main-window.png"));
             await Call("StartCoreAsync", false);
             Check(window.CanReconnect, "recovery becomes eligible only after VPN has been started");

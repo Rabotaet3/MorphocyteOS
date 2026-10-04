@@ -6,6 +6,11 @@ namespace MorphocyteRouter;
 
 public partial class MainWindow
 {
+    private void ConnectionsGrid_SizeChanged(object sender, System.Windows.SizeChangedEventArgs e)
+    {
+        if (e.NewSize.Width > 0 && e.NewSize.Height > 0)
+            ConnectionsGrid.Clip = new System.Windows.Media.RectangleGeometry(new System.Windows.Rect(e.NewSize), 11, 11);
+    }
     private CoreDiagnostics? _diagnostics;
     private string? _runtimeConfigPath;
     private CancellationTokenSource? _diagnosticLifetime;
