@@ -224,6 +224,13 @@
                                 <Setter Property="Background" Value="{DynamicResource ThemeSurfaceSelected}"/>
                                 <Setter Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
                             </DataTrigger>
+                            <MultiDataTrigger>
+                                <MultiDataTrigger.Conditions>
+                                    <Condition Binding="{Binding FullTunnelActive, RelativeSource={RelativeSource AncestorType=Window}}" Value="True"/>
+                                    <Condition Binding="{Binding IsVpnRoute}" Value="True"/>
+                                </MultiDataTrigger.Conditions>
+                                <Setter Property="Opacity" Value="0.48"/>
+                            </MultiDataTrigger>
                             <DataTrigger Binding="{Binding Enabled}" Value="False">
                                 <Setter Property="Opacity" Value="0.42"/>
                             </DataTrigger>
@@ -338,7 +345,7 @@
 
                     <Border Grid.Column="0" Background="{DynamicResource ThemePanelGradient}" BorderBrush="{DynamicResource ThemePanelBorder}" BorderThickness="1" CornerRadius="18" Padding="20">
                         <Grid>
-                            <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                            <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
                         <ScrollViewer x:Name="SidebarScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                         <Grid>
                             <Grid.RowDefinitions>
@@ -377,19 +384,52 @@
                                     <Grid Margin="0,16,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
                                         <StackPanel ToolTip="Задержка HTTPS-запроса через VPN; проверка каждые 20 секунд, пока окно открыто."><TextBlock Text="ПИНГ" Foreground="{DynamicResource ThemeMuted}" FontSize="9"/><TextBlock x:Name="PingText" Text="—" Foreground="{DynamicResource ThemeText}" FontSize="18" Margin="0,4,0,0"/></StackPanel>
-                                        <StackPanel Grid.Column="1" ToolTip="Доля успешных HTTPS-проверок среди последних 20. Это доступность VPN, а не измерение потерь сетевых пакетов."><TextBlock Text="ДОСТУПНОСТЬ" Foreground="{DynamicResource ThemeMuted}" FontSize="9"/><TextBlock x:Name="StabilityText" Text="—" Foreground="{DynamicResource ThemeText}" FontSize="18" Margin="0,4,0,0"/></StackPanel>
+                                        <StackPanel Grid.Column="1"><TextBlock Text="ЗАГРУЗКА ↓" Foreground="{DynamicResource ThemeMuted}" FontSize="9"/><TextBlock x:Name="StabilityText" Text="—" Foreground="{DynamicResource ThemeText}" FontSize="18" Margin="0,4,0,0"/></StackPanel>
                                     </Grid>
                                     <TextBlock x:Name="ConnectionStateText" Text="Проверка не выполнялась" Foreground="{DynamicResource ThemeText}" FontSize="11" Margin="0,11,0,0" TextWrapping="Wrap"/>
-                                    <Button x:Name="CheckConnectionButton" Style="{StaticResource FlatButton}" Content="ПРОВЕРИТЬ VPN" Margin="0,8,0,0" Padding="8,7" Click="CheckConnection_Click"/>
-                                    <TextBlock x:Name="LastIssueText" Foreground="{DynamicResource ThemeAccentSecondary}" FontSize="10" Margin="0,8,0,0" MaxHeight="44" TextWrapping="Wrap" TextTrimming="CharacterEllipsis"/>
+                                    <Grid Margin="0,8,0,0">
+                                        <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition/></Grid.ColumnDefinitions>
+                                        <Button x:Name="CheckConnectionButton" Style="{StaticResource FlatButton}" Content="ПРОВЕРИТЬ VPN" Padding="4,7" FontSize="10" Click="CheckConnection_Click"/>
+                                        <Button x:Name="SpeedTestButton" Grid.Column="2" Style="{StaticResource FlatButton}" Content="СКОРОСТЬ" Padding="4,7" FontSize="10" Click="SpeedTest_Click" ToolTip="Замер скорости через VPN: тестовая загрузка до 64 МБ, не более 15 секунд. Можно остановить повторным нажатием."/>
+                                    </Grid>
+                                    <TextBlock x:Name="LastIssueText" ToolTip="{Binding Text, RelativeSource={RelativeSource Self}}" Foreground="{DynamicResource ThemeAccentSecondary}" FontSize="10" Margin="0,8,0,0" MaxHeight="44" TextWrapping="Wrap" TextTrimming="CharacterEllipsis">
+                                        <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><Trigger Property="Text" Value=""><Setter Property="Visibility" Value="Collapsed"/></Trigger></Style.Triggers></Style></TextBlock.Style>
+                                    </TextBlock>
                                 </StackPanel>
                             </Border>
-
-
-
                         </Grid>
                         </ScrollViewer>
-                            <Grid x:Name="SidebarTools" Grid.Row="1" VerticalAlignment="Bottom" Margin="0,14,0,2">
+                            <Border Grid.Row="1" Margin="0,12,0,0" Background="{DynamicResource ThemeSurface}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" BorderThickness="1" CornerRadius="12" Padding="13">
+                                <CheckBox x:Name="FullTunnelCheck" Click="FullTunnel_Click" Cursor="Hand" Focusable="True" ToolTip="VPN для всего трафика, кроме правил «Напрямую» и блокировок. Выключи, чтобы вернуться к правилам. При смене режима подключение перезапускается.">
+                                    <CheckBox.Template>
+                                        <ControlTemplate TargetType="CheckBox">
+                                            <Grid Background="Transparent" MinHeight="22">
+                                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="44"/></Grid.ColumnDefinitions>
+                                                <TextBlock Text="TUN" FontSize="12" FontWeight="SemiBold" Foreground="{DynamicResource ThemeText}" VerticalAlignment="Center"/>
+                                                <Grid Grid.Column="1" Width="42" Height="22">
+                                                    <Border x:Name="ToggleTrack" CornerRadius="11" Background="{DynamicResource ThemeSurfaceSelected}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" BorderThickness="1"/>
+                                                    <Ellipse x:Name="ToggleThumb" Width="16" Height="16" HorizontalAlignment="Left" Margin="3,0,0,0" Fill="{DynamicResource ThemeMuted}">
+                                                        <Ellipse.RenderTransform><TranslateTransform X="0"/></Ellipse.RenderTransform>
+                                                    </Ellipse>
+                                                </Grid>
+                                            </Grid>
+                                            <ControlTemplate.Triggers>
+                                                <Trigger Property="IsChecked" Value="True">
+                                                    <Setter TargetName="ToggleTrack" Property="Background" Value="{DynamicResource ThemeSurfaceActive}"/>
+                                                    <Setter TargetName="ToggleTrack" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
+                                                    <Setter TargetName="ToggleThumb" Property="Fill" Value="{DynamicResource ThemeAccent}"/>
+                                                    <Trigger.EnterActions><BeginStoryboard><Storyboard><DoubleAnimation Storyboard.TargetName="ToggleThumb" Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)" To="20" Duration="0:0:0.12"><DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction></DoubleAnimation></Storyboard></BeginStoryboard></Trigger.EnterActions>
+                                                    <Trigger.ExitActions><BeginStoryboard><Storyboard><DoubleAnimation Storyboard.TargetName="ToggleThumb" Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)" To="0" Duration="0:0:0.12"><DoubleAnimation.EasingFunction><CubicEase EasingMode="EaseOut"/></DoubleAnimation.EasingFunction></DoubleAnimation></Storyboard></BeginStoryboard></Trigger.ExitActions>
+                                                </Trigger>
+                                                <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="ToggleTrack" Property="BorderBrush" Value="{DynamicResource ThemeAccentSecondary}"/></Trigger>
+                                                <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="ToggleTrack" Property="BorderBrush" Value="{DynamicResource ThemeAccentSecondary}"/></Trigger>
+                                                <Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger>
+                                            </ControlTemplate.Triggers>
+                                        </ControlTemplate>
+                                    </CheckBox.Template>
+                                </CheckBox>
+                            </Border>
+                            <Grid x:Name="SidebarTools" Grid.Row="2" VerticalAlignment="Bottom" Margin="0,14,0,2">
                                 <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
                                 <Button Grid.Column="0" Style="{StaticResource SidebarToolButton}" Click="FaqButton_Click" ToolTip="ЧаВо?">
                                     <TextBlock Text="?" FontSize="25" FontWeight="SemiBold" Foreground="{DynamicResource ThemeAccent}"/>

@@ -47,6 +47,10 @@ public partial class MainWindow
     private void QueueConnectionRecovery()
     {
         if (!CanReconnect) return;
+        _speedTestLifetime?.Cancel();
+        _downloadCapacity = null;
+        _capacityServer = "";
+        RefreshBandwidthReadout();
         _recoveryLifetime?.Cancel();
         _recoveryLifetime = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         UpdateControls();

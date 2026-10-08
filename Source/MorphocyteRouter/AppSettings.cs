@@ -36,6 +36,7 @@ public sealed class AppSettings
     public bool LaunchAtSignIn { get; set; }
     public bool AutoConnectOnStartup { get; set; } = true;
     public bool AutoReconnect { get; set; } = true;
+    public bool FullTunnel { get; set; }
     public Dictionary<string, SubscriptionSource> ProfileSubscriptions { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     // Legacy fields migrate 1.5.x drafts on load.
     public bool HasRuleDraft { get; set; }

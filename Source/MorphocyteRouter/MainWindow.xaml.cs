@@ -247,6 +247,7 @@ public partial class MainWindow : Window
         RefreshRuleHistoryControls();
         RefreshConnectionCard();
         RefreshTrayState();
+        RefreshTunnelControls();
     }
 
     private async Task LoadConfigAsync(string path)
@@ -392,7 +393,7 @@ public partial class MainWindow : Window
         var actual = await Task.Run(() => ClashConfigDocument.Load(_settings.ConfigPath));
         if (_document?.SourceHash != actual.SourceHash)
             await LoadConfigAsync(_settings.ConfigPath);
-        var routingErrors = actual.ValidateForRouting();
+        var routingErrors = _settings.FullTunnel ? actual.Validate() : actual.ValidateForRouting();
         if (routingErrors.Count > 0) throw new InvalidDataException(string.Join("\n", routingErrors));
 
         SetStatus("ПРОВЕРКА…", "Проверяю конфигурацию", "#FFD166");
@@ -408,17 +409,29 @@ public partial class MainWindow : Window
         {
             _ignoreRecoveryNetworkUntil = DateTime.UtcNow.AddSeconds(15);
             _diagnostics = new CoreDiagnostics();
+            _speedTestPort = FreeLoopbackPort(_diagnostics.Port);
             var runtimeDirectory = Path.Combine(_settings.StorageDirectory, ".runtime");
             Directory.CreateDirectory(runtimeDirectory);
             _runtimeConfigPath = Path.Combine(runtimeDirectory, "active-" + Guid.NewGuid().ToString("N") + ".yaml");
-            await File.WriteAllTextAsync(_runtimeConfigPath, actual.BuildRuntimeText(_diagnostics.Port, _diagnostics.Secret), new UTF8Encoding(false), startToken);
+            await File.WriteAllTextAsync(_runtimeConfigPath, actual.BuildRuntimeText(_diagnostics.Port, _diagnostics.Secret, _settings.FullTunnel, _speedTestPort), new UTF8Encoding(false), startToken);
+            var runtimeCheck = await CoreProcessManager.ValidateAsync(_settings.CorePath, _runtimeConfigPath, startToken);
+            if (!runtimeCheck.Success) throw new InvalidDataException(runtimeCheck.Message);
             await _core.StartAsync(CoreProcessManager.CreateStartInfo(_settings.CorePath, _runtimeConfigPath,
                 Path.GetDirectoryName(_settings.ConfigPath)), startToken);
+            if (_settings.FullTunnel && actual.VpnRoute is { } route)
+            {
+                var selected = await _diagnostics.ReadSelectionAsync(route, startToken);
+                if (selected is "DIRECT" or "REJECT")
+                {
+                    await StopCoreAsync();
+                    throw new IOException("TUN не включён: в группе выбран прямой маршрут или блокировка. Выбери VPN-подключение в профиле.");
+                }
+            }
             _connectionRequested = true;
             _ignoreRecoveryNetworkUntil = DateTime.UtcNow.AddSeconds(15);
             _startedAt = DateTime.Now;
             _uptimeTimer.Start();
-            SetStatus("ЯДРО РАБОТАЕТ", "Правила VPN загружены", "#73FFBF");
+            SetStatus("ЯДРО РАБОТАЕТ", _settings.FullTunnel ? "TUN · весь трафик через VPN" : "Правила VPN загружены", "#73FFBF");
             LastIssueText.Text = "";
             ConnectionStateText.Text = "VPN ещё не проверен";
             StartTrafficMonitor();
@@ -426,6 +439,7 @@ public partial class MainWindow : Window
         }
         catch
         {
+            if (_settings.FullTunnel && _core.HasTrackedProcess) await StopCoreAsync();
             if (!_core.HasTrackedProcess) ResetDiagnostics();
             SetStatus("ОШИБКА ЗАПУСКА", _core.IsRunning ? "Ядро требует остановки" : "Ядро не запущено", "#FF6B8A");
             throw;

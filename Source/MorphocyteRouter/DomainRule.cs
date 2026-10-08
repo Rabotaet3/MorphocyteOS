@@ -27,4 +27,6 @@ public sealed class DomainRule
         "REJECT" => "БЛОКИРОВКА",
         _ => Route
     };
+    [System.Text.Json.Serialization.JsonIgnore]
+    public bool IsVpnRoute => Route.ToUpperInvariant() is not ("DIRECT" or "REJECT" or "REJECT-DROP");
 }

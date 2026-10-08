@@ -53,6 +53,8 @@ public partial class MainWindow
             var snapshot = await diagnostics.ReadAsync(_document?.VpnRoute, token);
             if (_closing || token.IsCancellationRequested || !ReferenceEquals(diagnostics, _diagnostics)) return;
             _connections = snapshot.Connections;
+            if (_capacityServer.Length > 0 && _capacityServer != snapshot.Selection)
+            { _downloadCapacity = null; _capacityServer = ""; RefreshBandwidthReadout(); }
             _selectedConnection = snapshot.Selection;
             _runningCoreVersion = snapshot.Version;
             FilterConnections();
@@ -82,7 +84,7 @@ public partial class MainWindow
 
     private async Task CheckConnectionAsync(bool manual)
     {
-        if (_checkingConnection || !_core.IsRunning || _diagnostics is not { } diagnostics || _document?.VpnRoute is not { } route) return;
+        if (_checkingConnection || _speedTestLifetime is not null || !_core.IsRunning || _diagnostics is not { } diagnostics || _document?.VpnRoute is not { } route) return;
         _diagnosticLifetime ??= CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
         var token = _diagnosticLifetime.Token;
         _checkingConnection = true;
@@ -96,6 +98,8 @@ public partial class MainWindow
                 throw new IOException("В группе VPN выбран прямой маршрут или блокировка. Выбери VPN-подключение в профиле.");
             var delay = await diagnostics.CheckProxyAsync(route, token);
             if (!ReferenceEquals(diagnostics, _diagnostics) || token.IsCancellationRequested) return;
+            if (_capacityServer.Length > 0 && _capacityServer != selection)
+            { _downloadCapacity = null; _capacityServer = ""; RefreshBandwidthReadout(); }
             _selectedConnection = selection;
             _health.Record(delay);
             RefreshHealthReadout();
@@ -122,8 +126,7 @@ public partial class MainWindow
     private void RefreshHealthReadout()
     {
         PingText.Text = _health.LastDelay is { } delay ? $"{delay} мс" : "—";
-        StabilityText.Text = _health.Count == 0 ? "—" : $"{_health.Availability:0}%";
-        StabilityText.ToolTip = $"Успешных HTTPS-проверок: {_health.SuccessCount} из {_health.Count}. Учитываются последние 20; это не измерение потерь сетевых пакетов.";
+        RefreshBandwidthReadout();
     }
 
     private void StartTrafficMonitor()
@@ -146,12 +149,16 @@ public partial class MainWindow
                     if (token.IsCancellationRequested || !ReferenceEquals(diagnostics, _diagnostics)) return;
                     DownloadSpeedText.Text = ConnectionHealth.FormatRate(traffic.Download);
                     UploadSpeedText.Text = ConnectionHealth.FormatRate(traffic.Upload);
+                    _currentDownload = traffic.Download;
+                    RefreshBandwidthReadout();
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
                 catch
                 {
                     if (!ReferenceEquals(diagnostics, _diagnostics)) return;
                     DownloadSpeedText.Text = UploadSpeedText.Text = "—";
+                    _currentDownload = null;
+                    RefreshBandwidthReadout();
                     await Task.Delay(2000, token);
                 }
                 await Task.Delay(100, token);
@@ -163,6 +170,11 @@ public partial class MainWindow
     private void ResetDiagnostics()
     {
         _manualDiagnosticLifetime?.Cancel();
+        _speedTestLifetime?.Cancel();
+        _downloadCapacity = null;
+        _capacityServer = "";
+        _currentDownload = null;
+        _speedTestPort = 0;
         _diagnosticLifetime?.Cancel();
         _diagnosticLifetime?.Dispose();
         _diagnosticLifetime = null;

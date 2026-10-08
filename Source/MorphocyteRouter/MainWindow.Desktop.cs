@@ -37,13 +37,14 @@ public partial class MainWindow
         {
             var menu = new ContextMenu { Placement = PlacementMode.MousePoint, Style = (Style)FindResource("TrayMenuStyle") };
             _trayMenu = menu;
-            MenuItem Item(string text, Action action)
+            MenuItem Item(string text, Action? action = null)
             {
                 var item = new MenuItem { Header = text, Style = (Style)FindResource("TrayMenuItemStyle") };
-                item.Click += (_, _) => action(); menu.Items.Add(item); return item;
+                if (action is not null) item.Click += (_, _) => action();
+                menu.Items.Add(item); return item;
             }
             Item("Открыть MorphocyteOS", RestoreFromTray);
-            _trayPower = Item("Запустить VPN", () => { });
+            _trayPower = Item("Запустить VPN");
             _trayPower.Click += async (_, _) => await RunExclusiveAsync(async () =>
             {
                 if (_core.HasTrackedProcess || _recoveryLifetime is not null) { CancelConnectionIntent(); await StopCoreAsync(); } else await StartCoreAsync();

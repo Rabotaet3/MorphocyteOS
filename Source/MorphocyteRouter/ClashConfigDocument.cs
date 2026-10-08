@@ -84,7 +84,7 @@ public sealed class ClashConfigDocument
         VpnRoute = groups?.FirstOrDefault(name => name == "VPN") ?? groups?.FirstOrDefault() ?? routes.FirstOrDefault();
     }
 
-    internal string BuildRuntimeText(int controllerPort, string secret)
+    internal string BuildRuntimeText(int controllerPort, string secret, bool fullTunnel = false, int speedTestPort = 0)
     {
         if (controllerPort is < 1 or > 65535 || !System.Text.RegularExpressions.Regex.IsMatch(secret, "^[A-F0-9]{64}$"))
             throw new ArgumentException("Недопустимые параметры локальной диагностики.");
@@ -95,6 +95,90 @@ public sealed class ClashConfigDocument
             root.Children.Remove(new YamlScalarNode(key));
         root.Add("external-controller", $"127.0.0.1:{controllerPort}");
         root.Add("secret", secret);
+        if (fullTunnel)
+        {
+            if (VpnRoute is null || !HasVpnConnection) throw new InvalidDataException("Нет VPN-подключения для TUN.");
+            root.Children[new YamlScalarNode("mode")] = new YamlScalarNode("rule");
+            // Explicit DIRECT / blocking exceptions remain active. A profile's old
+            // catch-all is replaced, so everything else uses the VPN by default.
+            var exceptions = _allRules.Where(rule =>
+            {
+                var value = rule.Trim();
+                if (value.StartsWith("MATCH,", StringComparison.OrdinalIgnoreCase)) return false;
+                if (value.EndsWith(",no-resolve", StringComparison.OrdinalIgnoreCase)) value = value[..^11].TrimEnd();
+                var comma = value.LastIndexOf(',');
+                return comma >= 0 && value[(comma + 1)..].Trim().ToUpperInvariant() is "DIRECT" or "REJECT" or "REJECT-DROP";
+            }).Select(rule => (YamlNode)new YamlScalarNode(rule)).ToList();
+            exceptions.Add(new YamlScalarNode("MATCH," + VpnRoute));
+            root.Children[new YamlScalarNode("rules")] = new YamlSequenceNode(exceptions);
+            // Cached selector choices cannot leave the full-tunnel path on DIRECT.
+            var bypass = new HashSet<string>(StringComparer.Ordinal) { "DIRECT", "REJECT", "REJECT-DROP", "PASS", "COMPATIBLE" };
+            if (Get(root, "proxies") is YamlSequenceNode proxies)
+                foreach (var proxy in proxies.Children.OfType<YamlMappingNode>())
+                    if (Scalar(proxy, "type") is "direct" or "reject" && Scalar(proxy, "name") is { } name) bypass.Add(name);
+            if (Get(root, "proxy-groups") is YamlSequenceNode groups)
+            {
+                var namedGroups = groups.Children.OfType<YamlMappingNode>().Where(group => Scalar(group, "name") is not null)
+                    .ToDictionary(group => Scalar(group, "name")!, StringComparer.Ordinal);
+                bool HasDynamicMembers(YamlMappingNode group) => Get(group, "use") is YamlSequenceNode { Children.Count: > 0 }
+                    || new[] { "include-all", "include-all-proxies", "include-all-providers" }.Any(key => Scalar(group, key) == "true");
+                // Mark direct-only nested groups before pruning the reachable VPN branch.
+                bool changed;
+                do
+                {
+                    changed = false;
+                    foreach (var (name, group) in namedGroups)
+                        if (!HasDynamicMembers(group) && Get(group, "proxies") is YamlSequenceNode members
+                            && members.Children.All(member => bypass.Contains(member.ToString()))) changed |= bypass.Add(name);
+                } while (changed);
+                if (bypass.Contains(VpnRoute)) throw new InvalidDataException("TUN: VPN-группа содержит только прямые маршруты или блокировку.");
+                var pending = new Queue<string>(); pending.Enqueue(VpnRoute);
+                var visited = new HashSet<string>(StringComparer.Ordinal);
+                while (pending.TryDequeue(out var name))
+                {
+                    if (!visited.Add(name) || !namedGroups.TryGetValue(name, out var group) || Get(group, "proxies") is not YamlSequenceNode members) continue;
+                    foreach (var member in members.Children.OfType<YamlScalarNode>().ToArray())
+                        if (bypass.Contains(member.Value ?? "")) members.Children.Remove(member);
+                        else if (member.Value is { } next) pending.Enqueue(next);
+                }
+            }
+            else if (bypass.Contains(VpnRoute)) throw new InvalidDataException("TUN: выбран прямой маршрут или блокировка.");
+            root.Children[new YamlScalarNode("ipv6")] = new YamlScalarNode("true");
+            var tun = Get(root, "tun") as YamlMappingNode ?? new YamlMappingNode();
+            root.Children[new YamlScalarNode("tun")] = tun;
+            foreach (var key in new[] { "enable", "auto-route", "auto-detect-interface", "strict-route" })
+                tun.Children[new YamlScalarNode(key)] = new YamlScalarNode("true");
+            // A profile's split-route/interface exclusions must not bypass full-tunnel mode.
+            foreach (var key in new[] { "route-address", "route-address-set", "route-exclude-address", "route-exclude-address-set",
+                "inet4-route-address", "inet6-route-address", "inet4-route-exclude-address", "inet6-route-exclude-address",
+                "include-interface", "exclude-interface" }) tun.Children.Remove(new YamlScalarNode(key));
+            tun.Children[new YamlScalarNode("dns-hijack")] = new YamlSequenceNode("any:53", "tcp://any:53");
+            if (Get(tun, "inet6-address") is null)
+                tun.Add("inet6-address", new YamlSequenceNode("fdfe:dcba:9876::1/126"));
+            var dns = Get(root, "dns") as YamlMappingNode ?? new YamlMappingNode();
+            root.Children[new YamlScalarNode("dns")] = dns;
+            foreach (var key in new[] { "enable", "ipv6", "respect-rules" })
+                dns.Children[new YamlScalarNode(key)] = new YamlScalarNode("true");
+            // Resolving the VPN server itself needs an independent bootstrap resolver.
+            if (Get(dns, "proxy-server-nameserver") is null) dns.Add("proxy-server-nameserver", new YamlSequenceNode("1.1.1.1", "8.8.8.8"));
+            dns.Children[new YamlScalarNode("nameserver")] = new YamlSequenceNode("https://1.1.1.1/dns-query");
+            dns.Children.Remove(new YamlScalarNode("fallback"));
+            dns.Children.Remove(new YamlScalarNode("fallback-filter"));
+            dns.Children.Remove(new YamlScalarNode("nameserver-policy"));
+        }
+        if (speedTestPort != 0)
+        {
+            if (speedTestPort is < 1 or > 65535 || speedTestPort == controllerPort || VpnRoute is null)
+                throw new ArgumentException("Недопустимый порт замера скорости.");
+            var listeners = Get(root, "listeners") as YamlSequenceNode ?? new YamlSequenceNode();
+            root.Children[new YamlScalarNode("listeners")] = listeners;
+            listeners.Add(new YamlMappingNode {
+                { "name", "morphocyte-speed-" + secret[..12] }, { "type", "http" },
+                { "listen", "127.0.0.1" }, { "port", speedTestPort.ToString(CultureInfo.InvariantCulture) },
+                { "proxy", VpnRoute },
+                { "users", new YamlSequenceNode(new YamlMappingNode { { "username", "morphocyte" }, { "password", secret } }) }
+            });
+        }
         using var writer = new StringWriter();
         yaml.Save(writer, assignAnchors: false);
         return writer.ToString();

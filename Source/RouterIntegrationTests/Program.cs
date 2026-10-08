@@ -22,14 +22,14 @@ internal partial class Program
         var code = 1;
         _ = app.Dispatcher.InvokeAsync(async () =>
         {
-            try { await Run(args[0], args.Contains("--improvements-only"), args.Contains("--visual-only")); code = 0; }
+            try { await Run(args[0], args.Contains("--improvements-only"), args.Contains("--visual-only"), args.Contains("--tunnel-only")); code = 0; }
             catch (Exception ex) { Console.Error.WriteLine(ex); }
             finally { app.Dispatcher.InvokeShutdown(); }
         });
         Dispatcher.Run();
         return code;
     }
-    static async Task Run(string fakeExe, bool improvementsOnly = false, bool visualOnly = false)
+    static async Task Run(string fakeExe, bool improvementsOnly = false, bool visualOnly = false, bool tunnelOnly = false)
     {
         var scratch = Path.Combine(AppContext.BaseDirectory, "integration-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(scratch);
@@ -57,6 +57,11 @@ internal partial class Program
         void Check(bool condition, string name) { if (!condition) throw new Exception("FAIL: " + name); Console.WriteLine("PASS: " + name); passed++; }
         try
         {
+            if (tunnelOnly)
+            {
+                passed += await RunTunnelAndSpeedChecks(scratch, fakeExe);
+                Console.WriteLine($"TOTAL: {passed} tunnel and speed checks passed."); return;
+            }
             passed += await RunThemePolishChecks(scratch, fakeExe);
             passed += await RunShellThemeChecks(scratch);
             passed += await RunDiagnosticDialogChecks(scratch, fakeExe);
@@ -72,6 +77,7 @@ internal partial class Program
             passed += await RunDesktopFeatureChecks(scratch, fakeExe);
             passed += await RunRealDiagnosticsChecks(scratch);
             passed += await RunTelemetryChecks();
+            passed += await RunTunnelAndSpeedChecks(scratch, fakeExe);
             var workspace = (FrameworkElement)Field("Workspace");
             var busyField = typeof(MainWindow).GetField("_busy", BindingFlags.Instance | BindingFlags.NonPublic)!;
             busyField.SetValue(window, true);

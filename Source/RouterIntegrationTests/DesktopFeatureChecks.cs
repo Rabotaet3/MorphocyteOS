@@ -56,7 +56,7 @@ internal partial class Program
             Invoke("RefreshHealthReadout");
             ((TextBlock)Field("DownloadSpeedText")).Text = ConnectionHealth.FormatRate(1_572_864);
             ((TextBlock)Field("UploadSpeedText")).Text = ConnectionHealth.FormatRate(16_384);
-            Check(((TextBlock)Field("PingText")).Text == "38 мс" && ((TextBlock)Field("StabilityText")).Text == "67%", "ping and availability show the latest measurement and successful-check fraction");
+            Check(((TextBlock)Field("PingText")).Text == "38 мс" && ((TextBlock)Field("StabilityText")).Text == "—", "ping remains independent from bandwidth and load waits for a manual measurement");
             await Task.Delay(200);
             CaptureInteraction(window, Path.Combine(scratch, "desktop-routes.png"));
             ((Button)Field("JournalTabButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));

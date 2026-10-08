@@ -12,10 +12,9 @@ internal partial class Program
         void Check(bool ok, string message) { if (!ok) throw new Exception("FAIL: " + message); count++; Console.WriteLine("PASS: " + message); }
         var history = new ConnectionHealth();
         history.Record(20); history.Record(null); history.Record(80);
-        Check(history.Count == 3 && history.SuccessCount == 2 && Math.Abs(history.Availability - 200d / 3) < .01 && history.LastDelay == 80,
-            "connection availability counts successful HTTPS samples and retains the latest delay");
+        Check(history.Count == 3 && history.LastDelay == 80, "ping retains the latest measurement without a misleading availability percentage");
         for (var i = 0; i < 20; i++) history.Record(30);
-        Check(history.Count == 20 && history.Availability == 100, "availability window drops old failures after twenty new samples");
+        Check(history.Count == 20 && history.LastDelay == 30, "ping sample count stays bounded");
         history.Clear();
         Check(history.Count == 0 && history.LastDelay is null && ConnectionHealth.FormatRate(0) == "0 Б/с" && ConnectionHealth.FormatRate(-1) == "—",
             "reset clears ping history and distinguishes measured zero traffic from unavailable data");

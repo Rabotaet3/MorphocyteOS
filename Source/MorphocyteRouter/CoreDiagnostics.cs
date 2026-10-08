@@ -65,6 +65,9 @@ internal sealed class CoreDiagnostics : IDisposable
             if (route is "DIRECT" or "REJECT") return route;
             if (!visited.Add(route)) throw new InvalidDataException("Циклический выбор VPN-групп.");
             using var proxy = await ReadJsonAsync("proxies/" + Uri.EscapeDataString(route), token);
+            var kind = Text(proxy.RootElement, "type");
+            if (kind.Equals("Direct", StringComparison.OrdinalIgnoreCase)) return "DIRECT";
+            if (kind.Equals("Reject", StringComparison.OrdinalIgnoreCase)) return "REJECT";
             var selected = Text(proxy.RootElement, "now");
             if (selected.Length == 0) return route;
             route = selected;

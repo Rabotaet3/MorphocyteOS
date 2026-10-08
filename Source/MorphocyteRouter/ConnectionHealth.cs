@@ -2,18 +2,15 @@ namespace MorphocyteRouter;
 
 internal sealed class ConnectionHealth
 {
-    private readonly Queue<int?> _samples = new();
-    internal int Count => _samples.Count;
-    internal int SuccessCount => _samples.Count(value => value.HasValue);
-    internal int? LastDelay => _samples.LastOrDefault();
-    internal double Availability => Count == 0 ? 0 : SuccessCount * 100d / Count;
+    internal int Count { get; private set; }
+    internal int? LastDelay { get; private set; }
     internal void Record(int? delay)
     {
         if (delay is < 0) throw new ArgumentOutOfRangeException(nameof(delay));
-        _samples.Enqueue(delay);
-        if (_samples.Count > 20) _samples.Dequeue();
+        LastDelay = delay;
+        Count = Math.Min(20, Count + 1);
     }
-    internal void Clear() => _samples.Clear();
+    internal void Clear() { Count = 0; LastDelay = null; }
     internal static string FormatRate(long bytesPerSecond) => bytesPerSecond switch
     {
         < 0 => "—",
