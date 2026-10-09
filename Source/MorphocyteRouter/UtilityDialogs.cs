@@ -43,7 +43,8 @@ internal static class UtilityDialogs
     public static void ShowFaq(MainWindow owner)
     {
         var body = new StackPanel { Margin = new Thickness(22, 12, 22, 18) };
-        AddFaq(body, "С чего начать?", "Ядро Mihomo поставляется рядом с приложением отдельным EXE, а нейтральный YAML-шаблон встроен. Нажми «Импорт профиля», вставь свою VLESS-ссылку или JSON Xray и создай YAML. Либо выбери готовый YAML в настройках. Чужих серверов и ключей в программе нет.");
+        AddFaq(body, "С чего начать?", "Основное ядро sing-box входит в комплект, а нейтральный YAML-шаблон встроен. Нажми «Импорт профиля», вставь свою VLESS-ссылку или JSON Xray и создай YAML. Либо выбери готовый YAML в настройках. Mihomo доступен как альтернативное ядро. Чужих серверов и ключей в программе нет.");
+        AddFaq(body, "Как включить TUN?", "Включи полный TUN и запусти VPN с правами администратора. Явные исключения DIRECT и блокировки сохраняются. Другие TUN-программы нужно остановить. Исходный YAML остаётся прежним; сложные неподдерживаемые параметры будут отклонены. Для перехода на альтернативное ядро останови VPN, выбери Mihomo в настройках и сохрани.");
         AddFaq(body, "Что делает импорт?", "Принимает HTTPS-подписку (YAML Clash/Mihomo, список VLESS или Base64), VLESS-ссылку или JSON Xray с одним VLESS-сервером. Создаёт отдельный локальный YAML с TUN. Из подписки переносятся серверы, а не чужие правила, DNS или inbounds. По умолчанию трафик идёт напрямую; через VPN идут добавленные правила. Подписка загружается по нажатию; автоматически не обновляется. Для повторного обновления используй «Обновить подписку» в настройках; правила и папки сохраняются.");
         AddFaq(body, "Как направить сайт через VPN?", "Введи домен, например example.com, выбери «Весь домен», маршрут VPN и нажми «Добавить». Затем нажми «Применить в YAML». «Весь домен» включает поддомены, «Точное имя» — только этот адрес, «По слову» — совпадение части домена.");
         AddFaq(body, "Как добавить целую программу?", "Нажми «Выбрать .exe» или «Запущенные процессы». Выбранные приложения добавляются в черновик правил; можно выбрать несколько через Ctrl/Shift. Затем нажми «Применить в YAML». Правило охватывает соединения этой программы.");
@@ -233,11 +234,28 @@ internal static class UtilityDialogs
             configValue.ToolTip = null;
         };
         importActions.Children.Add(importProfile); importActions.Children.Add(template); profile.Children.Add(importActions);
+        var corePicker = new ComboBox { Name = "CoreBackendPicker", ItemsSource = new[] { "Mihomo", "sing-box" },
+            SelectedIndex = CoreBackend.IsSingBox(selectedCore) ? 1 : 0, Margin = new Thickness(0, 9, 0, 0), IsEnabled = !coreRunning };
+        var syncingCorePicker = false;
+        void SyncCorePicker()
+        {
+            syncingCorePicker = true;
+            try { corePicker.SelectedIndex = CoreBackend.IsSingBox(selectedCore) ? 1 : 0; }
+            finally { syncingCorePicker = false; }
+        }
+        corePicker.SelectionChanged += (_, _) =>
+        {
+            if (syncingCorePicker || corePicker.SelectedIndex < 0) return;
+            // Hash and native checks run before Save commits this choice.
+            selectedCore = corePicker.SelectedIndex == 1 ? CoreBackend.BundledSingBoxPath : Path.Combine(AppContext.BaseDirectory, BundledResources.CoreFileName);
+            UpdatePath(coreValue, selectedCore);
+        };
+        profile.Children.Add(Card("ЯДРО ПОДКЛЮЧЕНИЯ", null, corePicker));
         profile.Children.Add(PathSection("Установленное ядро:", coreValue, "Выбрать ядро", () =>
         {
             var picker = new OpenFileDialog { Filter = "Приложение Windows (*.exe)|*.exe", CheckFileExists = true };
             if (File.Exists(selectedCore)) picker.InitialDirectory = Path.GetDirectoryName(selectedCore);
-            if (picker.ShowDialog(dialog) == true) { selectedCore = picker.FileName; UpdatePath(coreValue, selectedCore); }
+            if (picker.ShowDialog(dialog) == true) { selectedCore = picker.FileName; UpdatePath(coreValue, selectedCore); SyncCorePicker(); }
         }, coreRunning));
         var bundled = DialogChrome.MakeButton("Использовать ядро из комплекта", false);
         bundled.IsEnabled = !coreRunning;
@@ -247,11 +265,11 @@ internal static class UtilityDialogs
             bundled.IsEnabled = false;
             try
             {
-                selectedCore = await BundledResources.EnsureCoreAsync(lifetime.Token);
+                selectedCore = corePicker.SelectedIndex == 1 ? await CoreBackend.EnsureSingBoxAsync(lifetime.Token) : await BundledResources.EnsureCoreAsync(lifetime.Token);
                 if (!lifetime.IsCancellationRequested) UpdatePath(coreValue, selectedCore);
             }
             catch (OperationCanceledException) { }
-            catch { if (!lifetime.IsCancellationRequested) coreValue.Text = "Не удалось проверить ядро из комплекта. Убедись, что mihomo.exe лежит рядом с приложением."; }
+            catch { if (!lifetime.IsCancellationRequested) coreValue.Text = "Не удалось проверить выбранное ядро из комплекта. Распакуй все файлы рядом с приложением."; }
             finally { if (!lifetime.IsCancellationRequested) bundled.IsEnabled = true; }
         };
         profile.Children.Add(bundled);
@@ -443,6 +461,7 @@ internal static class UtilityDialogs
                 committedTheme = applied.Theme;
                 selectedConfig = applied.ConfigPath;
                 selectedCore = applied.CorePath;
+                SyncCorePicker();
                 selectedTheme = applied.Theme;
                 selectedScale = applied.InterfaceScale;
                 importedProfile = null;

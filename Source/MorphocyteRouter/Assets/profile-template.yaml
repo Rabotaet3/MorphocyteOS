@@ -10,7 +10,7 @@ find-process-mode: always
 dns:
   enable: true
   listen: 127.0.0.1:1053
-  ipv6: true
+  ipv6: false
   enhanced-mode: fake-ip
   fake-ip-range: 198.18.0.1/16
   fake-ip-filter:
@@ -27,11 +27,13 @@ dns:
     - https://dns.google/dns-query
 tun:
   enable: true
-  stack: mixed
+  stack: gvisor
+  mtu: 1280
   auto-route: true
   auto-detect-interface: true
   dns-hijack:
     - any:53
+    - tcp://any:53
 proxies: []
 proxy-groups:
   - name: VPN

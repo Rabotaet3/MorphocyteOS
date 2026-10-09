@@ -46,12 +46,13 @@ public partial class MainWindow
         var steps = new List<DiagnosticStep>();
         try
         {
-            var runtimeDocument = _runtimeConfigPath is { } runtime ? ClashConfigDocument.Load(runtime) : _document;
+            var runtimeDocument = _runtimeConfigPath is { } runtime && !CoreBackend.IsSingBox(_settings.CorePath)
+                ? ClashConfigDocument.Load(runtime) : _document;
             _lastDiagnostic = await ConnectionDiagnostic.RunAsync(_core.IsRunning, runtimeDocument, diagnostics, lifetime.Token, step =>
             {
                 if (lifetime.IsCancellationRequested || _closing) return;
                 steps.Add(step); _lastDiagnostic = steps.ToArray(); DiagnosticChanged?.Invoke();
-            });
+            }, fullTunnel: _settings.FullTunnel);
             _diagnosticStatus = "Проверка завершена · " + _diagnosticCheckedAt.ToString("HH:mm:ss");
         }
         catch (OperationCanceledException) { _diagnosticStatus = lifetime.IsCancellationRequested ? "Проверка отменена." : "Время проверки истекло."; }

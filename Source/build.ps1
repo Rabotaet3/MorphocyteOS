@@ -46,6 +46,10 @@ if (-not $SkipTests) {
 
 Run-Dotnet -Arguments @('publish', 'MorphocyteRouter/MorphocyteRouter.csproj', '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '-p:PublishSingleFile=true', '-p:DebugType=None', '-o', $OutputPath)
 Copy-Item -LiteralPath $coreSource -Destination (Join-Path $OutputPath 'mihomo.exe') -Force
+$singBoxSource = Join-Path $PSScriptRoot 'Packaging/Engine/sing-box.exe'
+if (-not (Test-Path -LiteralPath $singBoxSource) -or (Get-FileHash -LiteralPath $singBoxSource -Algorithm SHA256).Hash -ne '7BBEF1DEA9189EE12799AE834EA4B4658355DA25C47A21AD8804904C0CCD9410') {
+    throw 'Missing or modified official sing-box 1.14.2 executable.'
+}
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'release-source.json') -Destination (Join-Path $OutputPath 'release-source.json')
 foreach ($name in @('README.md')) {
     Copy-Item -LiteralPath (Join-Path $PSScriptRoot $name) -Destination (Join-Path $OutputPath $name)
@@ -57,6 +61,9 @@ foreach ($name in @('Licenses', 'ThirdPartySource')) {
     New-Item -ItemType Directory -Force -Path $destination | Out-Null
     Get-ChildItem -LiteralPath (Join-Path $PSScriptRoot "Packaging/$name") | Copy-Item -Destination $destination -Recurse -Force
 }
+$engineDestination = Join-Path $OutputPath 'ThirdPartySource/Engine'
+New-Item -ItemType Directory -Path $engineDestination -Force | Out-Null
+Copy-Item -LiteralPath $singBoxSource -Destination (Join-Path $engineDestination 'sing-box.exe')
 [xml]$project = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'MorphocyteRouter/MorphocyteRouter.csproj') -Raw
 $manifestFiles = @(Get-ChildItem -LiteralPath $OutputPath -Recurse -File | Sort-Object FullName | ForEach-Object {
     [ordered]@{

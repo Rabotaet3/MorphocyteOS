@@ -27,7 +27,7 @@ internal static class UpdatePackage
     internal const int MaximumFiles = 4096;
     private static readonly HashSet<string> RootFiles = new(StringComparer.OrdinalIgnoreCase)
     {
-        "MorphocyteOS.exe", "mihomo.exe", "release-source.json", "README.md", "LICENSE.txt", "THIRD-PARTY-NOTICES.md",
+        "MorphocyteOS.exe", "mihomo.exe", "sing-box.exe", "release-source.json", "README.md", "LICENSE.txt", "THIRD-PARTY-NOTICES.md",
         "MorphocyteOS.dll", "MorphocyteOS.deps.json", "MorphocyteOS.runtimeconfig.json", "YamlDotNet.dll"
     };
 

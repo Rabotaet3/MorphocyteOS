@@ -23,6 +23,7 @@ Thumbs.db
 **/router.log*
 **/portable.flag
 **/cache.db*
+**/.morphocyte-singbox-*.db*
 **/Profiles/
 *.bak
 *.bak-*

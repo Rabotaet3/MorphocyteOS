@@ -101,14 +101,10 @@ public sealed class ClashConfigDocument
             root.Children[new YamlScalarNode("mode")] = new YamlScalarNode("rule");
             // Explicit DIRECT / blocking exceptions remain active. A profile's old
             // catch-all is replaced, so everything else uses the VPN by default.
-            var exceptions = _allRules.Where(rule =>
-            {
-                var value = rule.Trim();
-                if (value.StartsWith("MATCH,", StringComparison.OrdinalIgnoreCase)) return false;
-                if (value.EndsWith(",no-resolve", StringComparison.OrdinalIgnoreCase)) value = value[..^11].TrimEnd();
-                var comma = value.LastIndexOf(',');
-                return comma >= 0 && value[(comma + 1)..].Trim().ToUpperInvariant() is "DIRECT" or "REJECT" or "REJECT-DROP";
-            }).Select(rule => (YamlNode)new YamlScalarNode(rule)).ToList();
+            var exceptionRoutes = ExceptionRoutes(root);
+            var exceptions = new List<YamlNode>();
+            foreach (var rule in _allRules)
+                if (ExceptionRule(rule, exceptionRoutes) is { } exception) exceptions.Add(new YamlScalarNode(exception));
             exceptions.Add(new YamlScalarNode("MATCH," + VpnRoute));
             root.Children[new YamlScalarNode("rules")] = new YamlSequenceNode(exceptions);
             // Cached selector choices cannot leave the full-tunnel path on DIRECT.
@@ -143,11 +139,19 @@ public sealed class ClashConfigDocument
                 }
             }
             else if (bypass.Contains(VpnRoute)) throw new InvalidDataException("TUN: выбран прямой маршрут или блокировка.");
+            var ipv6Disabled = string.Equals(Scalar(root, "ipv6"), "false", StringComparison.OrdinalIgnoreCase);
+            // Capture IPv6 too (including cached/literal addresses), rather than letting it
+            // escape outside the tunnel. DNS AAAA handling is a separate preference below.
             root.Children[new YamlScalarNode("ipv6")] = new YamlScalarNode("true");
             var tun = Get(root, "tun") as YamlMappingNode ?? new YamlMappingNode();
             root.Children[new YamlScalarNode("tun")] = tun;
             foreach (var key in new[] { "enable", "auto-route", "auto-detect-interface", "strict-route" })
                 tun.Children[new YamlScalarNode(key)] = new YamlScalarNode("true");
+            // The mixed Windows stack relies on firewall-sensitive system TCP handling.
+            // Use userspace TCP for the app's default stack; retain explicit system/gvisor choices.
+            if (Scalar(tun, "stack") is null or "mixed")
+                tun.Children[new YamlScalarNode("stack")] = new YamlScalarNode("gvisor");
+            if (Get(tun, "mtu") is null) tun.Add("mtu", "1280");
             // A profile's split-route/interface exclusions must not bypass full-tunnel mode.
             foreach (var key in new[] { "route-address", "route-address-set", "route-exclude-address", "route-exclude-address-set",
                 "inet4-route-address", "inet6-route-address", "inet4-route-exclude-address", "inet6-route-exclude-address",
@@ -157,14 +161,22 @@ public sealed class ClashConfigDocument
                 tun.Add("inet6-address", new YamlSequenceNode("fdfe:dcba:9876::1/126"));
             var dns = Get(root, "dns") as YamlMappingNode ?? new YamlMappingNode();
             root.Children[new YamlScalarNode("dns")] = dns;
-            foreach (var key in new[] { "enable", "ipv6", "respect-rules" })
+            foreach (var key in new[] { "enable", "respect-rules" })
                 dns.Children[new YamlScalarNode(key)] = new YamlScalarNode("true");
+            if (ipv6Disabled || Get(dns, "ipv6") is null)
+                dns.Children[new YamlScalarNode("ipv6")] = new YamlScalarNode("false");
+            // HTTP/3 DNS and rule-based DNS routing are not recommended together by Mihomo.
+            dns.Children[new YamlScalarNode("prefer-h3")] = new YamlScalarNode("false");
             // Resolving the VPN server itself needs an independent bootstrap resolver.
-            if (Get(dns, "proxy-server-nameserver") is null) dns.Add("proxy-server-nameserver", new YamlSequenceNode("1.1.1.1", "8.8.8.8"));
-            dns.Children[new YamlScalarNode("nameserver")] = new YamlSequenceNode("https://1.1.1.1/dns-query");
-            dns.Children.Remove(new YamlScalarNode("fallback"));
-            dns.Children.Remove(new YamlScalarNode("fallback-filter"));
-            dns.Children.Remove(new YamlScalarNode("nameserver-policy"));
+            EnsureBootstrapDns(dns, "default-nameserver");
+            EnsureBootstrapDns(dns, "proxy-server-nameserver");
+            var nameservers = Get(dns, "nameserver");
+            if (nameservers is null or YamlSequenceNode { Children.Count: 0 } or YamlScalarNode { Value: null or "" })
+                dns.Children[new YamlScalarNode("nameserver")] = new YamlSequenceNode("https://1.1.1.1/dns-query", "https://dns.google/dns-query");
+            else if (nameservers is YamlSequenceNode { Children.Count: 1 } single
+                && single.Children[0].ToString() is "https://1.1.1.1/dns-query" or "https://cloudflare-dns.com/dns-query")
+                single.Add("https://dns.google/dns-query");
+            // Keep custom resolvers, fallback filters and per-domain policies intact.
         }
         if (speedTestPort != 0)
         {
@@ -182,6 +194,55 @@ public sealed class ClashConfigDocument
         using var writer = new StringWriter();
         yaml.Save(writer, assignAnchors: false);
         return writer.ToString();
+    }
+
+    private static void EnsureBootstrapDns(YamlMappingNode dns, string key)
+    {
+        if (Get(dns, key) is null or YamlSequenceNode { Children.Count: 0 } or YamlScalarNode { Value: null or "" })
+            dns.Children[new YamlScalarNode(key)] = new YamlSequenceNode("1.1.1.1", "8.8.8.8");
+    }
+
+    // Only deterministic aliases are flattened: a selector that can choose between
+    // VPN and DIRECT must never be mistaken for a permanent direct exception.
+    internal static Dictionary<string, string> ExceptionRoutes(YamlMappingNode root)
+    {
+        var routes = new Dictionary<string, string>(StringComparer.Ordinal) {
+            ["DIRECT"] = "DIRECT", ["REJECT"] = "REJECT", ["REJECT-DROP"] = "REJECT-DROP"
+        };
+        if (Get(root, "proxies") is YamlSequenceNode proxies)
+            foreach (var proxy in proxies.Children.OfType<YamlMappingNode>())
+                if (Scalar(proxy, "name") is { } name && Scalar(proxy, "type") is "direct" or "reject")
+                    routes[name] = Scalar(proxy, "type") == "direct" ? "DIRECT" : "REJECT";
+        if (Get(root, "proxy-groups") is not YamlSequenceNode groups) return routes;
+        bool changed;
+        do
+        {
+            changed = false;
+            foreach (var group in groups.Children.OfType<YamlMappingNode>())
+            {
+                if (Scalar(group, "name") is not { } name || routes.ContainsKey(name)
+                    || Get(group, "use") is YamlSequenceNode { Children.Count: > 0 }
+                    || new[] { "include-all", "include-all-proxies", "include-all-providers" }.Any(key => Scalar(group, key) == "true")
+                    || Get(group, "proxies") is not YamlSequenceNode { Children.Count: > 0 } members) continue;
+                var targets = members.Children.Select(member => routes.GetValueOrDefault(member.ToString())).Distinct().ToArray();
+                if (targets is [not null]) { routes[name] = targets[0]!; changed = true; }
+            }
+        } while (changed);
+        return routes;
+    }
+
+    private static string? ExceptionRule(string rule, IReadOnlyDictionary<string, string> routes)
+    {
+        var value = rule.Trim();
+        if (value.StartsWith("MATCH,", StringComparison.OrdinalIgnoreCase)) return null;
+        var suffix = "";
+        while (value.EndsWith(",no-resolve", StringComparison.OrdinalIgnoreCase) || value.EndsWith(",src", StringComparison.OrdinalIgnoreCase))
+        {
+            var last = value.LastIndexOf(','); suffix = value[last..] + suffix; value = value[..last].TrimEnd();
+        }
+        var comma = value.LastIndexOf(',');
+        if (comma < 0 || !routes.TryGetValue(value[(comma + 1)..].Trim(), out var canonical)) return null;
+        return value[(comma + 1)..].Trim() == canonical ? rule : value[..(comma + 1)] + canonical + suffix;
     }
 
     public static ClashConfigDocument Load(string path) => new(path, File.ReadAllText(path));
@@ -232,19 +293,24 @@ public sealed class ClashConfigDocument
             if (rule.Extra.Any(char.IsControl)) throw new InvalidDataException("Недопустимые символы в правиле.");
         }
         var matched = new Dictionary<int, DomainRule>();
+        var matchedSources = new HashSet<int>();
         var additions = new List<DomainRule>();
+        var promoted = new List<DomainRule>();
+        var exceptionRoutes = ExceptionRoutes(_root);
         foreach (var rule in edited)
         {
-            var original = Rules.FirstOrDefault(old => old.SourceIndex == rule.SourceIndex && old.Kind == rule.Kind && old.Value == rule.Value && !matched.ContainsKey(old.SourceIndex))
-                ?? Rules.FirstOrDefault(old => old.Kind == rule.Kind && old.Value == rule.Value && !matched.ContainsKey(old.SourceIndex));
+            var original = Rules.FirstOrDefault(old => old.SourceIndex == rule.SourceIndex && old.Kind == rule.Kind && old.Value == rule.Value && !matchedSources.Contains(old.SourceIndex))
+                ?? Rules.FirstOrDefault(old => old.Kind == rule.Kind && old.Value == rule.Value && !matchedSources.Contains(old.SourceIndex));
             if (original is null) additions.Add(rule);
+            else if (original.Route != rule.Route && rule.Kind is "DOMAIN" or "DOMAIN-SUFFIX" or "DOMAIN-KEYWORD"
+                && exceptionRoutes.ContainsKey(rule.Route)) promoted.Add(rule);
             else matched.Add(original.SourceIndex, rule);
+            if (original is not null) matchedSources.Add(original.SourceIndex);
         }
         var managedIndices = Rules.Select(rule => rule.SourceIndex).ToHashSet();
         // Domain exceptions must be evaluated before broad PROCESS-NAME rules.
         // This makes the UI scenario "application through VPN, selected sites DIRECT" safe.
-        var priorityAdditions = additions.Where(rule => rule.Route.Equals("DIRECT", StringComparison.OrdinalIgnoreCase)
-            || rule.Route.Equals("REJECT", StringComparison.OrdinalIgnoreCase)).ToList();
+        var priorityAdditions = promoted.Concat(additions.Where(rule => exceptionRoutes.ContainsKey(rule.Route))).ToList();
         var regularAdditions = additions.Except(priorityAdditions).ToList();
         var output = new List<string>();
         var insertedPriority = false;
@@ -254,6 +320,8 @@ public sealed class ClashConfigDocument
             var raw = _allRules[i].TrimStart();
             if (!insertedPriority && (raw.StartsWith("PROCESS-NAME,", StringComparison.OrdinalIgnoreCase)
                 || raw.StartsWith("PROCESS-NAME-REGEX,", StringComparison.OrdinalIgnoreCase)
+                || raw.StartsWith("PROCESS-PATH,", StringComparison.OrdinalIgnoreCase)
+                || raw.StartsWith("PROCESS-PATH-REGEX,", StringComparison.OrdinalIgnoreCase)
                 || raw.StartsWith("MATCH,", StringComparison.OrdinalIgnoreCase)))
             {
                 output.AddRange(priorityAdditions.Select(FormatRule));

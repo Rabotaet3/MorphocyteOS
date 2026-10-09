@@ -97,6 +97,7 @@ internal partial class Program
             var oldText = File.ReadAllText(oldPath);
             var targetSettings = AppSettings.Load(Path.Combine(targetRoot, "settings.json"));
             targetSettings.ConfigPath = oldPath; targetSettings.CorePath = realCore; targetSettings.AutoCheckUpdates = false;
+            targetSettings.CoreDefaultsVersion = 1; // Explicit Mihomo choice, not the old implicit default.
             target = new MainWindow(targetSettings, Path.Combine(targetRoot, "test.log")) { ShowInTaskbar = false };
             await Ready(target);
             var importChoice = selection with { ConfigPath = oldPath, CorePath = realCore, Transfer = roundTrip };

@@ -22,14 +22,27 @@ internal partial class Program
         var code = 1;
         _ = app.Dispatcher.InvokeAsync(async () =>
         {
-            try { await Run(args[0], args.Contains("--improvements-only"), args.Contains("--visual-only"), args.Contains("--tunnel-only")); code = 0; }
+            try
+            {
+                await Run(args[0], args.Contains("--improvements-only"), args.Contains("--visual-only"), args.Contains("--tunnel-only"), args.Contains("--singbox-only"));
+                if (Array.IndexOf(args, "--validate-profile") is var profileIndex && profileIndex >= 0)
+                {
+                    var path = args[profileIndex + 1];
+                    var before = System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path));
+                    var validation = await CoreProcessManager.ValidateAsync(Path.Combine(AppContext.BaseDirectory, "sing-box.exe"), path);
+                    if (!validation.Success) throw new Exception(validation.Message);
+                    if (!before.SequenceEqual(System.Security.Cryptography.SHA256.HashData(File.ReadAllBytes(path)))) throw new Exception("Profile changed during read-only validation");
+                    Console.WriteLine("PASS: actual selected profile accepted by sing-box; file unchanged; no VPN started or profile contents logged.");
+                }
+                code = 0;
+            }
             catch (Exception ex) { Console.Error.WriteLine(ex); }
             finally { app.Dispatcher.InvokeShutdown(); }
         });
         Dispatcher.Run();
         return code;
     }
-    static async Task Run(string fakeExe, bool improvementsOnly = false, bool visualOnly = false, bool tunnelOnly = false)
+    static async Task Run(string fakeExe, bool improvementsOnly = false, bool visualOnly = false, bool tunnelOnly = false, bool singboxOnly = false)
     {
         var scratch = Path.Combine(AppContext.BaseDirectory, "integration-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(scratch);
@@ -57,9 +70,11 @@ internal partial class Program
         void Check(bool condition, string name) { if (!condition) throw new Exception("FAIL: " + name); Console.WriteLine("PASS: " + name); passed++; }
         try
         {
+            if (singboxOnly) { passed += await RunSingBoxChecks(scratch); Console.WriteLine($"TOTAL: {passed} sing-box checks passed."); return; }
             if (tunnelOnly)
             {
                 passed += await RunTunnelAndSpeedChecks(scratch, fakeExe);
+                passed += await RunRecoveryReliabilityChecks(scratch, fakeExe);
                 Console.WriteLine($"TOTAL: {passed} tunnel and speed checks passed."); return;
             }
             passed += await RunThemePolishChecks(scratch, fakeExe);
@@ -78,6 +93,8 @@ internal partial class Program
             passed += await RunRealDiagnosticsChecks(scratch);
             passed += await RunTelemetryChecks();
             passed += await RunTunnelAndSpeedChecks(scratch, fakeExe);
+            passed += await RunRecoveryReliabilityChecks(scratch, fakeExe);
+            passed += await RunSingBoxChecks(scratch);
             var workspace = (FrameworkElement)Field("Workspace");
             var busyField = typeof(MainWindow).GetField("_busy", BindingFlags.Instance | BindingFlags.NonPublic)!;
             busyField.SetValue(window, true);

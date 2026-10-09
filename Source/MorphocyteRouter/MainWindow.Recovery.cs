@@ -6,6 +6,10 @@ namespace MorphocyteRouter;
 public partial class MainWindow
 {
     private CancellationTokenSource? _recoveryLifetime;
+    private CancellationTokenSource? _deferredNetworkLifetime;
+    private readonly Queue<DateTime> _unexpectedCoreExits = new();
+    private string _physicalNetworkStamp = ReadPhysicalNetworkStamp();
+    private Func<CancellationToken, Task> _recoverySystemProbe = token => CoreDiagnostics.CheckSystemHttpsAsync(token);
     private bool _connectionRequested, _recoveringConnection, _recoveryEventsRegistered;
     private DateTime _ignoreRecoveryNetworkUntil;
     internal bool AutoReconnect => _settings.AutoReconnect;
@@ -24,13 +28,13 @@ public partial class MainWindow
     {
         Post(() =>
         {
-            if (!e.IsAvailable) { _recoveryLifetime?.Cancel(); return; }
-            if (DateTime.UtcNow >= _ignoreRecoveryNetworkUntil) QueueConnectionRecovery();
+            if (!e.IsAvailable) { _physicalNetworkStamp = "offline"; _recoveryLifetime?.Cancel(); _deferredNetworkLifetime?.Cancel(); return; }
+            ScheduleNetworkRecovery();
         });
     }
     private void NetworkAddressChanged(object? sender, EventArgs e) => Post(() =>
     {
-        if (DateTime.UtcNow >= _ignoreRecoveryNetworkUntil && NetworkInterface.GetIsNetworkAvailable()) QueueConnectionRecovery();
+        if (NetworkInterface.GetIsNetworkAvailable()) ScheduleNetworkRecovery();
     });
     private void PowerModeChanged(object sender, PowerModeChangedEventArgs e) => Post(() =>
     {
@@ -42,6 +46,77 @@ public partial class MainWindow
     {
         _connectionRequested = false;
         _recoveryLifetime?.Cancel();
+        _deferredNetworkLifetime?.Cancel();
+        _unexpectedCoreExits.Clear();
+    }
+
+    private static string ReadPhysicalNetworkStamp()
+    {
+        try
+        {
+            return string.Join("|", NetworkInterface.GetAllNetworkInterfaces()
+                .Where(adapter => adapter.OperationalStatus == OperationalStatus.Up
+                    && adapter.NetworkInterfaceType is not (NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel)
+                    && !adapter.Description.Contains("Wintun", StringComparison.OrdinalIgnoreCase)
+                    && !adapter.Name.Contains("MorphocyteTUN", StringComparison.OrdinalIgnoreCase)
+                    && !adapter.Name.Contains("mihomo", StringComparison.OrdinalIgnoreCase))
+                .Select(adapter => {
+                    var info = adapter.GetIPProperties();
+                    return adapter.Id + ":" + string.Join(",", info.UnicastAddresses.Select(item => item.Address.ToString()).Order())
+                        + ":" + string.Join(",", info.GatewayAddresses.Select(item => item.Address.ToString()).Order())
+                        + ":" + string.Join(",", info.DnsAddresses.Select(item => item.ToString()).Order());
+                }).Order());
+        }
+        catch (NetworkInformationException) { return "unavailable"; }
+    }
+
+    private void ScheduleNetworkRecovery(string? networkStamp = null)
+    {
+        var stamp = networkStamp ?? ReadPhysicalNetworkStamp();
+        if (stamp == _physicalNetworkStamp) return; // The core's own TUN notifications are not a physical network change.
+        _physicalNetworkStamp = stamp;
+        if (!_settings.AutoReconnect || _closing || _exitRequested || (!_connectionRequested && !_core.HasTrackedProcess)) return;
+        if (DateTime.UtcNow >= _ignoreRecoveryNetworkUntil && !_recoveringConnection) { QueueConnectionRecovery(); return; }
+        // Defer startup/TUN route notifications instead of discarding real network changes.
+        // Do not cancel an in-progress recovery because its own adapter emits notifications.
+        _deferredNetworkLifetime?.Cancel();
+        var lifetime = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
+        _deferredNetworkLifetime = lifetime;
+        _ = RecoverAfterNetworkSettlesAsync(lifetime);
+    }
+
+    private async Task RecoverAfterNetworkSettlesAsync(CancellationTokenSource lifetime)
+    {
+        try
+        {
+            var deadline = DateTime.UtcNow.AddMinutes(2);
+            do { await Task.Delay(500, lifetime.Token); }
+            while (DateTime.UtcNow < deadline && (DateTime.UtcNow < _ignoreRecoveryNetworkUntil || _busy || _recoveringConnection));
+            if (DateTime.UtcNow >= deadline) return;
+            if (CanReconnect && NetworkInterface.GetIsNetworkAvailable()) QueueConnectionRecovery();
+        }
+        catch (OperationCanceledException) { }
+        finally
+        {
+            if (ReferenceEquals(_deferredNetworkLifetime, lifetime)) _deferredNetworkLifetime = null;
+            lifetime.Dispose();
+        }
+    }
+
+    private void RecoverUnexpectedCoreExit()
+    {
+        if (!CanReconnect) return;
+        var now = DateTime.UtcNow;
+        while (_unexpectedCoreExits.TryPeek(out var previous) && now - previous > TimeSpan.FromMinutes(2)) _unexpectedCoreExits.Dequeue();
+        if (_unexpectedCoreExits.Count >= 3)
+        {
+            CancelConnectionIntent();
+            SetLog("Ядро несколько раз аварийно завершилось. Автовосстановление остановлено; проверь журнал.");
+            return;
+        }
+        _unexpectedCoreExits.Enqueue(now);
+        SetLog("Ядро неожиданно завершилось. Пробую восстановить работавшее подключение.");
+        QueueConnectionRecovery();
     }
 
     private void QueueConnectionRecovery()
@@ -94,11 +169,12 @@ public partial class MainWindow
             try
             {
                 using var probeDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-                probeDeadline.CancelAfter(TimeSpan.FromSeconds(12));
+                probeDeadline.CancelAfter(TimeSpan.FromSeconds(25));
                 var selected = await diagnostics.ReadSelectionAsync(route, probeDeadline.Token);
                 if (selected is "DIRECT" or "REJECT")
                 { SetLog("Восстановление остановлено: в группе VPN выбран прямой маршрут или блокировка."); return RecoveryAttemptResult.Stop; }
                 var delay = await diagnostics.CheckProxyAsync(route, probeDeadline.Token);
+                if (_settings.FullTunnel) await _recoverySystemProbe(probeDeadline.Token);
                 if (!CanReconnect) return RecoveryAttemptResult.Stop;
                 _health.Record(delay); RefreshHealthReadout();
                 SetLog("VPN отвечает после восстановления сети.");
@@ -123,7 +199,11 @@ public partial class MainWindow
             if (!_core.IsRunning) return RecoveryAttemptResult.Stop;
             _ignoreRecoveryNetworkUntil = DateTime.UtcNow.AddSeconds(15);
             if (_diagnostics is not { } restored || _document?.VpnRoute is not { } restoredRoute) return RecoveryAttemptResult.Stop;
-            var verifiedDelay = await restored.CheckProxyAsync(restoredRoute, token);
+            using var verifyDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+            verifyDeadline.CancelAfter(TimeSpan.FromSeconds(25));
+            var verifiedDelay = await restored.CheckProxyAsync(restoredRoute, verifyDeadline.Token);
+            if (_settings.FullTunnel) await _recoverySystemProbe(verifyDeadline.Token);
+            if (!CanReconnect) return RecoveryAttemptResult.Stop;
             _health.Record(verifiedDelay); RefreshHealthReadout();
             SetLog("VPN восстановлен и проверен после смены сети.");
             return RecoveryAttemptResult.Connected;

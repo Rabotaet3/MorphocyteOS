@@ -296,6 +296,24 @@ public sealed class CoreProcessManager
 
     public static async Task<(bool Success, string Message)> ValidateAsync(string executable, string configPath, CancellationToken cancellationToken = default)
     {
+        if (CoreBackend.IsSingBox(executable) && !configPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
+        {
+            var temporary = Path.Combine(Path.GetTempPath(), "morphocyte-singbox-check-" + Guid.NewGuid().ToString("N") + ".json");
+            try
+            {
+                using var api = new CoreDiagnostics();
+                var document = ClashConfigDocument.Load(configPath);
+                await File.WriteAllTextAsync(temporary, SingBoxConfig.Build(document, api.Port, api.Secret, false), cancellationToken);
+                return await ValidateAsync(executable, temporary, cancellationToken);
+            }
+            catch (InvalidDataException error) { return (false, error.Message); }
+            finally { if (File.Exists(temporary)) File.Delete(temporary); }
+        }
+        if (CoreBackend.IsSingBox(executable) && string.Equals(Path.GetFullPath(executable), CoreBackend.BundledSingBoxPath, StringComparison.OrdinalIgnoreCase))
+        {
+            try { await CoreBackend.EnsureSingBoxAsync(cancellationToken); }
+            catch (IOException error) { return (false, error.Message); }
+        }
         var bundledPath = Path.Combine(AppContext.BaseDirectory, BundledResources.CoreFileName);
         if (string.Equals(Path.GetFullPath(executable), bundledPath, StringComparison.OrdinalIgnoreCase))
         {
@@ -304,7 +322,8 @@ public sealed class CoreProcessManager
             catch (UnauthorizedAccessException error) { return (false, error.Message); }
         }
         var info = CreateStartInfo(executable, configPath);
-        info.ArgumentList.Insert(0, "-t");
+        if (CoreBackend.IsSingBox(executable)) info.ArgumentList[0] = "check";
+        else info.ArgumentList.Insert(0, "-t");
         using var process = new Process { StartInfo = info };
         process.Start();
         var stdout = process.StandardOutput.ReadToEndAsync();
@@ -315,6 +334,7 @@ public sealed class CoreProcessManager
         {
             await process.WaitForExitAsync(timeout.Token);
             var text = (await stdout + Environment.NewLine + await stderr).Trim();
+            if (CoreBackend.IsSingBox(executable)) return (process.ExitCode == 0, process.ExitCode == 0 ? "sing-box: конфигурация проверена." : "sing-box не принял конфигурацию. Проверь совместимость профиля; исходный YAML не изменён.");
             return (process.ExitCode == 0, text.Length > 4000 ? text[^4000..] : text);
         }
         catch (OperationCanceledException)
@@ -341,6 +361,13 @@ public sealed class CoreProcessManager
             StandardOutputEncoding = System.Text.Encoding.UTF8,
             StandardErrorEncoding = System.Text.Encoding.UTF8
         };
+        if (CoreBackend.IsSingBox(executable))
+        {
+            info.ArgumentList.Add("run");
+            info.ArgumentList.Add("-D"); info.ArgumentList.Add(profileDirectory);
+            info.ArgumentList.Add("-c"); info.ArgumentList.Add(fullConfigPath);
+            return info;
+        }
         // Mihomo's configuration file (-f) and data home (-d) are independent.
         // Keep providers, geodata and caches next to the selected profile instead
         // of silently sharing an unrelated user's default Mihomo home.

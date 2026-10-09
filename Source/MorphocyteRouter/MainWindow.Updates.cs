@@ -135,8 +135,10 @@ public partial class MainWindow
                 if (!await StopCoreAsync()) throw new IOException("Обновление отменено: остановка ядра не подтверждена.");
                 var protectedFiles = new List<string> { _settings.ConfigPath };
                 var bundled = Path.Combine(AppContext.BaseDirectory, BundledResources.CoreFileName);
-                if (!string.Equals(_settings.CorePath, bundled, StringComparison.OrdinalIgnoreCase) ||
-                    (File.Exists(bundled) && !UpdatePackage.Hash(bundled).Equals(BundledResources.CoreHash, StringComparison.OrdinalIgnoreCase)))
+                var bundledCore = CoreBackend.IsSingBox(_settings.CorePath) ? CoreBackend.BundledSingBoxPath : bundled;
+                var expectedCoreHash = CoreBackend.IsSingBox(_settings.CorePath) ? CoreBackend.SingBoxHash : BundledResources.CoreHash;
+                if (!string.Equals(_settings.CorePath, bundledCore, StringComparison.OrdinalIgnoreCase) ||
+                    (File.Exists(bundledCore) && !UpdatePackage.Hash(bundledCore).Equals(expectedCoreHash, StringComparison.OrdinalIgnoreCase)))
                     protectedFiles.Add(_settings.CorePath);
                 var executable = Environment.ProcessPath ?? throw new IOException("Не удалось определить файл приложения.");
                 if (!Path.GetDirectoryName(executable)!.Equals(Path.GetFullPath(AppContext.BaseDirectory).TrimEnd(Path.DirectorySeparatorChar), StringComparison.OrdinalIgnoreCase))

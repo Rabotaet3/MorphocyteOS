@@ -14,6 +14,7 @@ internal record TrafficSample(long Upload, long Download);
 
 internal sealed class CoreDiagnostics : IDisposable
 {
+    private static readonly string[] ProbeUrls = ["https://www.gstatic.com/generate_204", "https://cp.cloudflare.com/generate_204"];
     private readonly HttpClient _client;
     internal int Port { get; }
     internal string Secret { get; } = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
@@ -77,17 +78,47 @@ internal sealed class CoreDiagnostics : IDisposable
 
     internal async Task<int> CheckProxyAsync(string route, CancellationToken token)
     {
-        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-        deadline.CancelAfter(TimeSpan.FromSeconds(12));
-        using var response = await _client.GetAsync("proxies/" + Uri.EscapeDataString(route) + "/delay?timeout=8000&url=" +
-            Uri.EscapeDataString("https://www.gstatic.com/generate_204"), deadline.Token);
-        if (!response.IsSuccessStatusCode) throw new IOException("Проверочный HTTPS-запрос через VPN не прошёл. Проверь сервер и журнал.");
-        var bytes = await response.Content.ReadAsByteArrayAsync(deadline.Token);
-        if (bytes.Length > 32768) throw new IOException("Некорректный ответ проверки.");
-        using var json = JsonDocument.Parse(bytes);
-        var delay = json.RootElement.GetProperty("delay").GetInt32();
-        if (delay is < 0 or > 120000) throw new InvalidDataException("Некорректная задержка ответа ядра.");
-        return delay;
+        foreach (var url in ProbeUrls)
+        {
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+            deadline.CancelAfter(TimeSpan.FromSeconds(5));
+            try
+            {
+                using var json = await ReadJsonAsync("proxies/" + Uri.EscapeDataString(route) + "/delay?timeout=4000&url=" +
+                    Uri.EscapeDataString(url), deadline.Token, maxBytes: 32768);
+                var delay = json.RootElement.GetProperty("delay").GetInt32();
+                if (delay is < 0 or > 120000) throw new InvalidDataException("Некорректная задержка ответа ядра.");
+                return delay;
+            }
+            catch (Exception error) when (!token.IsCancellationRequested && error is HttpRequestException or OperationCanceledException) { }
+        }
+        token.ThrowIfCancellationRequested();
+        throw new IOException("Проверочные HTTPS-запросы через VPN не прошли. Проверь сервер и журнал.");
+    }
+
+    // A manual OS-path probe: no local proxy, controller secret, cookies, redirects or
+    // relaxed certificate checks. A success confirms HTTPS reachability, not that every
+    // application is routed through TUN (explicit DIRECT rules may still apply).
+    internal static async Task CheckSystemHttpsAsync(CancellationToken token, HttpMessageHandler? handler = null)
+    {
+        using var client = new HttpClient(handler ?? new SocketsHttpHandler {
+            UseProxy = false, UseCookies = false, AllowAutoRedirect = false, ConnectTimeout = TimeSpan.FromSeconds(4)
+        }) { Timeout = Timeout.InfiniteTimeSpan };
+        foreach (var url in ProbeUrls)
+        {
+            using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+            deadline.CancelAfter(TimeSpan.FromSeconds(6));
+            try
+            {
+                using var request = new HttpRequestMessage(HttpMethod.Get, url) { Version = HttpVersion.Version11,
+                    VersionPolicy = HttpVersionPolicy.RequestVersionExact };
+                using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, deadline.Token);
+                if (response.StatusCode == HttpStatusCode.NoContent) return;
+            }
+            catch (Exception error) when (!token.IsCancellationRequested && error is HttpRequestException or OperationCanceledException) { }
+        }
+        token.ThrowIfCancellationRequested();
+        throw new IOException("Системное HTTPS-подключение недоступно.");
     }
 
     internal async Task<TrafficSample> ReadTrafficAsync(CancellationToken token)
@@ -116,18 +147,18 @@ internal sealed class CoreDiagnostics : IDisposable
         }
     }
 
-    private async Task<JsonDocument> ReadJsonAsync(string path, CancellationToken token, bool allowDnsDisabled = false)
+    private async Task<JsonDocument> ReadJsonAsync(string path, CancellationToken token, bool allowDnsDisabled = false, int maxBytes = 2_097_152)
     {
         using var response = await _client.GetAsync(path, HttpCompletionOption.ResponseHeadersRead, token);
         if (!(allowDnsDisabled && response.StatusCode == HttpStatusCode.InternalServerError)) response.EnsureSuccessStatusCode();
-        if (response.Content.Headers.ContentLength is > 2_097_152) throw new IOException("Слишком большой ответ ядра.");
+        if (response.Content.Headers.ContentLength > maxBytes) throw new IOException("Слишком большой ответ ядра.");
         using var memory = new MemoryStream();
         await using var stream = await response.Content.ReadAsStreamAsync(token);
         var buffer = new byte[8192];
         int count;
         while ((count = await stream.ReadAsync(buffer, token)) > 0)
         {
-            if (memory.Length + count > 2_097_152) throw new IOException("Слишком большой ответ ядра.");
+            if (memory.Length + count > maxBytes) throw new IOException("Слишком большой ответ ядра.");
             memory.Write(buffer, 0, count);
         }
         return JsonDocument.Parse(memory.ToArray(), new JsonDocumentOptions { MaxDepth = 32 });
@@ -148,7 +179,9 @@ internal sealed class CoreDiagnostics : IDisposable
             if (destination.Length == 0) destination = Text(metadata, "destinationIP");
             var chains = connection.TryGetProperty("chains", out var chain) && chain.ValueKind == JsonValueKind.Array
                 ? string.Join(" ← ", chain.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String).Select(item => item.GetString())) : "";
-            output.Add(new ConnectionActivity(Text(metadata, "process"), destination + ":" + Text(metadata, "destinationPort"),
+            var process = Text(metadata, "process");
+            if (process.Length == 0) process = Path.GetFileName(Text(metadata, "processPath"));
+            output.Add(new ConnectionActivity(process, destination + ":" + Text(metadata, "destinationPort"),
                 Text(metadata, "network").ToUpperInvariant(), Text(connection, "rule") + " " + Text(connection, "rulePayload"), chains));
         }
         return output;

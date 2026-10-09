@@ -106,7 +106,7 @@ public partial class MainWindow
             if (_capacityServer.Length > 0 && _capacityServer != server)
             { _downloadCapacity = null; _capacityServer = ""; RefreshBandwidthReadout(); }
             SetLog("Замер скорости через VPN: тестовая загрузка Cloudflare, до 64 МБ / 15 секунд.");
-            using var test = new VpnSpeedTest(_speedTestPort, diagnostics.Secret);
+            using var test = new VpnSpeedTest(_speedTestPort, diagnostics.Secret, socksProxy: CoreBackend.IsSingBox(_settings.CorePath));
             transferStarted = true;
             var result = await test.MeasureAsync(lifetime.Token);
             var after = await diagnostics.ReadSelectionAsync(route, lifetime.Token);

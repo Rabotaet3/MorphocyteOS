@@ -27,6 +27,8 @@ public sealed class AppSettings
 {
     public string ConfigPath { get; set; } = "";
     public string CorePath { get; set; } = "";
+    // Migrate the old bundled default once; subsequent manual choices are kept.
+    public int CoreDefaultsVersion { get; set; }
     public string PreferredRoute { get; set; } = "";
     public string Theme { get; set; } = "Тёмная морфоцитная";
     public double InterfaceScale { get; set; } = 1;

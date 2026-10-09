@@ -15,12 +15,12 @@ internal sealed class VpnSpeedTest : IDisposable
     internal const int MaxBytes = BytesPerStream * Streams;
     private readonly HttpClient _client;
 
-    internal VpnSpeedTest(int port, string password, HttpMessageHandler? handler = null)
+    internal VpnSpeedTest(int port, string password, HttpMessageHandler? handler = null, bool socksProxy = false)
     {
         if (port is < 1 or > 65535 || string.IsNullOrWhiteSpace(password)) throw new ArgumentException("Нет локального подключения для замера.");
         _client = new HttpClient(handler ?? new SocketsHttpHandler {
             UseProxy = true,
-            Proxy = new WebProxy($"http://127.0.0.1:{port}") { Credentials = new NetworkCredential("morphocyte", password) },
+            Proxy = new WebProxy($"{(socksProxy ? "socks5" : "http")}://127.0.0.1:{port}") { Credentials = new NetworkCredential("morphocyte", password) },
             AllowAutoRedirect = false, UseCookies = false, AutomaticDecompression = DecompressionMethods.None,
             MaxConnectionsPerServer = Streams, ConnectTimeout = TimeSpan.FromSeconds(8)
         }) { Timeout = Timeout.InfiniteTimeSpan };

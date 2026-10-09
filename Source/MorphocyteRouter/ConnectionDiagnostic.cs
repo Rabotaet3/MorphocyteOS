@@ -13,7 +13,8 @@ internal static class ConnectionDiagnostic
 {
     internal static async Task<IReadOnlyList<DiagnosticStep>> RunAsync(bool running, ClashConfigDocument? document,
         CoreDiagnostics? diagnostics, CancellationToken token, Action<DiagnosticStep>? progress = null,
-        Func<string, int, CancellationToken, Task>? connect = null)
+        Func<string, int, CancellationToken, Task>? connect = null, bool fullTunnel = false,
+        Func<CancellationToken, Task>? systemConnect = null)
     {
         using var overallDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         overallDeadline.CancelAfter(TimeSpan.FromSeconds(45)); token = overallDeadline.Token;
@@ -66,6 +67,16 @@ internal static class ConnectionDiagnostic
         }
         catch (Exception) when (!token.IsCancellationRequested)
         { Add("HTTPS через VPN", "Запрос не прошёл. Проверь сервер, настройки подключения и журнал.", DiagnosticState.Failure); }
+        if (fullTunnel)
+        {
+            try
+            {
+                await (systemConnect is null ? CoreDiagnostics.CheckSystemHttpsAsync(token) : systemConnect(token));
+                Add("Системное подключение", "HTTPS через системную сеть доступен. Проверка выполнена без локального прокси.", DiagnosticState.Success);
+            }
+            catch (Exception) when (!token.IsCancellationRequested)
+            { Add("Системное подключение", "HTTPS через системную сеть не прошёл. Проверь DNS, маршруты и другие запущенные VPN.", DiagnosticState.Failure); }
+        }
         token.ThrowIfCancellationRequested();
         return results;
     }

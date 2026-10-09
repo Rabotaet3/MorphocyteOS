@@ -29,6 +29,7 @@ if (config.Contains("morphocyte-fake-api: true"))
                     var request = await reader.ReadLineAsync() ?? "";
                     while (!string.IsNullOrEmpty(await reader.ReadLineAsync())) { }
                     var body = request.Contains("/version ") ? "{\"version\":\"fixture\"}"
+                        : request.Contains("/delay?") ? "{\"delay\":42}"
                         : request.Contains("/connections ") ? "{\"connections\":null}"
                         : request.Contains("/traffic ") ? "{\"up\":0,\"down\":0}\n"
                         : request.Contains("/proxies/VPN ") ? "{\"type\":\"Selector\",\"now\":\"Server\"}"

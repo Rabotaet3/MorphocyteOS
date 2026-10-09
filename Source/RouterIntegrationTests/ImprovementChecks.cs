@@ -125,6 +125,32 @@ internal partial class Program
         var results = await ConnectionDiagnostic.RunAsync(true, ClashConfigDocument.Load(path), api, default,
             connect: (host, port, token) => { endpointChecked = host == "192.0.2.20" && port == 1080; return Task.CompletedTask; });
         Check(endpointChecked && results.Count == 5 && results[^1].Result.Contains("42 мс"), "staged diagnostics checks the selected server, core DNS and HTTPS through VPN");
+        var systemChecked = false;
+        var systemResults = await ConnectionDiagnostic.RunAsync(true, ClashConfigDocument.Load(path), api, default,
+            connect: (_, _, _) => Task.CompletedTask, fullTunnel: true,
+            systemConnect: _ => { systemChecked = true; return Task.CompletedTask; });
+        Check(systemChecked && systemResults.Count == 6 && systemResults[^1].Name == "Системное подключение"
+            && systemResults[^1].State == DiagnosticState.Success, "manual full-TUN diagnostics additionally checks the OS network path rather than only the core proxy API");
+        var brokenSystem = await ConnectionDiagnostic.RunAsync(true, ClashConfigDocument.Load(path), api, default,
+            connect: (_, _, _) => Task.CompletedTask, fullTunnel: true,
+            systemConnect: _ => Task.FromException(new IOException("private-probe-detail")));
+        Check(brokenSystem[^2].State == DiagnosticState.Success && brokenSystem[^1].State == DiagnosticState.Failure
+            && !ConnectionDiagnostic.Report(brokenSystem, true).Contains("private-probe-detail"), "working core with a broken OS path produces a distinct safe TUN diagnostic failure");
+        var probeAttempts = 0;
+        await CoreDiagnostics.CheckSystemHttpsAsync(default, new DiagnosticHandler(request => {
+            Check(request.RequestUri!.Scheme == "https" && request.Headers.Authorization is null && request.Headers.Count() == 0
+                && request.Version == HttpVersion.Version11, "OS probe sends no credentials or cookies and does not depend on UDP/QUIC");
+            probeAttempts++; return new(probeAttempts == 1 ? HttpStatusCode.Redirect : HttpStatusCode.NoContent);
+        }));
+        Check(probeAttempts == 2, "OS probe rejects redirects and tries an independent endpoint");
+        try { await CoreDiagnostics.CheckSystemHttpsAsync(default, new DiagnosticHandler(_ => new(HttpStatusCode.OK))); throw new Exception("Captive portal accepted"); }
+        catch (IOException) { Check(true, "OS probe does not treat an arbitrary login/HTML page as working HTTPS"); }
+        var proxyAttempts = 0;
+        using var fallbackApi = new CoreDiagnostics(new DiagnosticHandler(request => {
+            proxyAttempts++; return new(proxyAttempts == 1 ? HttpStatusCode.ServiceUnavailable : HttpStatusCode.OK)
+                { Content = new StringContent("{\"delay\":51}") };
+        }));
+        Check(await fallbackApi.CheckProxyAsync("VPN", default) == 51 && proxyAttempts == 2, "one unavailable test website no longer marks a working VPN as disconnected");
         var report = ConnectionDiagnostic.Report(results, true);
         Check(!report.Contains("fixture-secret") && !report.Contains(secretUrl) && !report.Contains("192.0.2.20") && !report.Contains("Alpha"),
             "copied diagnostic report excludes credentials, subscription URLs, server addresses and labels");

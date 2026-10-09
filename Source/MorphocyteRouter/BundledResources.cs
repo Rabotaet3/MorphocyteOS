@@ -38,9 +38,12 @@ internal static class BundledResources
         var bundledPath = Path.Combine(AppContext.BaseDirectory, CoreFileName);
         var legacyBundledPath = Path.Combine(settings.StorageDirectory, "Engine", "mihomo-" + CoreVersion, CoreFileName);
         if (string.IsNullOrWhiteSpace(settings.CorePath) || !File.Exists(settings.CorePath)
-            || string.Equals(Path.GetFullPath(settings.CorePath), bundledPath, StringComparison.OrdinalIgnoreCase)
-            || string.Equals(Path.GetFullPath(settings.CorePath), legacyBundledPath, StringComparison.OrdinalIgnoreCase))
-            settings.CorePath = bundledPath;
+            || settings.CoreDefaultsVersion < 1 && (
+                string.Equals(Path.GetFullPath(settings.CorePath), bundledPath, StringComparison.OrdinalIgnoreCase)
+                || string.Equals(Path.GetFullPath(settings.CorePath), legacyBundledPath, StringComparison.OrdinalIgnoreCase))
+                && await HasExpectedHashAsync(settings.CorePath, token))
+            settings.CorePath = CoreBackend.BundledSingBoxPath;
+        settings.CoreDefaultsVersion = 1;
         if (string.IsNullOrWhiteSpace(settings.ConfigPath))
         {
             var path = Path.Combine(settings.StorageDirectory, "Profiles", "default.yaml");

@@ -30,7 +30,30 @@ internal partial class Program
         Check(!tun.Children.ContainsKey(new YamlScalarNode("route-exclude-address")) && !tun.Children.ContainsKey(new YamlScalarNode("exclude-interface")), "profile split-route exclusions cannot bypass full tunnel");
         Check(Value(root, "ipv6").ToString() == "true" && Value(tun, "inet6-address") is YamlSequenceNode && ((YamlSequenceNode)Value(tun, "dns-hijack")).Children.Count == 2, "full tunnel configures IPv6 and TCP/UDP DNS interception");
         var dns = (YamlMappingNode)Value(root, "dns");
-        Check(Value(dns, "respect-rules").ToString() == "true" && Value(dns, "proxy-server-nameserver") is YamlSequenceNode && !dns.Children.ContainsKey(new YamlScalarNode("nameserver-policy")), "normal DNS follows VPN while server bootstrap remains available");
+        Check(Value(dns, "respect-rules").ToString() == "true" && Value(dns, "proxy-server-nameserver") is YamlSequenceNode
+            && dns.Children.ContainsKey(new YamlScalarNode("nameserver-policy")), "normal DNS follows routing rules while server bootstrap and custom domain policies are retained");
+        Check(((YamlSequenceNode)Value(dns, "nameserver")).Children.Select(node => node.ToString()).SequenceEqual(
+            new[] { "https://1.1.1.1/dns-query", "https://dns.google/dns-query" }), "single default resolver gains an independent encrypted resolver without plaintext fallback");
+        Check(Value(dns, "ipv6").ToString() == "false" && Value(dns, "prefer-h3").ToString() == "false",
+            "full tunnel does not re-enable DNS IPv6 against a disabled profile or use HTTP3 for rule-routed DNS");
+        Check(Value(tun, "mtu").ToString() == "1280" && Value(tun, "stack").ToString() == "gvisor", "default full TUN uses a conservative MTU and firewall-independent userspace TCP");
+        var customText = original.Replace(" auto-route: false", " auto-route: false\n stack: system\n mtu: 1400")
+            .Replace(" nameserver: [https://1.1.1.1/dns-query]", " nameserver: [https://resolver.example/dns-query]\n fallback: [tls://9.9.9.9]\n fallback-filter: {geoip: false}");
+        var custom = Root(ClashConfigDocument.Parse(path, customText).BuildRuntimeText(api.Port, api.Secret, true));
+        var customDns = (YamlMappingNode)Value(custom, "dns"); var customTun = (YamlMappingNode)Value(custom, "tun");
+        Check(Value(customDns, "nameserver").ToString().Contains("resolver.example") && customDns.Children.ContainsKey(new YamlScalarNode("fallback"))
+            && customDns.Children.ContainsKey(new YamlScalarNode("fallback-filter")), "TUN keeps custom DNS servers, fallback and filtering rather than replacing a user's network configuration");
+        Check(Value(customTun, "mtu").ToString() == "1400" && Value(customTun, "stack").ToString() == "system", "explicit custom MTU and non-default stack are not overwritten");
+        var emptyDns = (YamlMappingNode)Value(Root(ClashConfigDocument.Parse(path, original.Replace(" nameserver: [https://1.1.1.1/dns-query]",
+            " nameserver: []\n default-nameserver: []\n proxy-server-nameserver: []")).BuildRuntimeText(api.Port, api.Secret, true)), "dns");
+        Check(new[] { "nameserver", "default-nameserver", "proxy-server-nameserver" }.All(key => Value(emptyDns, key) is YamlSequenceNode { Children.Count: 2 }),
+            "empty resolver lists gain usable defaults and cannot cause bootstrap recursion or validation failure");
+        var dnsIpv6 = (YamlMappingNode)Value(Root(ClashConfigDocument.Parse(path, original.Replace("ipv6: false", "ipv6: true")
+            .Replace(" enable: true\n nameserver:", " enable: true\n ipv6: true\n nameserver:")).BuildRuntimeText(api.Port, api.Secret, true)), "dns");
+        Check(Value(dnsIpv6, "ipv6").ToString() == "true", "an explicitly enabled IPv6 DNS profile remains enabled");
+        var mixed = (YamlMappingNode)Value(Root(ClashConfigDocument.Parse(path, original.Replace(" auto-route: false", " auto-route: false\n stack: mixed"))
+            .BuildRuntimeText(api.Port, api.Secret, true)), "tun");
+        Check(Value(mixed, "stack").ToString() == "gvisor", "existing default mixed-stack profiles use userspace TCP in full TUN");
         var group = (YamlMappingNode)((YamlSequenceNode)Value(root, "proxy-groups")).Children.Single();
         Check(((YamlSequenceNode)Value(group, "proxies")).Children.Single().ToString() == "Server", "full-tunnel groups do not retain cached direct/blocking choices");
         var listeners = (YamlSequenceNode)Value(root, "listeners");
@@ -56,6 +79,15 @@ internal partial class Program
         try { document.BuildRuntimeText(api.Port, api.Secret, false, api.Port); throw new Exception("Port collision accepted"); }
         catch (ArgumentException) { Check(true, "speed listener cannot reuse the controller port"); }
         var runtime = Path.Combine(scratch, "full-tunnel-runtime.yaml");
+        var aliasText = original.Replace("proxy-groups:", " - {name: Bypass, type: direct}\nproxy-groups:\n - {name: DirectGroup, type: select, proxies: [Bypass]}\n - {name: BlockGroup, type: select, proxies: [REJECT]}\n")
+            .Replace(" - MATCH,DIRECT", " - DOMAIN,alias-direct.example,Bypass\n - DOMAIN,group-direct.example,DirectGroup\n - DOMAIN,group-block.example,BlockGroup\n - MATCH,DIRECT");
+        var aliasRuntime = ClashConfigDocument.Parse(path, aliasText).BuildRuntimeText(api.Port, api.Secret, true);
+        var aliasRules = ((YamlSequenceNode)Value(Root(aliasRuntime), "rules")).Children.Select(node => node.ToString()).ToArray();
+        Check(aliasRules.Contains("DOMAIN,alias-direct.example,DIRECT") && aliasRules.Contains("DOMAIN,group-direct.example,DIRECT")
+            && aliasRules.Contains("DOMAIN,group-block.example,REJECT"), "full TUN retains deterministic direct and blocking aliases, including nested selector groups");
+        File.WriteAllText(runtime, aliasRuntime);
+        Check((await CoreProcessManager.ValidateAsync(Path.Combine(AppContext.BaseDirectory, "mihomo.exe"), runtime, default)).Success,
+            "real Mihomo validates full TUN with preserved custom exception aliases");
         File.WriteAllText(runtime, full);
         var validation = await CoreProcessManager.ValidateAsync(Path.Combine(AppContext.BaseDirectory, "mihomo.exe"), runtime, default);
         Check(validation.Success, "bundled real Mihomo accepts full-tunnel and authenticated speed-listener YAML without starting VPN");
@@ -101,6 +133,7 @@ internal partial class Program
             Check(((CheckBox)Field("FullTunnelCheck")).IsChecked == true && !((Button)Field("SpeedTestButton")).IsEnabled && Field("_speedTestLifetime") is null, "TUN controls reflect saved preference and never start speed tests automatically");
             window.UpdateLayout();
             var toggle = (CheckBox)Field("FullTunnelCheck");
+            Check(toggle.ToolTip is null, "TUN toggle has no explanatory hover popup");
             var tools = (FrameworkElement)Field("SidebarTools");
             var toggleTop = toggle.TranslatePoint(new Point(), window).Y;
             Check(toggleTop >= 0 && toggleTop + toggle.ActualHeight <= tools.TranslatePoint(new Point(), window).Y,

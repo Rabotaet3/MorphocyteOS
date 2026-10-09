@@ -168,6 +168,18 @@ var exceptionRules = ReadRules(document.BuildText(withException));
 Check(Array.IndexOf(exceptionRules, "DOMAIN-SUFFIX,outside.example,DIRECT") < Array.IndexOf(exceptionRules, "PROCESS-NAME,application.exe,VPN NODE"),
     "new direct exception inserted before broad process rule");
 var temporarilyDisabled = document.Rules.Select(rule => rule.Copy()).ToList();
+var orderedProfile = ClashConfigDocument.Parse(path, "proxies: [{name: Node, type: socks5, server: 127.0.0.1, port: 9999}]\nproxy-groups: [{name: VPN, type: select, proxies: [Node]}]\ntun: {enable: true}\nrules:\n - PROCESS-NAME,SampleBrowser.exe,VPN\n - DOMAIN-SUFFIX,changed.example,VPN\n - MATCH,DIRECT\n");
+foreach (var route in new[] { "DIRECT", "REJECT", "REJECT-DROP" })
+{
+    var editedRules = orderedProfile.Rules.Select(rule => rule.Copy()).ToList(); editedRules[1].Route = route;
+    var ordered = ReadRules(orderedProfile.BuildText(editedRules));
+    Check(ordered[0] == "DOMAIN-SUFFIX,changed.example," + route && ordered[1].StartsWith("PROCESS-NAME")
+        && ordered.Length == 3, "changed existing domain exception gains priority without duplicates: " + route);
+    var roundtrip = ClashConfigDocument.Parse(path, orderedProfile.BuildText(editedRules));
+    Check(ReadRules(roundtrip.BuildText(roundtrip.Rules)).SequenceEqual(ordered), "promoted exception order remains stable on later saves");
+}
+Check(ReadRules(orderedProfile.BuildText(orderedProfile.Rules)).SequenceEqual(new[] { "PROCESS-NAME,SampleBrowser.exe,VPN", "DOMAIN-SUFFIX,changed.example,VPN", "MATCH,DIRECT" }),
+    "unmodified existing routing order is not rewritten");
 temporarilyDisabled[0].Enabled = false;
 Check(!ReadRules(document.BuildText(temporarilyDisabled)).Contains("DOMAIN-SUFFIX,example.com,DIRECT"),
     "disabled rule omitted from applied YAML while UI state can retain it");

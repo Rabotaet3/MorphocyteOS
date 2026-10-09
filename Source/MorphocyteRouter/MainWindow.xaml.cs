@@ -97,6 +97,7 @@ public partial class MainWindow : Window
             SetStatus("ЯДРО ОСТАНОВЛЕНО", "Смотри журнал событий", "#FFD166");
             ResetDiagnostics();
             UpdateControls();
+            RecoverUnexpectedCoreExit();
         });
         _core.StartupFailed += message => Post(() =>
         {
@@ -386,7 +387,7 @@ public partial class MainWindow : Window
         var startToken = _recoveringConnection && _recoveryLifetime is not null ? _recoveryLifetime.Token : _lifetime.Token;
         if (_closing) return;
         if (_core.IsRunning) return;
-        if (!File.Exists(_settings.CorePath)) throw new FileNotFoundException("Выбери ядро Mihomo в настройках.");
+        if (!File.Exists(_settings.CorePath)) throw new FileNotFoundException("Выбери ядро в настройках.");
         if (!File.Exists(_settings.ConfigPath)) throw new FileNotFoundException("Выбери YAML-конфигурацию.");
         if (_dirty && applyDraft) await ApplyChangesAsync(restart: false);
         startToken.ThrowIfCancellationRequested();
@@ -412,12 +413,25 @@ public partial class MainWindow : Window
             _speedTestPort = FreeLoopbackPort(_diagnostics.Port);
             var runtimeDirectory = Path.Combine(_settings.StorageDirectory, ".runtime");
             Directory.CreateDirectory(runtimeDirectory);
-            _runtimeConfigPath = Path.Combine(runtimeDirectory, "active-" + Guid.NewGuid().ToString("N") + ".yaml");
-            await File.WriteAllTextAsync(_runtimeConfigPath, actual.BuildRuntimeText(_diagnostics.Port, _diagnostics.Secret, _settings.FullTunnel, _speedTestPort), new UTF8Encoding(false), startToken);
+            _runtimeConfigPath = Path.Combine(runtimeDirectory, "active-" + Guid.NewGuid().ToString("N") + (CoreBackend.IsSingBox(_settings.CorePath) ? ".json" : ".yaml"));
+            var selectedServer = _settings.ProfileSubscriptions.GetValueOrDefault(_settings.ConfigPath)?.SelectedServer;
+            await File.WriteAllTextAsync(_runtimeConfigPath, CoreBackend.RuntimeText(_settings.CorePath, actual, _diagnostics, _settings.FullTunnel, _speedTestPort, selectedServer), new UTF8Encoding(false), startToken);
             var runtimeCheck = await CoreProcessManager.ValidateAsync(_settings.CorePath, _runtimeConfigPath, startToken);
             if (!runtimeCheck.Success) throw new InvalidDataException(runtimeCheck.Message);
             await _core.StartAsync(CoreProcessManager.CreateStartInfo(_settings.CorePath, _runtimeConfigPath,
                 Path.GetDirectoryName(_settings.ConfigPath)), startToken);
+            if (CoreBackend.IsSingBox(_settings.CorePath))
+            {
+                // A live process alone does not mean its TUN / API is ready.
+                using var ready = CancellationTokenSource.CreateLinkedTokenSource(startToken);
+                ready.CancelAfter(TimeSpan.FromSeconds(8));
+                while (true)
+                {
+                    ready.Token.ThrowIfCancellationRequested();
+                    try { await _diagnostics.ReadVersionAsync(ready.Token); break; }
+                    catch (System.Net.Http.HttpRequestException) { await Task.Delay(150, ready.Token); }
+                }
+            }
             if (_settings.FullTunnel && actual.VpnRoute is { } route)
             {
                 var selected = await _diagnostics.ReadSelectionAsync(route, startToken);
@@ -439,7 +453,7 @@ public partial class MainWindow : Window
         }
         catch
         {
-            if (_settings.FullTunnel && _core.HasTrackedProcess) await StopCoreAsync();
+            if ((_settings.FullTunnel || CoreBackend.IsSingBox(_settings.CorePath)) && _core.HasTrackedProcess) await StopCoreAsync();
             if (!_core.HasTrackedProcess) ResetDiagnostics();
             SetStatus("ОШИБКА ЗАПУСКА", _core.IsRunning ? "Ядро требует остановки" : "Ядро не запущено", "#FF6B8A");
             throw;
@@ -448,6 +462,14 @@ public partial class MainWindow : Window
 
     private async Task<bool> ConfirmAndStopOtherMihomoAsync()
     {
+        // Different TUN engines must not compete for the machine's default route.
+        var otherEngine = Path.Combine(AppContext.BaseDirectory, CoreBackend.IsSingBox(_settings.CorePath) ? "mihomo.exe" : "sing-box.exe");
+        var recognizedEngine = CoreBackend.IsSingBox(_settings.CorePath) || Path.GetFileNameWithoutExtension(_settings.CorePath).Equals("mihomo", StringComparison.OrdinalIgnoreCase);
+        if (recognizedEngine && CoreProcessManager.FindOtherInstances(otherEngine).Count > 0)
+        {
+            UtilityDialogs.ShowNotice(this, "ДРУГОЕ VPN-ЯДРО РАБОТАЕТ", "Сначала останови VPN в другом приложении или экземпляре MorphocyteOS. Mihomo и sing-box не должны одновременно управлять TUN. Чужие процессы не остановлены.");
+            return false;
+        }
         for (var attempt = 0; attempt < 2; attempt++)
         {
             var instances = CoreProcessManager.FindOtherInstances(_settings.CorePath);
@@ -461,7 +483,7 @@ public partial class MainWindow : Window
                 var ids = string.Join(", ", unverified.Select(instance => instance.ProcessId));
                 SetStatus("ПРОВЕРКА ЯДРА", "Найден процесс, чей путь нельзя проверить", "#FFD166");
                 SetLog($"Ядро не запущено: путь процесса Mihomo PID {ids} недоступен; он не был остановлен.");
-                UtilityDialogs.ShowNotice(this, "НЕ УДАЛОСЬ ПРОВЕРИТЬ MIHOMO",
+                UtilityDialogs.ShowNotice(this, "НЕ УДАЛОСЬ ПРОВЕРИТЬ ЯДРО",
                     $"Найден процесс с именем «{Path.GetFileName(_settings.CorePath)}», но Windows не разрешила проверить его путь (PID: {ids}).\n\nЧтобы не завершить посторонний процесс и не оставить TUN в неопределённом состоянии, новое ядро не запущено. Закрой этот процесс вручную или запусти программу с правами, позволяющими проверить его.");
                 SetStatus("VPN ВЫКЛЮЧЕН", "Ядро не запускалось", "#667A74");
                 return false;
@@ -469,7 +491,7 @@ public partial class MainWindow : Window
 
             var processList = string.Join(Environment.NewLine, instances.Select(instance =>
                 $"PID {instance.ProcessId} — {instance.ExecutablePath}"));
-            var accepted = UtilityDialogs.ShowConfirm(this, "УЖЕ ЗАПУЩЕНО ЯДРО MIHOMO",
+            var accepted = UtilityDialogs.ShowConfirm(this, "УЖЕ ЗАПУЩЕНО VPN-ЯДРО",
                 $"Перед запуском найдены другие процессы «{Path.GetFileName(_settings.CorePath)}» — в том числе копии из других папок:\n\n{processList}\n\nОни могут удерживать порты или TUN-интерфейс и оставлять старые правила. Остановить только перечисленные процессы и продолжить? Соединение на короткое время прервётся.",
                 "ОСТАНОВИТЬ И ПРОДОЛЖИТЬ", "ОТМЕНА");
             if (!accepted)
@@ -946,9 +968,14 @@ public partial class MainWindow : Window
             {
                 if (_core.HasTrackedProcess) throw new InvalidOperationException("Перед сменой ядра останови VPN.");
                 if (!File.Exists(choice.CorePath)) throw new FileNotFoundException("Выбранный файл ядра не найден.");
+                if (CoreBackend.IsSingBox(choice.CorePath) && choice.Imported is null && choice.Transfer is null && File.Exists(choice.ConfigPath))
+                {
+                    var compatibility = await CoreProcessManager.ValidateAsync(choice.CorePath, choice.ConfigPath, _lifetime.Token);
+                    if (!compatibility.Success) throw new InvalidDataException(compatibility.Message);
+                }
                 _settings.CorePath = Path.GetFullPath(choice.CorePath);
                 await SaveSettingsAsync();
-                SetLog("Путь к ядру Mihomo сохранён.");
+                SetLog("Выбрано ядро: " + CoreBackend.Name(_settings.CorePath) + ".");
             }
             if (choice.Transfer is { } package) await ImportConfigurationAsync(package, transferredPath!);
             else if (choice.Imported is { } imported) await ImportProfileAsync(imported);
