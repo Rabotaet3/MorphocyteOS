@@ -23,7 +23,7 @@ internal static class SingBoxDns
     }
 
     internal static Dictionary<string, object> Build(YamlMappingNode root, string vpn, string tunTag,
-        Func<string, string> tag, IReadOnlyList<Dictionary<string, object>> directDomains)
+        Func<string, string> tag, IReadOnlyList<Dictionary<string, object>> domainRoutes, int bootstrapPort, int directPort)
     {
         var dns = Get(root, "dns") as YamlMappingNode ?? new YamlMappingNode();
         // These settings cannot safely be approximated by a plain resolver race.
@@ -34,10 +34,17 @@ internal static class SingBoxDns
         var servers = new List<Dictionary<string, object>>();
         var rules = new List<Dictionary<string, object>>();
         var bootstrap = tag("bootstrap");
+        var directResolver = tag("direct-resolver");
         var bootstrapEndpoints = Endpoints(Get(dns, "proxy-server-nameserver") ?? Get(dns, "default-nameserver"), "proxy-server-nameserver", "1.1.1.1", "8.8.8.8");
         // Numeric bootstrap endpoints cannot recursively depend on the VPN server's hostname.
-        for (var i = 0; i < bootstrapEndpoints.Length; i++)
-            servers.Add(Server(bootstrapEndpoints[i], i == 0 ? bootstrap : tag("bootstrap-" + i), null, bootstrap, true));
+        var bootstrapTargets = bootstrapEndpoints.Select((endpoint, index) => {
+            var serverTag = tag("bootstrap-upstream-" + index);
+            servers.Add(Server(endpoint, serverTag, null, bootstrap, true)); return serverTag;
+        }).ToArray();
+        // Only DNS packets from these loopback listeners can enter the resolver
+        // races. No proxy credentials or arbitrary forwarding are exposed.
+        servers.Add(Obj(("type", "udp"), ("tag", bootstrap), ("server", "127.0.0.1"), ("server_port", bootstrapPort), ("inet4_bind_address", "127.0.0.1")));
+        servers.Add(Obj(("type", "udp"), ("tag", directResolver), ("server", "127.0.0.1"), ("server_port", directPort), ("inet4_bind_address", "127.0.0.1")));
 
         string[] AddServers(string key, string[] endpoints, string? detour)
         {
@@ -72,6 +79,8 @@ internal static class SingBoxDns
         var remote = AddServers("remote", remoteEndpoints, vpn);
         var direct = AddServers("direct", Endpoints(Get(dns, "direct-nameserver"), "direct-nameserver", bootstrapEndpoints), null);
         if (Text(dns, "ipv6") == "false") rules.Add(Obj(("query_type", new[] { "AAAA" }), ("action", "predefined"), ("rcode", "NOERROR")));
+        Resolve(Obj(("inbound", new[] { tag("bootstrap-in") })), bootstrapTargets);
+        Resolve(Obj(("inbound", new[] { tag("direct-dns-in") })), direct);
         if (Get(dns, "nameserver-policy") is YamlMappingNode policies)
         {
             var index = 0;
@@ -84,7 +93,6 @@ internal static class SingBoxDns
                 Resolve(Obj((suffix ? "domain_suffix" : "domain", new[] { domain })), AddServers("policy-" + index++, Endpoints(policy.Value, "nameserver-policy"), vpn));
             }
         }
-        foreach (var match in directDomains) Resolve(match, direct);
         Resolve(Obj(("domain_suffix", new[] { ".lan", ".local" })), direct);
         var fake = tag("fakeip");
         servers.Add(Obj(("type", "fakeip"), ("tag", fake), ("inet4_range", "198.18.0.0/16"), ("inet6_range", "fc00::/18")));
@@ -97,6 +105,18 @@ internal static class SingBoxDns
             Resolve(Obj((suffix ? "domain_suffix" : "domain", new[] { domain })), remote);
         }
         rules.Add(Obj(("inbound", new[] { tunTag }), ("query_type", new[] { "A", "AAAA" }), ("action", "route"), ("server", fake)));
+        // DNS emitted by svchost cannot reliably identify the originating browser.
+        // Keep normal TUN queries as FakeIP; the actual connection rule then picks
+        // VPN (server-side resolution) or DIRECT (the direct resolver race).
+        // Non-TUN lookups follow the same ordered domain rules as connection routing.
+        foreach (var route in domainRoutes)
+        {
+            var match = route.Where(field => field.Key != "outbound").ToDictionary(field => field.Key, field => field.Value);
+            var target = (string)route["outbound"];
+            // Connection blocking belongs to the ordered connection rules. An
+            // earlier IP/process exception may still need this domain resolved.
+            Resolve(match, target == "DIRECT" ? direct : remote);
+        }
         Resolve(new(), remote);
         return Obj(("servers", servers), ("rules", rules), ("final", remote[0]), ("reverse_mapping", true), ("timeout", "5s"));
     }

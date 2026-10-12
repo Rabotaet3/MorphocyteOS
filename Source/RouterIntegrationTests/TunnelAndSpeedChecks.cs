@@ -100,6 +100,27 @@ internal partial class Program
         Check(new double?[] { null, 0, -1, double.NaN, double.PositiveInfinity, double.NegativeInfinity }
             .All(value => VpnSpeedTest.FormatCapacity(value) == "—"), "invalid or missing capacity never produces a fabricated maximum speed");
 
+        VpnSpeedTest.DownloadSamples Sample(double headerDelay, bool slowTail = false)
+        {
+            var samples = new VpnSpeedTest.DownloadSamples();
+            samples.Record(64 * 1024, headerDelay);
+            for (var bin = 0; bin < 25; bin++)
+                samples.Record(120_000, headerDelay + bin * .1 + .05);
+            if (slowTail) samples.Record(1024, headerDelay + 12);
+            return samples;
+        }
+        var normalRate = Sample(0).ReadRate();
+        Check(normalRate == 1_200_000 && Sample(4).ReadRate() == normalRate,
+            "DNS/TLS/response-header delay is outside the shared aggregate data-transfer clock");
+        Check(Sample(0, true).ReadRate() == normalRate,
+            "a stalled final stream does not dilute a completed sustained one-second measurement");
+        var burst = new VpnSpeedTest.DownloadSamples();
+        burst.Record(64 * 1024, 0); burst.Record(1_000_000, .02);
+        Check(burst.ReadRate() == 0, "a prefetched buffer or short burst cannot masquerade as maximum VPN speed");
+        var sparse = new VpnSpeedTest.DownloadSamples();
+        sparse.Record(64 * 1024, 0); sparse.Record(100_000, 1);
+        Check(sparse.ReadRate() == 0, "a long duration without enough measured bytes is not a calibration");
+
         using var test = new VpnSpeedTest(19877, api.Secret, new SpeedHandler());
         var result = await test.MeasureAsync(default);
         Check(result.DownloadedBytes == VpnSpeedTest.MaxBytes && result.DownloadBytesPerSecond > 0 && double.IsFinite(result.DownloadBytesPerSecond), "parallel speed test counts streamed bytes and measures a finite aggregate download rate");
@@ -112,10 +133,21 @@ internal partial class Program
         catch (HttpRequestException) { Check(true, "failed or redirected download is not treated as a speed measurement"); }
         using var shortTest = new VpnSpeedTest(19877, api.Secret, new ShortSpeedHandler());
         var shortResult = await shortTest.MeasureAsync(default);
-        Check(shortResult.DownloadedBytes == 8_000_000 && shortResult.DownloadBytesPerSecond > 0, "short valid binary responses are measured instead of failing an exact content-length assertion");
+        Check(shortResult.DownloadedBytes == VpnSpeedTest.WarmupBytes * VpnSpeedTest.Streams + 8_000_000
+            && shortResult.DownloadBytesPerSecond > 0, "short valid binary responses are measured within the request-allocation byte cap");
         using var retryTest = new VpnSpeedTest(19877, api.Secret, new ShortSpeedHandler(true));
-        var retryResult = await retryTest.MeasureAsync(default);
-        Check(retryResult.DownloadedBytes == 4_000_000 && retryResult.DownloadBytesPerSecond > 0, "a second-stage service failure retains the completed warm-up measurement");
+        try { await retryTest.MeasureAsync(default); throw new Exception("Warm-up was reported as a completed speed measurement"); }
+        catch (HttpRequestException) { Check(true, "warm-up success alone is not reported when all measurement requests fail"); }
+        using var partialTest = new VpnSpeedTest(19877, api.Secret, new PartialSpeedHandler());
+        var partialResult = await partialTest.MeasureAsync(default);
+        Check(partialResult.DownloadedBytes == VpnSpeedTest.WarmupBytes * VpnSpeedTest.Streams + VpnSpeedTest.RequestBytes * VpnSpeedTest.Streams
+            && partialResult.DownloadBytesPerSecond > 0, "a later service failure preserves a valid measured transfer, not warm-up timing");
+        var parallelHandler = new ParallelSpeedHandler();
+        using var parallelTest = new VpnSpeedTest(19877, api.Secret, parallelHandler);
+        var parallelResult = await parallelTest.MeasureAsync(default);
+        Check(parallelResult.DownloadedBytes <= VpnSpeedTest.MaxBytes && parallelHandler.MaximumActive == VpnSpeedTest.Streams
+            && parallelHandler.MeasurementRequests > VpnSpeedTest.Streams,
+            "measurement workers refill parallel requests while preserving four-flow and 64 MB limits");
         Check(VpnSpeedTest.FailureMessage(new HttpRequestException("private-token", null, HttpStatusCode.TooManyRequests)).Contains("ограничил")
             && !VpnSpeedTest.FailureMessage(new IOException("private-token")).Contains("private-token"), "speed errors identify safe failure categories without exposing raw exception data");
 
@@ -228,7 +260,7 @@ internal partial class Program
             if (request.RequestUri!.Scheme != "https" || request.RequestUri.Host != "speed.cloudflare.com" || request.Headers.Authorization is not null)
                 throw new Exception("Unexpected speed request or controller credentials leaked externally");
             var bytes = int.Parse(System.Text.RegularExpressions.Regex.Match(request.RequestUri.Query, @"bytes=(\d+)").Groups[1].Value);
-            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new SyntheticSpeedStream(bytes)) };
+            var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new SyntheticSpeedStream(bytes, 2)) };
             response.Content.Headers.ContentLength = bytes;
             return Task.FromResult(response);
         }
@@ -238,7 +270,7 @@ internal partial class Program
     {
         protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
         {
-            if (failLarge && request.RequestUri!.Query.Contains("bytes=14000000")) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+            if (failLarge && !request.RequestUri!.Query.Contains("bytes=" + VpnSpeedTest.WarmupBytes)) return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
             var response = new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new SyntheticSpeedStream(1_000_000, 10)) };
             response.Content.Headers.ContentLength = 1_000_000;
             response.Content.Headers.ContentType = new System.Net.Http.Headers.MediaTypeHeaderValue("application/octet-stream");
@@ -246,17 +278,59 @@ internal partial class Program
         }
     }
 
-    private sealed class SyntheticSpeedStream(int length, int delay = 1) : Stream
+    private sealed class PartialSpeedHandler : HttpMessageHandler
     {
-        private int _remaining = length;
+        private int _measurements;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        {
+            var bytes = int.Parse(System.Text.RegularExpressions.Regex.Match(request.RequestUri!.Query, @"bytes=(\d+)").Groups[1].Value);
+            if (bytes != VpnSpeedTest.WarmupBytes && Interlocked.Increment(ref _measurements) > VpnSpeedTest.Streams)
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.ServiceUnavailable));
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new SyntheticSpeedStream(bytes, 5)) });
+        }
+    }
+
+    private sealed class ParallelSpeedHandler : HttpMessageHandler
+    {
+        private int _active, _maximum, _measurements;
+        internal int MaximumActive => _maximum;
+        internal int MeasurementRequests => _measurements;
+        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken token)
+        {
+            var bytes = int.Parse(System.Text.RegularExpressions.Regex.Match(request.RequestUri!.Query, @"bytes=(\d+)").Groups[1].Value);
+            if (bytes != VpnSpeedTest.WarmupBytes) Interlocked.Increment(ref _measurements);
+            var active = Interlocked.Increment(ref _active);
+            int previous;
+            do { previous = Volatile.Read(ref _maximum); }
+            while (active > previous && Interlocked.CompareExchange(ref _maximum, active, previous) != previous);
+            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StreamContent(new TrackedSpeedStream(bytes, () => Interlocked.Decrement(ref _active))) });
+        }
+    }
+
+    private sealed class TrackedSpeedStream(int length, Action disposed) : SyntheticSpeedStream(length, 3)
+    {
+        private int _disposed;
+        protected override void Dispose(bool disposing)
+        {
+            if (disposing && Interlocked.Exchange(ref _disposed, 1) == 0) disposed();
+            base.Dispose(disposing);
+        }
+    }
+
+    private class SyntheticSpeedStream : Stream
+    {
+        private readonly int _length, _delay;
+        private int _remaining;
+        internal SyntheticSpeedStream(int length, int delay = 1)
+        { _length = length; _remaining = length; _delay = delay; }
         public override bool CanRead => true;
         public override bool CanSeek => false;
         public override bool CanWrite => false;
-        public override long Length => length;
+        public override long Length => _length;
         public override long Position { get => Length - _remaining; set => throw new NotSupportedException(); }
         public override async ValueTask<int> ReadAsync(Memory<byte> buffer, CancellationToken token = default)
         {
-            await Task.Delay(delay, token);
+            await Task.Delay(_delay, token);
             var count = Math.Min(buffer.Length, _remaining); buffer.Span[..count].Clear(); _remaining -= count; return count;
         }
         public override int Read(byte[] buffer, int offset, int count) => throw new NotSupportedException();

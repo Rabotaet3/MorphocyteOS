@@ -25,6 +25,7 @@ internal partial class Program
                 "/proxies/Server" => "{\"type\":\"Hysteria2\"}",
                 "/dns/query" => "{\"Status\":0,\"Answer\":[{\"type\":1,\"data\":\"1.1.1.1\"}]}",
                 "/proxies/VPN/delay" => "{\"delay\":48}",
+                "/connections" => "{\"connections\":[]}",
                 _ => throw new Exception("Unexpected test endpoint: " + request.RequestUri.AbsolutePath)
             };
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(json) };
@@ -67,9 +68,9 @@ internal partial class Program
                     if (DateTime.UtcNow > deadline) throw new Exception("Diagnostic dialog test timed out: " + window.DiagnosticStatus + " / " + string.Join("; ", window.DiagnosticSteps.Select(step => step.Name + ": " + step.Result)));
                     var repeat = Descendants<Button>(dialog).Single(button => button.Name == "RepeatDiagnosticButton");
                     var copy = Descendants<Button>(dialog).Single(button => button.Name == "CopyDiagnosticButton");
-                    if (phase == 0 && !window.DiagnosticRunning && window.DiagnosticSteps.Count == 5)
+                    if (phase == 0 && !window.DiagnosticRunning && window.DiagnosticSteps.Count == 6)
                     {
-                        Check(window.DiagnosticSteps.Count == 5 && copy.IsEnabled && repeat.IsEnabled, "temporary diagnostic window displays all stages and copy/repeat controls");
+                        Check(window.DiagnosticSteps.Count == 6 && copy.IsEnabled && repeat.IsEnabled, "temporary diagnostic window displays all stages and copy/repeat controls");
                         Check(window.DiagnosticSteps.Count(step => step.State == DiagnosticState.Success) == 4, "diagnostic badges distinguish actual success from informational TCP skip");
                         Check(((FrameworkElement)Field("WindowContent")).Effect is System.Windows.Media.Effects.BlurEffect, "diagnostic window uses the shared blurred backdrop");
                         Check(!window.DiagnosticReport.Contains("test-only") && !window.DiagnosticReport.Contains("vpn.example"), "copyable diagnostic report excludes credentials and server address");
@@ -103,7 +104,7 @@ internal partial class Program
             await Task.Delay(150);
             Check(seen && !window.DiagnosticRunning && window.DiagnosticStatus.Contains("отменена"), "closing the temporary window cancels its pending network check");
             handler.Block = false; await window.RunConnectionDiagnosticAsync();
-            Check(window.DiagnosticSteps.Count == 5, "diagnosis can run again after cancellation without a stale lifetime or disabled state");
+            Check(window.DiagnosticSteps.Count == 6, "diagnosis can run again after cancellation without a stale lifetime or disabled state");
         }
         finally
         {

@@ -78,7 +78,7 @@ public partial class MainWindow
     {
         StabilityText.Text = VpnSpeedTest.FormatCapacity(_downloadCapacity);
         StabilityText.ToolTip = _downloadCapacity is > 0 && double.IsFinite(_downloadCapacity.Value)
-            ? "Максимальная скорость приёма по последнему замеру через VPN: " + StabilityText.Text
+            ? "Наибольшая измеренная скорость приёма по последнему тесту VPN: " + StabilityText.Text
             : "Нажми «Скорость», чтобы определить пропускную способность VPN.";
     }
 

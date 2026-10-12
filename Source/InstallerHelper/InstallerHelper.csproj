@@ -10,7 +10,7 @@
     <PublishTrimmed>false</PublishTrimmed>
     <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
     <JsonSerializerIsReflectionEnabledByDefault>true</JsonSerializerIsReflectionEnabledByDefault>
-    <DebugType>embedded</DebugType><Version>1.2.8</Version>
+    <DebugType>embedded</DebugType><Version>1.2.9</Version>
     <Product>MorphocyteOS installation maintenance</Product>
   </PropertyGroup>
   <ItemGroup>

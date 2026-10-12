@@ -8,7 +8,8 @@ using System.Text.Json;
 
 namespace MorphocyteRouter;
 
-internal record ConnectionActivity(string Process, string Destination, string Network, string Rule, string Route);
+internal record ConnectionActivity(string Process, string Destination, string Network, string Rule, string Route,
+    string Id = "", long Upload = 0, long Download = 0);
 internal record CoreSnapshot(string Version, IReadOnlyList<ConnectionActivity> Connections, string Selection);
 internal record TrafficSample(long Upload, long Download);
 
@@ -53,9 +54,15 @@ internal sealed class CoreDiagnostics : IDisposable
     internal async Task<CoreSnapshot> ReadAsync(string? group, CancellationToken token)
     {
         using var version = await ReadJsonAsync("version", token);
-        using var connections = await ReadJsonAsync("connections", token);
+        var connections = await ReadConnectionsAsync(token);
         var selection = string.IsNullOrWhiteSpace(group) ? "" : await ReadSelectionAsync(group, token);
-        return new CoreSnapshot(Text(version.RootElement, "version"), ParseConnections(connections.RootElement), selection);
+        return new CoreSnapshot(Text(version.RootElement, "version"), connections.Take(500).ToArray(), selection);
+    }
+
+    internal async Task<IReadOnlyList<ConnectionActivity>> ReadConnectionsAsync(CancellationToken token)
+    {
+        using var json = await ReadJsonAsync("connections", token, maxBytes: 8_388_608);
+        return ParseConnections(json.RootElement);
     }
 
     internal async Task<string> ReadSelectionAsync(string route, CancellationToken token)
@@ -172,7 +179,7 @@ internal sealed class CoreDiagnostics : IDisposable
         if (array.ValueKind == JsonValueKind.Null) return Array.Empty<ConnectionActivity>();
         if (array.ValueKind != JsonValueKind.Array) throw new InvalidDataException("Некорректный список соединений ядра.");
         var output = new List<ConnectionActivity>();
-        foreach (var connection in array.EnumerateArray().Take(500))
+        foreach (var connection in array.EnumerateArray().Take(10000))
         {
             if (!connection.TryGetProperty("metadata", out var metadata)) continue;
             var destination = Text(metadata, "host");
@@ -182,10 +189,13 @@ internal sealed class CoreDiagnostics : IDisposable
             var process = Text(metadata, "process");
             if (process.Length == 0) process = Path.GetFileName(Text(metadata, "processPath"));
             output.Add(new ConnectionActivity(process, destination + ":" + Text(metadata, "destinationPort"),
-                Text(metadata, "network").ToUpperInvariant(), Text(connection, "rule") + " " + Text(connection, "rulePayload"), chains));
+                Text(metadata, "network").ToUpperInvariant(), Text(connection, "rule") + " " + Text(connection, "rulePayload"), chains,
+                Text(connection, "id"), Bytes(connection, "upload"), Bytes(connection, "download")));
         }
         return output;
     }
+
+    private static long Bytes(JsonElement value, string key) => value.TryGetProperty(key, out var field) && field.ValueKind == JsonValueKind.Number && field.TryGetInt64(out var number) ? Math.Max(0, number) : 0;
 
     private static string Text(JsonElement value, string key) => value.ValueKind == JsonValueKind.Object && value.TryGetProperty(key, out var field)
         ? field.ValueKind == JsonValueKind.String ? field.GetString() ?? "" : field.ValueKind == JsonValueKind.Number ? field.ToString() : "" : "";

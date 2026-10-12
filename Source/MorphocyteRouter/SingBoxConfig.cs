@@ -1,5 +1,7 @@
 using System.Globalization;
 using System.IO;
+using System.Net;
+using System.Net.Sockets;
 using System.Text.Json;
 using System.Text.RegularExpressions;
 using YamlDotNet.RepresentationModel;
@@ -98,7 +100,7 @@ internal static class SingBoxConfig
         rules.Add(Obj(("protocol", "dns"), ("action", "hijack-dns")));
         // Drop packets to the adapter's own addresses to avoid a loop through a direct outbound.
         rules.Add(Obj(("ip_cidr", new[] { "172.19.0.1/32", "fdfe:dcba:9876::1/128" }), ("action", "reject"), ("method", "drop")));
-        var directDomains = new List<Dictionary<string, object>>();
+        var domainRoutes = new List<Dictionary<string, object>>();
         if (Get(root, "rules") is not YamlSequenceNode yamlRules) throw Unsupported("формат правил");
         var final = "DIRECT";
         var matched = false;
@@ -139,18 +141,39 @@ internal static class SingBoxConfig
             else if (kind == "PROCESS-PATH")
                 rule[key] = new[] { "(?i)^" + string.Join(@"[\\/]", parts[1].Split(['\\', '/']).Select(Regex.Escape)) + "$" };
             else rule[key] = new[] { kind == "NETWORK" ? parts[1].ToLowerInvariant() : parts[1] };
+            // Clash resolves a domain before ordinary destination IP rules, but not
+            // for no-resolve rules. sing-box does not do this implicitly for FakeIP.
+            if (kind is "IP-CIDR" or "IP-CIDR6" && !noResolve)
+                rules.Add(Obj(("action", "resolve"), ("timeout", "5s")));
             rules.Add(rule);
-            if (target == "DIRECT" && key is "domain" or "domain_suffix" or "domain_keyword")
-                directDomains.Add(Obj((key, new[] { parts[1] })));
+            if (key is "domain" or "domain_suffix" or "domain_keyword")
+                domainRoutes.Add(Obj((key, new[] { parts[1] }), ("outbound", exceptions.GetValueOrDefault(target, target))));
         }
-        var dns = SingBoxDns.Build(root, vpn, tunTag, Internal, directDomains);
+        var mixedPort = Number(root, "mixed-port");
+        var bootstrapPort = DnsPort(controllerPort, speedPort, mixedPort);
+        var directPort = DnsPort(controllerPort, speedPort, mixedPort, bootstrapPort);
+        var dns = SingBoxDns.Build(root, vpn, tunTag, Internal, domainRoutes, bootstrapPort, directPort);
+        // Resolver-only loopback listeners let domain_resolver use the same native
+        // DNS races as normal queries. Numeric bootstrap upstreams break recursion.
+        rules.Insert(speedPort == 0 ? 0 : 1, Obj(("inbound", new[] { Internal("bootstrap-in"), Internal("direct-dns-in") }), ("action", "hijack-dns")));
+        foreach (var outbound in outbounds.Where(item => (string)item["type"] == "direct"))
+            outbound["domain_resolver"] = Internal("direct-resolver");
         var inbounds = new List<Dictionary<string, object>>();
         if (includeTun)
+        {
+            var tun = Get(root, "tun") as YamlMappingNode ?? new YamlMappingNode();
+            var stack = Text(tun, "stack", "gvisor");
+            if (stack == "mixed") stack = "gvisor"; // Existing Windows default.
+            if (stack is not ("system" or "gvisor")) throw Unsupported("стек TUN");
+            var mtu = Get(tun, "mtu") is null ? 1280 : Number(tun, "mtu");
+            if (mtu is < 1280 or > 65535) throw Unsupported("MTU TUN (1280–65535)");
             inbounds.Add(Obj(("type", "tun"), ("tag", tunTag), ("interface_name", "MorphocyteTUN"),
-                ("address", new[] { "172.19.0.1/30", "fdfe:dcba:9876::1/126" }), ("mtu", 1280), ("stack", "gvisor"),
+                ("address", new[] { "172.19.0.1/30", "fdfe:dcba:9876::1/126" }), ("mtu", mtu), ("stack", stack),
                 ("auto_route", true), ("strict_route", true), ("dns_mode", "hijack")));
+        }
+        inbounds.Add(Obj(("type", "direct"), ("tag", Internal("bootstrap-in")), ("listen", "127.0.0.1"), ("listen_port", bootstrapPort)));
+        inbounds.Add(Obj(("type", "direct"), ("tag", Internal("direct-dns-in")), ("listen", "127.0.0.1"), ("listen_port", directPort)));
         // All listeners are loopback-only; the speed-test listener also requires authentication.
-        var mixedPort = Number(root, "mixed-port");
         if (mixedPort > 0 && mixedPort != controllerPort && mixedPort != speedPort)
             inbounds.Add(Obj(("type", "mixed"), ("tag", Internal("mixed")), ("listen", "127.0.0.1"), ("listen_port", mixedPort)));
         if (speedPort != 0)
@@ -166,6 +189,20 @@ internal static class SingBoxConfig
                 ("clash_api", Obj(("external_controller", "127.0.0.1:" + controllerPort), ("secret", secret),
                 ("default_mode", "Rule"), ("access_control_allow_origin", new[] { "http://127.0.0.1" }))))));
         return JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private static int DnsPort(params int[] excluded)
+    {
+        for (var attempt = 0; attempt < 32; attempt++)
+        {
+            using var tcp = new TcpListener(IPAddress.Loopback, 0);
+            tcp.Start();
+            var port = ((IPEndPoint)tcp.LocalEndpoint).Port;
+            if (excluded.Contains(port)) continue;
+            try { using var udp = new UdpClient(new IPEndPoint(IPAddress.Loopback, port)); return port; }
+            catch (SocketException) { }
+        }
+        throw new IOException("Не удалось выделить локальный порт DNS.");
     }
 
     private static Dictionary<string, object> Proxy(YamlMappingNode node)
@@ -204,7 +241,11 @@ internal static class SingBoxConfig
         if (Flag(node, "tls") || type == "trojan")
         {
             var tls = Obj(("enabled", true), ("insecure", Flag(node, "skip-cert-verify")));
-            var sni = Text(node, "servername", Text(node, "sni")); if (sni.Length > 0) tls["server_name"] = sni;
+            var sni = Text(node, "servername", Text(node, "sni"));
+            if (sni.Length == 0 && Text(node, "network") == "ws" && Get(node, "ws-opts") is YamlMappingNode wsTls
+                && Get(wsTls, "headers") is YamlMappingNode wsHeaders)
+                sni = wsHeaders.Children.FirstOrDefault(pair => pair.Key.ToString().Equals("Host", StringComparison.OrdinalIgnoreCase)).Value?.ToString().Split(',')[0].Trim() ?? "";
+            if (sni.Length > 0) tls["server_name"] = sni;
             if (List(node, "alpn") is { Length: > 0 } alpn) tls["alpn"] = alpn;
             if (Text(node, "client-fingerprint") is { Length: > 0 } fingerprint) tls["utls"] = Obj(("enabled", true), ("fingerprint", fingerprint));
             if (Get(node, "reality-opts") is YamlMappingNode reality)
@@ -238,11 +279,32 @@ internal static class SingBoxConfig
                     transport["max_early_data"] = Number(ws, "max-early-data");
                     transport["early_data_header_name"] = Text(ws, "early-data-header-name", "Sec-WebSocket-Protocol");
                 }
+                if (!Flag(ws, "v2ray-http-upgrade")) NormalizeWebSocketEarlyData(transport, ws);
                 if (headers.Count > 0) transport["headers"] = headers;
             }
             output["transport"] = transport;
         }
         else if (network is not ("tcp" or "raw")) throw Unsupported("транспорт подключения");
         return output;
+    }
+
+    private static void NormalizeWebSocketEarlyData(Dictionary<string, object> transport, YamlMappingNode ws)
+    {
+        var path = (string)transport["path"];
+        var question = path.IndexOf('?');
+        if (question < 0) return;
+        var segments = path[(question + 1)..].Split('&');
+        var early = segments.Where(part => part.StartsWith("ed=", StringComparison.Ordinal)).ToArray();
+        var header = segments.Where(part => part.StartsWith("eh=", StringComparison.Ordinal)).ToArray();
+        if (early.Length == 0) return;
+        if (early.Length != 1 || header.Length > 1 || !int.TryParse(early[0][3..], out var bytes) || bytes is < 0 or > 65536)
+            throw Unsupported("early-data в пути WebSocket");
+        if (Get(ws, "max-early-data") is not null && Number(ws, "max-early-data") != bytes)
+            throw Unsupported("противоречащий early-data WebSocket");
+        var name = header.Length == 0 ? Text(ws, "early-data-header-name", "Sec-WebSocket-Protocol") : Uri.UnescapeDataString(header[0][3..]);
+        if (name.Length == 0 || !Regex.IsMatch(name, "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$")) throw Unsupported("заголовок early-data WebSocket");
+        var remaining = segments.Where(part => !part.StartsWith("ed=", StringComparison.Ordinal) && !part.StartsWith("eh=", StringComparison.Ordinal)).ToArray();
+        transport["path"] = path[..question] + (remaining.Length == 0 ? "" : "?" + string.Join('&', remaining));
+        if (bytes > 0) { transport["max_early_data"] = bytes; transport["early_data_header_name"] = name; }
     }
 }

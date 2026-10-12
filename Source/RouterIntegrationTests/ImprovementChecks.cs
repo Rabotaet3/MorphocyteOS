@@ -117,6 +117,7 @@ internal partial class Program
                 "/proxies/Alpha" => "{}",
                 "/dns/query" => "{\"Status\":0,\"Answer\":[{\"type\":1,\"data\":\"192.0.2.40\"}]}",
                 "/proxies/VPN/delay" => "{\"delay\":42}",
+                "/connections" => "{\"connections\":[]}",
                 _ => throw new Exception("Unexpected diagnostic endpoint")
             };
             return new(HttpStatusCode.OK) { Content = new StringContent(body) };
@@ -124,17 +125,18 @@ internal partial class Program
         File.WriteAllText(path, yaml);
         var results = await ConnectionDiagnostic.RunAsync(true, ClashConfigDocument.Load(path), api, default,
             connect: (host, port, token) => { endpointChecked = host == "192.0.2.20" && port == 1080; return Task.CompletedTask; });
-        Check(endpointChecked && results.Count == 5 && results[^1].Result.Contains("42 мс"), "staged diagnostics checks the selected server, core DNS and HTTPS through VPN");
+        Check(endpointChecked && results.Count == 6 && results.Single(step => step.Name == "HTTPS через VPN").Result.Contains("42 мс")
+            && results[^1].State == DiagnosticState.Information, "staged diagnostics checks HTTPS and does not claim video playback from an idle connection table");
         var systemChecked = false;
         var systemResults = await ConnectionDiagnostic.RunAsync(true, ClashConfigDocument.Load(path), api, default,
             connect: (_, _, _) => Task.CompletedTask, fullTunnel: true,
             systemConnect: _ => { systemChecked = true; return Task.CompletedTask; });
-        Check(systemChecked && systemResults.Count == 6 && systemResults[^1].Name == "Системное подключение"
+        Check(systemChecked && systemResults.Count == 7 && systemResults[^1].Name == "Системное подключение"
             && systemResults[^1].State == DiagnosticState.Success, "manual full-TUN diagnostics additionally checks the OS network path rather than only the core proxy API");
         var brokenSystem = await ConnectionDiagnostic.RunAsync(true, ClashConfigDocument.Load(path), api, default,
             connect: (_, _, _) => Task.CompletedTask, fullTunnel: true,
             systemConnect: _ => Task.FromException(new IOException("private-probe-detail")));
-        Check(brokenSystem[^2].State == DiagnosticState.Success && brokenSystem[^1].State == DiagnosticState.Failure
+        Check(brokenSystem.Single(step => step.Name == "HTTPS через VPN").State == DiagnosticState.Success && brokenSystem[^1].State == DiagnosticState.Failure
             && !ConnectionDiagnostic.Report(brokenSystem, true).Contains("private-probe-detail"), "working core with a broken OS path produces a distinct safe TUN diagnostic failure");
         var probeAttempts = 0;
         await CoreDiagnostics.CheckSystemHttpsAsync(default, new DiagnosticHandler(request => {

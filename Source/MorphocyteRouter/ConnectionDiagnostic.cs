@@ -67,6 +67,16 @@ internal static class ConnectionDiagnostic
         }
         catch (Exception) when (!token.IsCancellationRequested)
         { Add("HTTPS через VPN", "Запрос не прошёл. Проверь сервер, настройки подключения и журнал.", DiagnosticState.Failure); }
+        try
+        {
+            var first = await diagnostics.ReadConnectionsAsync(token);
+            await Task.Delay(1500, token);
+            var second = await diagnostics.ReadConnectionsAsync(token);
+            var video = VideoTransferStep(first, second);
+            Add(video.Name, video.Result, video.State);
+        }
+        catch (Exception) when (!token.IsCancellationRequested)
+        { Add("Видеосоединения", "Не удалось прочитать счётчики. Короткая HTTPS-проверка не подтверждает передачу видео.", DiagnosticState.Information); }
         if (fullTunnel)
         {
             try
@@ -79,6 +89,28 @@ internal static class ConnectionDiagnostic
         }
         token.ThrowIfCancellationRequested();
         return results;
+    }
+
+    internal static DiagnosticStep VideoTransferStep(IReadOnlyList<ConnectionActivity> first, IReadOnlyList<ConnectionActivity> second)
+    {
+        bool Video(ConnectionActivity connection)
+        {
+            var host = connection.Destination[..Math.Max(0, connection.Destination.LastIndexOf(':'))];
+            return new[] { "googlevideo.com", "youtube.com", "ytimg.com", "vimeo.com", "vimeocdn.com" }
+                .Any(domain => host.Equals(domain, StringComparison.OrdinalIgnoreCase) || host.EndsWith("." + domain, StringComparison.OrdinalIgnoreCase));
+        }
+        var videos = second.Where(Video).ToArray();
+        if (videos.Length == 0) return new("Видеосоединения", "Распознанных активных видеосоединений нет. Передача видео этой проверкой не подтверждена.");
+        var before = first.Where(connection => connection.Id.Length > 0).GroupBy(connection => connection.Id).ToDictionary(group => group.Key, group => group.First());
+        var stalled = videos.Count(connection => connection.Id.Length > 0 && before.TryGetValue(connection.Id, out var previous)
+            && connection.Upload > previous.Upload && connection.Download == previous.Download);
+        var receiving = videos.Count(connection => connection.Id.Length > 0 && before.TryGetValue(connection.Id, out var previous) && connection.Download > previous.Download);
+        var direct = videos.Count(connection => connection.Route.Split(" ← ").Any(tag => tag.Equals("DIRECT", StringComparison.OrdinalIgnoreCase)));
+        // Report counts only: raw hosts, process paths, rule values and API IDs may
+        // contain private information and are deliberately excluded from the report.
+        return new("Видеосоединения", $"Активных: {videos.Length}; напрямую: {direct}; получают данные: {receiving}; отправляют без новых ответов: {stalled}."
+            + (stalled > 0 ? " Возможна задержка; проверь маршрут зависшего соединения." : " Это наблюдение, не полный тест видеозагрузки."),
+            stalled > 0 ? DiagnosticState.Warning : DiagnosticState.Information);
     }
 
     private static (string Host, int Port, string Type)? Endpoint(string path, string selected)
