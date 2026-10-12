@@ -8,6 +8,15 @@ public partial class App : Application
     private bool _ownsMutex;
     protected override async void OnStartup(StartupEventArgs e)
     {
+        if (e.Args.Length > 0 && e.Args[0].StartsWith("--installer-", StringComparison.Ordinal))
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            var code = e.Args.Length == 3
+                ? await Task.Run(() => InstallerMaintenance.Run(e.Args[0], e.Args[1], e.Args[2]))
+                : 1;
+            Shutdown(code);
+            return;
+        }
         if (e.Args.Length == 2 && e.Args[0] == "--apply-update")
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;

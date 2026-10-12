@@ -5,6 +5,8 @@
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="../MorphocyteRouter/UpdatePackage.cs" Link="UpdatePackage.cs" />
+    <Compile Include="../MorphocyteRouter/IncrementalUpdate.cs" Link="IncrementalUpdate.cs" />
+    <Compile Include="../MorphocyteRouter/UpdateCacheCleanup.cs" Link="UpdateCacheCleanup.cs" />
     <Compile Include="../MorphocyteRouter/UpdateDownloader.cs" Link="UpdateDownloader.cs" />
     <Compile Include="../MorphocyteRouter/UpdateInstaller.cs" Link="UpdateInstaller.cs" />
     <Compile Include="../MorphocyteRouter/ReleaseUpdateService.cs" Link="ReleaseUpdateService.cs" />

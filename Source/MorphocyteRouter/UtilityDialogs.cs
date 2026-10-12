@@ -286,7 +286,8 @@ internal static class UtilityDialogs
         void RefreshUpdate(UpdateCheckResult? found)
         {
             download.Visibility = Visibility.Visible;
-            download.Content = found is { UpdateAvailable: true, Asset: not null } ? "ОБНОВИТЬ ДО " + found.LatestVersion : "ОБНОВИТЬ ПРИЛОЖЕНИЕ";
+            download.Content = found is { UpdateAvailable: true } && (found.Asset is not null || found.IndexAsset is not null)
+                ? "ОБНОВИТЬ ДО " + found.LatestVersion : "ОБНОВИТЬ ПРИЛОЖЕНИЕ";
             status.Text = found?.Message ?? ReleaseUpdateService.SourceStatus;
         }
         RefreshUpdate(owner.AvailableUpdate);

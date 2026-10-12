@@ -115,6 +115,32 @@ Check((await MockCheck(AssetRelease(size: "1024"))).Asset is null, "Wrong JSON s
 Check((await MockCheck(AssetRelease(size: 0))).Asset is null, "Empty asset rejected");
 Check((await MockCheck(AssetRelease(size: 536870913))).Asset is null, "Oversized asset rejected");
 Check((await MockCheck(AssetRelease(duplicate: true))).Asset is null, "Ambiguous duplicate assets rejected");
+HttpResponseMessage IndexRelease(string? url = null, bool duplicate = false, long size = 1024)
+{
+    var index = new { name = "MorphocyteOS-1.1.0-update.json", browser_download_url = url ?? "https://github.com/sample-org/sample-app/releases/download/v1.1.0/MorphocyteOS-1.1.0-update.json",
+        digest = "sha256:" + new string('b', 64), size };
+    return new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new
+    {
+        tag_name = "v1.1.0", draft = false, prerelease = false, html_url = "https://github.com/sample-org/sample-app/releases/tag/v1.1.0",
+        assets = duplicate ? new[] { index, index } : new[] { index }
+    })) };
+}
+Check((await MockCheck(IndexRelease())).IndexAsset is { Size: 1024, Sha256.Length: 64 }, "Incremental index exact release asset recognized");
+Check((await MockCheck(IndexRelease(url: "https://github.com/other/repo/releases/download/v1.1.0/MorphocyteOS-1.1.0-update.json"))).IndexAsset is null,
+    "Incremental index from different repository rejected");
+Check((await MockCheck(IndexRelease(duplicate: true))).IndexAsset is null, "Ambiguous incremental indexes rejected");
+Check((await MockCheck(IndexRelease(size: 2097153))).IndexAsset is null, "Incremental index size bounded");
+var mixedAssets = new[]
+{
+    new { name = "MorphocyteOS-1.1.0-win-x64.zip", browser_download_url = "https://github.com/sample-org/sample-app/releases/download/v1.1.0/MorphocyteOS-1.1.0-win-x64.zip", digest = "sha256:" + new string('a', 64), size = 1024 },
+    new { name = "MorphocyteOS-1.1.0-update.json", browser_download_url = "https://github.com/sample-org/sample-app/releases/download/v1.1.0/MorphocyteOS-1.1.0-update.json", digest = "sha256:bad", size = 1024 }
+};
+var malformedIndex = await MockCheck(new(HttpStatusCode.OK) { Content = new StringContent(JsonSerializer.Serialize(new
+{
+    tag_name = "v1.1.0", draft = false, prerelease = false, html_url = "https://github.com/sample-org/sample-app/releases/tag/v1.1.0", assets = mixedAssets
+})) });
+Check(malformedIndex.Asset is null && malformedIndex.IndexAsset is null && malformedIndex.Message.Contains("отменена"),
+    "Malformed advertised index never silently falls back to a large full archive");
 Console.WriteLine($"Passed {checks} update-service checks. No external network requests.");
 
 sealed class StubHandler : HttpMessageHandler

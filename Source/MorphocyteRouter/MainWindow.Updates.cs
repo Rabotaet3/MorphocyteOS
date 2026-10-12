@@ -1,6 +1,5 @@
 
 using System.IO;
-using System.Text.Json;
 using System.Windows;
 using System.Windows.Threading;
 
@@ -14,6 +13,7 @@ public partial class MainWindow
     private bool _autoInstallQueued, _autoInstallRunning, _automaticCheckRunning;
     private string? _deferredUpdateVersion, _attemptedAutoUpdateVersion;
     private string? _automaticUpdateFailure;
+    private Task? _updateCacheCleanup;
     internal string LastUpdateMessage { get; private set; } = "";
     internal UpdateCheckResult? AvailableUpdate => _availableUpdate;
     internal event Action<UpdateCheckResult?>? UpdateStateChanged;
@@ -33,7 +33,7 @@ public partial class MainWindow
 
     private void SetAvailableUpdate(UpdateCheckResult? result)
     {
-        _availableUpdate = result is { UpdateAvailable: true, Asset: not null } ? result : null;
+        _availableUpdate = result is { UpdateAvailable: true } && (result.Asset is not null || result.IndexAsset is not null) ? result : null;
         LastUpdateMessage = result?.Message ?? "";
         RefreshUpdateOffer();
         UpdateStateChanged?.Invoke(_availableUpdate);
@@ -118,8 +118,10 @@ public partial class MainWindow
                 throw new IOException("В этом комплекте нет release-manifest.json. Для первого обновления распакуй полный архив релиза в отдельную папку. Личные настройки сохранятся.");
             var prepared = automatic
                 ? await UpdateDownloader.PrepareAsync(_availableUpdate, UpdateCacheDirectory,
-                    new Progress<UpdateProgress>(progress => UpdateOfferText.Text = progress.Message), _lifetime.Token)
-                : await UpdateProgressDialog.ShowAsync(dialogOwner, _availableUpdate, UpdateCacheDirectory, _lifetime.Token);
+                    new Progress<UpdateProgress>(progress => UpdateOfferText.Text = progress.Message), _lifetime.Token,
+                    AppContext.BaseDirectory, Path.GetFileName(Environment.ProcessPath!))
+                : await UpdateProgressDialog.ShowAsync(dialogOwner, _availableUpdate, UpdateCacheDirectory, _lifetime.Token,
+                    AppContext.BaseDirectory, Path.GetFileName(Environment.ProcessPath!));
             if (prepared is null) return;
             var handedToInstaller = false;
             try
@@ -177,10 +179,7 @@ public partial class MainWindow
         {
             var result = Path.GetFullPath(args[position + 1]);
             var operation = Path.GetDirectoryName(result)!;
-            if (!string.Equals(Path.GetDirectoryName(operation), Path.GetFullPath(UpdateCacheDirectory), StringComparison.OrdinalIgnoreCase) ||
-                Path.GetFileName(result) != "result.json" || !System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(operation), @"\A[a-f0-9]{32}\z") ||
-                !File.Exists(result) || new FileInfo(result).Length > 32768) return;
-            var outcome = JsonSerializer.Deserialize<UpdateOutcome>(await File.ReadAllTextAsync(result));
+            var outcome = await UpdateCacheCleanup.ReadOutcomeAsync(UpdateCacheDirectory, result);
             if (outcome is null) return;
             SetLog(outcome.Message);
             LastUpdateMessage = outcome.Message;
@@ -190,36 +189,28 @@ public partial class MainWindow
                 await SaveSettingsAsync();
             }
             if (!outcome.Success) { RestoreFromTray(); UtilityDialogs.ShowNotice(this, "ОБНОВЛЕНИЕ НЕ УСТАНОВЛЕНО", outcome.Message + "\n\nПапка восстановления: " + operation); }
+            else
+            {
+                _ = InstallerMaintenance.RefreshRegistrationVersion(AppContext.BaseDirectory, BuildInfo.Version);
+                _ = CleanCompletedUpdateCachesAsync();
+            }
         }
         catch { SetLog("Не удалось прочитать результат обновления."); }
     }
 
-    private async Task CleanCompletedUpdateCachesAsync()
+    private Task CleanCompletedUpdateCachesAsync()
     {
-        try
+        if (_updateCacheCleanup is { IsCompleted: false }) return _updateCacheCleanup;
+        var cacheRoot = UpdateCacheDirectory;
+        var protectedFiles = new[] { _settings.ConfigPath, _settings.CorePath };
+        _updateCacheCleanup = Task.Run(async () =>
         {
-        await Task.Run(async () =>
-        {
-            if (!Directory.Exists(UpdateCacheDirectory)) return;
-            _ = UpdatePackage.ResolveFile(UpdateCacheDirectory, UpdatePackage.ManifestName);
-            foreach (var operation in Directory.EnumerateDirectories(UpdateCacheDirectory))
+            try
             {
-                try
-                {
-                    if (!System.Text.RegularExpressions.Regex.IsMatch(Path.GetFileName(operation), @"\A[a-f0-9]{32}\z")) continue;
-                    if ((!string.IsNullOrEmpty(_settings.ConfigPath) && Path.GetFullPath(_settings.ConfigPath).StartsWith(operation + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase)) ||
-                        (!string.IsNullOrEmpty(_settings.CorePath) && Path.GetFullPath(_settings.CorePath).StartsWith(operation + Path.DirectorySeparatorChar, StringComparison.OrdinalIgnoreCase))) continue;
-                    var result = Path.Combine(operation, "result.json");
-                    if (!File.Exists(result) || new FileInfo(result).Length > 32768 ||
-                        JsonSerializer.Deserialize<UpdateOutcome>(await File.ReadAllTextAsync(result))?.Success != true) continue;
-                    // The helper may still be returning when the restarted app first loads.
-                    await Task.Delay(1000);
-                    UpdateDownloader.DeleteOperation(UpdateCacheDirectory, operation);
-                }
-                catch { /* A live helper lock is retried at the next app start. Failed rollback is never pruned. */ }
+                await UpdateCacheCleanup.CleanCompletedAsync(cacheRoot, protectedFiles, _lifetime.Token);
             }
+            catch { /* Cleanup must not interrupt the app; a later startup retries locked caches. */ }
         });
-        }
-        catch { /* Cache cleanup must not interrupt startup or remove unverified files. */ }
+        return _updateCacheCleanup;
     }
 }

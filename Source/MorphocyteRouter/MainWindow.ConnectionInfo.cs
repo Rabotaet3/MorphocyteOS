@@ -149,16 +149,12 @@ public partial class MainWindow
                     if (token.IsCancellationRequested || !ReferenceEquals(diagnostics, _diagnostics)) return;
                     DownloadSpeedText.Text = ConnectionHealth.FormatRate(traffic.Download);
                     UploadSpeedText.Text = ConnectionHealth.FormatRate(traffic.Upload);
-                    _currentDownload = traffic.Download;
-                    RefreshBandwidthReadout();
                 }
                 catch (OperationCanceledException) when (token.IsCancellationRequested) { return; }
                 catch
                 {
                     if (!ReferenceEquals(diagnostics, _diagnostics)) return;
                     DownloadSpeedText.Text = UploadSpeedText.Text = "—";
-                    _currentDownload = null;
-                    RefreshBandwidthReadout();
                     await Task.Delay(2000, token);
                 }
                 await Task.Delay(100, token);
@@ -173,7 +169,6 @@ public partial class MainWindow
         _speedTestLifetime?.Cancel();
         _downloadCapacity = null;
         _capacityServer = "";
-        _currentDownload = null;
         _speedTestPort = 0;
         _diagnosticLifetime?.Cancel();
         _diagnosticLifetime?.Dispose();

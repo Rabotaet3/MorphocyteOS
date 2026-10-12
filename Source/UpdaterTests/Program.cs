@@ -123,6 +123,8 @@ UpdateCheckResult Release(byte[] content) => new(true, true, "new", LatestVersio
 var cache = Path.Combine(scratch, "cache");
 try
 {
+    await IncrementalUpdateChecks.RunAsync(Check, scratch);
+    await UpdateCleanupChecks.RunAsync(Check, scratch);
     foreach (var path in new[] { "../settings.json", "/MorphocyteOS.exe", "C:/MorphocyteOS.exe", "Licenses/../profile.yaml", "Licenses/CON.txt", "Licenses/profile.yaml", "Licenses/settings.json", "Licenses/local.bak", "Licenses/a.txt:stream", "Licenses/a. ", "settings.json", "portable.flag" })
         Check(!UpdatePackage.IsManagedPath(path), "private or unsafe path rejected: " + path);
     Check(UpdatePackage.IsManagedPath("Licenses/notice.txt"), "license files are allowed");

@@ -103,8 +103,15 @@ internal sealed class VpnSpeedTest : IDisposable
         _ => "Слишком мало тестовых данных. Проверь VPN и повтори замер."
     };
 
-    internal static string FormatLoad(long? download, double? capacity) => download is >= 0 && capacity is > 0 && double.IsFinite(capacity.Value)
-        ? $"{Math.Clamp(download.Value * 100d / capacity.Value, 0, 100):0}%" : "—";
+    // VPN channel capacity is a measured bit rate, not a percentage of live traffic.
+    internal static string FormatCapacity(double? bytesPerSecond) => bytesPerSecond switch
+    {
+        null => "—",
+        var value when value <= 0 || !double.IsFinite(value.Value) => "—",
+        < 125_000 => $"{bytesPerSecond / 125d:0.0} кбит/с",
+        < 125_000_000 => $"{bytesPerSecond / 125_000d:0.0} Мбит/с",
+        _ => $"{bytesPerSecond / 125_000_000d:0.0} Гбит/с"
+    };
 
     public void Dispose() => _client.Dispose();
 }

@@ -93,8 +93,12 @@ internal partial class Program
         Check(validation.Success, "bundled real Mihomo accepts full-tunnel and authenticated speed-listener YAML without starting VPN");
         using var directApi = new CoreDiagnostics(new DiagnosticHandler(_ => new(HttpStatusCode.OK) { Content = new StringContent("{\"type\":\"Direct\"}") }));
         Check(await directApi.ReadSelectionAsync("CustomDirect", default) == "DIRECT", "renamed direct proxies are detected before a speed test");
-        Check(VpnSpeedTest.FormatLoad(null, null) == "—" && VpnSpeedTest.FormatLoad(0, 1000) == "0%" && VpnSpeedTest.FormatLoad(250, 1000) == "25%" && VpnSpeedTest.FormatLoad(2000, 1000) == "100%", "bandwidth load uses measured capacity, handles zero and clamps above 100 percent");
-        Check(VpnSpeedTest.FormatLoad(1, double.NaN) == "—" && VpnSpeedTest.FormatLoad(-1, 100) == "—", "invalid or missing bandwidth data never produces a fabricated percentage");
+        Check(VpnSpeedTest.FormatCapacity(125) == $"{1d:0.0} кбит/с"
+            && VpnSpeedTest.FormatCapacity(12_500_000) == $"{100d:0.0} Мбит/с"
+            && VpnSpeedTest.FormatCapacity(125_000_000) == $"{1d:0.0} Гбит/с",
+            "VPN capacity converts streamed bytes per second into decimal bit-rate units, not live load percentages");
+        Check(new double?[] { null, 0, -1, double.NaN, double.PositiveInfinity, double.NegativeInfinity }
+            .All(value => VpnSpeedTest.FormatCapacity(value) == "—"), "invalid or missing capacity never produces a fabricated maximum speed");
 
         using var test = new VpnSpeedTest(19877, api.Secret, new SpeedHandler());
         var result = await test.MeasureAsync(default);
@@ -172,13 +176,40 @@ internal partial class Program
             await Mode(false);
             Check(core.IsRunning && core.TrackedProcessId != oldPid && !settings.FullTunnel && ((YamlSequenceNode)Value(Root(File.ReadAllText((string)Field("_runtimeConfigPath"))), "rules")).Children.Count == 3, "turning TUN off restarts the core with the original selective rules");
             var capacityField = typeof(MainWindow).GetField("_downloadCapacity", BindingFlags.NonPublic | BindingFlags.Instance)!;
-            capacityField.SetValue(window, 2000d);
-            typeof(MainWindow).GetField("_currentDownload", BindingFlags.NonPublic | BindingFlags.Instance)!.SetValue(window, 500L);
+            capacityField.SetValue(window, 12_500_000d);
             typeof(MainWindow).GetMethod("RefreshBandwidthReadout", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, null);
-            Check(((TextBlock)Field("StabilityText")).Text == "25%", "connection card renders the measured-capacity load");
+            Check(((TextBlock)Field("StabilityText")).Text == $"{100d:0.0} Мбит/с"
+                && ((TextBlock)Field("CapacityLabel")).Text == "МАКС. СКОРОСТЬ ↓", "connection card renders the measured maximum VPN download speed instead of load");
+            ((TextBlock)Field("DownloadSpeedText")).Text = "0 Б/с";
+            typeof(MainWindow).GetMethod("RefreshBandwidthReadout", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, null);
+            Check(((TextBlock)Field("StabilityText")).Text == $"{100d:0.0} Мбит/с", "idle current traffic does not lower the last measured channel capacity");
+            var scale = (FrameworkElement)Field("Workspace");
+            foreach (var factor in new[] { 1d, 1.25, 1.5 })
+            {
+                scale.LayoutTransform = new System.Windows.Media.ScaleTransform(factor, factor);
+                foreach (var capacity in new[] { 12_500_000d, 124_875_000d, 125_000_000d })
+                {
+                    capacityField.SetValue(window, capacity);
+                    typeof(MainWindow).GetMethod("RefreshBandwidthReadout", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, null);
+                    window.UpdateLayout(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                    var label = (TextBlock)Field("CapacityLabel");
+                    var readout = (TextBlock)Field("StabilityText");
+                    var fitting = (Viewbox)readout.Parent;
+                    var labelWidth = new System.Windows.Media.FormattedText(label.Text, System.Globalization.CultureInfo.CurrentCulture,
+                        label.FlowDirection, new System.Windows.Media.Typeface(label.FontFamily, label.FontStyle, label.FontWeight, label.FontStretch),
+                        label.FontSize, label.Foreground, System.Windows.Media.VisualTreeHelper.GetDpi(label).PixelsPerDip).WidthIncludingTrailingWhitespace;
+                    Check(labelWidth <= label.ActualWidth + 1 && fitting.ActualWidth <= ((FrameworkElement)fitting.Parent).ActualWidth + 1
+                        && fitting.StretchDirection == StretchDirection.DownOnly,
+                        $"maximum-speed label and adaptive bit-rate value fit their sidebar column at {factor * 100:0}% scale");
+                }
+                ((TextBlock)Field("StabilityText")).BringIntoView();
+                window.UpdateLayout(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                CaptureInteraction(window, Path.Combine(scratch, $"maximum-capacity-{factor * 100:0}.png"));
+            }
+            scale.LayoutTransform = System.Windows.Media.Transform.Identity;
             await core.StopAsync();
             typeof(MainWindow).GetMethod("ResetDiagnostics", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, null);
-            Check(capacityField.GetValue(window) is null && ((TextBlock)Field("StabilityText")).Text == "—", "stopping VPN removes stale capacity and load");
+            Check(capacityField.GetValue(window) is null && ((TextBlock)Field("StabilityText")).Text == "—", "stopping VPN removes stale measured capacity");
         }
         finally
         {

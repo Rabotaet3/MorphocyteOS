@@ -37,6 +37,7 @@ if (-not $SkipTests) {
     Run-Dotnet -Arguments @('run', '--project', 'RouterRegressionTests/RouterRegressionTests.csproj', '-c', 'Release')
     Run-Dotnet -Arguments @('run', '--project', 'UpdateServiceTests/UpdateServiceTests.csproj', '-c', 'Release')
     Run-Dotnet -Arguments @('run', '--project', 'UpdaterTests/UpdaterTests.csproj', '-c', 'Release')
+    Run-Dotnet -Arguments @('run', '--project', 'InstallerTests/InstallerTests.csproj', '-c', 'Release')
     Run-Dotnet -Arguments @('build', 'FakeMihomo/FakeMihomo.csproj', '-c', 'Release')
     $fakeCorePath = Join-Path $PSScriptRoot 'FakeMihomo/bin/Release/net10.0/FakeMihomo.exe'
     Run-Dotnet -Arguments @('run', '--project', 'RouterIntegrationTests/RouterIntegrationTests.csproj', '-c', 'Release', '-p:PublishSingleFile=false', '--', $fakeCorePath)

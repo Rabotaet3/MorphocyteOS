@@ -5,7 +5,8 @@ namespace MorphocyteRouter;
 
 internal static class UpdateProgressDialog
 {
-    internal static async Task<PreparedUpdate?> ShowAsync(Window owner, UpdateCheckResult release, string cacheRoot, CancellationToken token)
+    internal static async Task<PreparedUpdate?> ShowAsync(Window owner, UpdateCheckResult release, string cacheRoot, CancellationToken token,
+        string? installDirectory = null, string executableName = "MorphocyteOS.exe")
     {
         using var lifetime = CancellationTokenSource.CreateLinkedTokenSource(token);
         PreparedUpdate? prepared = null;
@@ -19,7 +20,7 @@ internal static class UpdateProgressDialog
         bar.SetResourceReference(Control.BackgroundProperty, "ThemeSurface");
         var body = new StackPanel { Margin = new Thickness(20, 24, 20, 24) };
         body.Children.Add(text); body.Children.Add(bar);
-        var hint = new TextBlock { Text = "После проверки архива VPN остановится, файлы заменятся и приложение перезапустится. Загрузку можно отменить.", TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(0, 18, 0, 0) };
+        var hint = new TextBlock { Text = "После проверки файлов VPN остановится, обновление установится и приложение перезапустится. Загрузку можно отменить.", TextWrapping = TextWrapping.Wrap, FontSize = 12, Margin = new Thickness(0, 18, 0, 0) };
         hint.SetResourceReference(TextBlock.ForegroundProperty, "ThemeMuted"); body.Children.Add(hint);
         var cancel = DialogChrome.MakeButton("ОТМЕНА", false);
         cancel.Click += (_, _) => { lifetime.Cancel(); cancel.IsEnabled = false; text.Text = "Отменяю загрузку…"; };
@@ -36,7 +37,7 @@ internal static class UpdateProgressDialog
                     if (!dialog.IsVisible) return;
                     text.Text = update.Message; bar.Value = update.Fraction;
                 });
-                prepared = await UpdateDownloader.PrepareAsync(release, cacheRoot, progress, lifetime.Token);
+                prepared = await UpdateDownloader.PrepareAsync(release, cacheRoot, progress, lifetime.Token, installDirectory, executableName);
             }
             catch (OperationCanceledException) { }
             catch (Exception error) { failure = error; }

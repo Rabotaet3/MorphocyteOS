@@ -384,7 +384,7 @@
                                     <Grid Margin="0,16,0,0">
                                         <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
                                         <StackPanel ToolTip="Задержка HTTPS-запроса через VPN; проверка каждые 20 секунд, пока окно открыто."><TextBlock Text="ПИНГ" Foreground="{DynamicResource ThemeMuted}" FontSize="9"/><TextBlock x:Name="PingText" Text="—" Foreground="{DynamicResource ThemeText}" FontSize="18" Margin="0,4,0,0"/></StackPanel>
-                                        <StackPanel Grid.Column="1"><TextBlock Text="ЗАГРУЗКА ↓" Foreground="{DynamicResource ThemeMuted}" FontSize="9"/><TextBlock x:Name="StabilityText" Text="—" Foreground="{DynamicResource ThemeText}" FontSize="18" Margin="0,4,0,0"/></StackPanel>
+                                        <StackPanel Grid.Column="1"><TextBlock x:Name="CapacityLabel" Text="МАКС. СКОРОСТЬ ↓" Foreground="{DynamicResource ThemeMuted}" FontSize="9"/><Viewbox Stretch="Uniform" StretchDirection="DownOnly" HorizontalAlignment="Left" Margin="0,4,0,0"><TextBlock x:Name="StabilityText" Text="—" Foreground="{DynamicResource ThemeText}" FontSize="18"/></Viewbox></StackPanel>
                                     </Grid>
                                     <TextBlock x:Name="ConnectionStateText" Text="Проверка не выполнялась" Foreground="{DynamicResource ThemeText}" FontSize="11" Margin="0,11,0,0" TextWrapping="Wrap"/>
                                     <Grid Margin="0,8,0,0">

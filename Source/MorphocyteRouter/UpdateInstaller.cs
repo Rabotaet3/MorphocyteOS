@@ -16,7 +16,11 @@ internal sealed class UpdatePlan
     public List<string> ProtectedFiles { get; set; } = new();
 }
 
-internal record UpdateOutcome(bool Success, string Message);
+internal record UpdateOutcome(bool Success, string Message)
+{
+    public int HelperProcessId { get; init; }
+    public long HelperStartTicks { get; init; }
+}
 
 internal static class UpdateInstaller
 {
@@ -98,7 +102,7 @@ internal static class UpdateInstaller
             ValidatePlan(plan);
             var incoming = UpdatePackage.ParseManifest(await File.ReadAllBytesAsync(Path.Combine(operation, "payload", UpdatePackage.ManifestName)));
             if (incoming.Version != plan.Version) throw new InvalidDataException("Версия плана не совпадает с архивом.");
-            UpdatePackage.VerifyFiles(Path.Combine(operation, "payload"), incoming);
+            IncrementalUpdate.VerifyPayload(Path.Combine(operation, "payload"), incoming, plan.InstallDirectory, plan.ExecutableName);
             var acknowledged = false;
             async Task AcknowledgeAsync()
             {
@@ -137,6 +141,8 @@ internal static class UpdateInstaller
             outcome = new(false, "Обновление не установлено: " + error.Message);
         }
         var resultPath = Path.Combine(operation, "result.json");
+        using (var helper = Process.GetCurrentProcess())
+            outcome = outcome with { HelperProcessId = helper.Id, HelperStartTicks = helper.StartTime.ToUniversalTime().Ticks };
         await File.WriteAllTextAsync(resultPath, JsonSerializer.Serialize(outcome));
         if (safeToRestart && plan is not null)
         {
@@ -174,7 +180,7 @@ internal static class UpdateInstaller
         var incomingBytes = File.ReadAllBytes(UpdatePackage.ResolveFile(payload, UpdatePackage.ManifestName));
         var incoming = UpdatePackage.ParseManifest(incomingBytes);
         if (incoming.Version != plan.Version) throw new InvalidDataException("Версия плана не совпадает с архивом.");
-        UpdatePackage.VerifyFiles(payload, incoming);
+        IncrementalUpdate.VerifyPayload(payload, incoming, plan.InstallDirectory, plan.ExecutableName);
         var currentManifestPath = UpdatePackage.ResolveFile(plan.InstallDirectory, UpdatePackage.ManifestName);
         if (!File.Exists(currentManifestPath))
             throw new IOException("Для безопасного обновления нужен список файлов установленного комплекта. Распакуй новый комплект вручную один раз.");
@@ -269,6 +275,11 @@ internal static class UpdateInstaller
                 backups.Add((change.Target, backup, change.Source is null ? null : newFiles[change.Relative].Sha256));
                 afterMutation?.Invoke(++mutationCount);
             }
+            // Reused files can be edited externally after the initial preflight.
+            // Do not commit a manifest claiming bytes which are no longer present.
+            foreach (var file in retained)
+                if (!IncrementalUpdate.Matches(Target(file.Path), file))
+                    throw new IOException("Файл изменился во время обновления: " + file.Path);
             var manifestBackup = Path.Combine(rollbackDirectory, "manifest");
             File.Copy(currentManifestPath, manifestBackup, false);
             var updated = new ReleaseManifest { Version = incoming.Version, Files = retained };

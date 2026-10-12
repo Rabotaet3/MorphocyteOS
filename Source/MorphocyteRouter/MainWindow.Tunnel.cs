@@ -13,7 +13,6 @@ public partial class MainWindow
     private int _speedTestPort;
     private CancellationTokenSource? _speedTestLifetime;
     private double? _downloadCapacity;
-    private long? _currentDownload;
     private string _capacityServer = "";
     private bool _changingTunnel;
 
@@ -77,9 +76,9 @@ public partial class MainWindow
 
     private void RefreshBandwidthReadout()
     {
-        StabilityText.Text = VpnSpeedTest.FormatLoad(_currentDownload, _downloadCapacity);
-        StabilityText.ToolTip = _downloadCapacity is { } capacity
-            ? "Замеренная скорость приёма через VPN: " + ConnectionHealth.FormatRate((long)capacity)
+        StabilityText.Text = VpnSpeedTest.FormatCapacity(_downloadCapacity);
+        StabilityText.ToolTip = _downloadCapacity is > 0 && double.IsFinite(_downloadCapacity.Value)
+            ? "Максимальная скорость приёма по последнему замеру через VPN: " + StabilityText.Text
             : "Нажми «Скорость», чтобы определить пропускную способность VPN.";
     }
 
@@ -117,7 +116,7 @@ public partial class MainWindow
             _capacityServer = server;
             LastIssueText.Text = "";
             RefreshBandwidthReadout();
-            SetLog("Скорость приёма через VPN: " + ConnectionHealth.FormatRate((long)result.DownloadBytesPerSecond));
+            SetLog("Максимальная скорость приёма по замеру через VPN: " + VpnSpeedTest.FormatCapacity(result.DownloadBytesPerSecond));
         }
         catch (OperationCanceledException) when (lifetime.IsCancellationRequested) { }
         catch (Exception error)

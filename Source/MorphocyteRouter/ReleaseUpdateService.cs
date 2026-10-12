@@ -9,7 +9,10 @@ namespace MorphocyteRouter;
 
 internal record UpdateAsset(string Name, string Url, string Sha256, long Size);
 internal record UpdateCheckResult(bool IsConfigured, bool UpdateAvailable, string Message,
-    string? ReleaseUrl = null, string? LatestVersion = null, UpdateAsset? Asset = null, string? Repository = null);
+    string? ReleaseUrl = null, string? LatestVersion = null, UpdateAsset? Asset = null, string? Repository = null)
+{
+    internal UpdateAsset? IndexAsset { get; init; }
+}
 
 /// <summary>Checks configured public GitHub releases. Never downloads or executes binaries.</summary>
 internal static class ReleaseUpdateService
@@ -84,10 +87,17 @@ internal static class ReleaseUpdateService
             if (latest.CompareTo(current) > 0)
             {
                 var asset = FindAsset(root, repository!, tag!, version);
-                return new(true, true, asset is null
+                var indexName = $"MorphocyteOS-{version}-update.json";
+                var index = FindAsset(root, repository!, tag!, version, indexName, 2 * 1024 * 1024);
+                if (index is null && root.TryGetProperty("assets", out var releaseAssets) && releaseAssets.ValueKind == JsonValueKind.Array &&
+                    releaseAssets.EnumerateArray().Any(item => item.ValueKind == JsonValueKind.Object &&
+                        TryGetString(item, "name", out var name) && name == indexName))
+                    return new(true, true, "Список пакетов обновления повреждён или не имеет проверяемой контрольной суммы. Установка отменена; попробуй позже.",
+                        releaseUrl, version, Repository: repository);
+                return new UpdateCheckResult(true, true, asset is null && index is null
                     ? $"Доступна версия {version}, но проверенный архив для Windows x64 пока недоступен."
                     : $"Доступна версия {version}. Нажми «Обновить», чтобы установить её и перезапустить приложение.",
-                    releaseUrl, version, asset, repository);
+                    releaseUrl, version, asset, repository) { IndexAsset = index };
             }
             return new(true, false, latest.CompareTo(current) == 0
                 ? $"Установлена актуальная сборка ({currentVersion}). Последний стабильный релиз: {version}."
@@ -111,10 +121,11 @@ internal static class ReleaseUpdateService
     private static UpdateCheckResult InvalidResponse() => new(true, false,
         "Сервис вернул непонятные данные о релизе. Проверить версию пока не удалось.");
 
-    private static UpdateAsset? FindAsset(JsonElement root, string repository, string tag, string version)
+    private static UpdateAsset? FindAsset(JsonElement root, string repository, string tag, string version,
+        string? assetName = null, long maximumSize = 512L * 1024 * 1024)
     {
         if (!root.TryGetProperty("assets", out var assets) || assets.ValueKind != JsonValueKind.Array) return null;
-        var expected = $"MorphocyteOS-{version}-win-x64.zip";
+        var expected = assetName ?? $"MorphocyteOS-{version}-win-x64.zip";
         UpdateAsset? found = null;
         foreach (var item in assets.EnumerateArray())
         {
@@ -124,7 +135,7 @@ internal static class ReleaseUpdateService
                 !uri.IsDefaultPort || uri.UserInfo.Length != 0 || uri.Query.Length != 0 || uri.Fragment.Length != 0 ||
                 uri.AbsolutePath != $"/{repository}/releases/download/{Uri.EscapeDataString(tag)}/{Uri.EscapeDataString(expected)}" ||
                 !TryGetString(item, "digest", out var digest) || !Regex.IsMatch(digest!, @"\Asha256:[a-fA-F0-9]{64}\z") ||
-                !item.TryGetProperty("size", out var size) || size.ValueKind != JsonValueKind.Number || !size.TryGetInt64(out var bytes) || bytes <= 0 || bytes > 512L * 1024 * 1024)
+                !item.TryGetProperty("size", out var size) || size.ValueKind != JsonValueKind.Number || !size.TryGetInt64(out var bytes) || bytes <= 0 || bytes > maximumSize)
                 return null;
             found = new UpdateAsset(expected, url!, digest![7..].ToLowerInvariant(), bytes);
         }
