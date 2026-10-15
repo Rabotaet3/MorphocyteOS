@@ -213,6 +213,7 @@ public partial class MainWindow
         finally
         {
             _recoveringConnection = false; _busy = false; _operations.Release();
+            ReconcilePendingCoreExit();
             UpdateControls();
         }
     }

@@ -86,15 +86,17 @@ internal partial class Program
             var available = new UpdateCheckResult(true, true, "Fixture", LatestVersion: "9.0.0", Asset: new UpdateAsset("fixture.zip", "https://github.com/sample/app/releases/download/v9.0.0/fixture.zip", new string('a', 64), 1024), Repository: "sample/app");
             typeof(MainWindow).GetField("_availableUpdate", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, available);
             settings.AutoCheckUpdates = true;
-            Check(window.CanInstallAutomatically, "automatic update is eligible when VPN is stopped and the app is idle");
-            settings.AutoUpdateBlockedVersion = "9.0.0";
-            Check(!window.CanInstallAutomatically, "a version that failed installation is not automatically retried after rollback");
-            settings.AutoUpdateBlockedVersion = "";
+            Invoke("RefreshUpdateOffer");
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            Check(typeof(MainWindow).GetMethod("ScheduleAutoInstall", BindingFlags.Instance | BindingFlags.NonPublic) is null,
+                "automatic release checks have no automatic download or installation scheduler");
+            Check(!((TextBlock)Field("UpdateOfferText")).Text.Contains("автоматически"),
+                "update offer requires an explicit user installation action");
             typeof(MainWindow).GetField("_busy", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, true);
-            Check(!window.CanInstallAutomatically, "automatic update waits for a running UI operation");
+            Check(!Directory.Exists(Path.Combine(settings.StorageDirectory, ".update-cache")), "release discovery does not prepare update downloads while busy");
             typeof(MainWindow).GetField("_busy", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, false);
             typeof(MainWindow).GetField("_dialogBackdropVisible", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, true);
-            Check(!window.CanInstallAutomatically, "automatic update waits for settings and other modal dialogs");
+            Check(!Directory.Exists(Path.Combine(settings.StorageDirectory, ".update-cache")), "release discovery does not prepare update downloads while a dialog is open");
             typeof(MainWindow).GetField("_dialogBackdropVisible", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, false);
             settings.AutoCheckUpdates = false;
             settings.LaunchAtSignIn = true; settings.AutoConnectOnStartup = true; settings.Save();
@@ -104,7 +106,7 @@ internal partial class Program
             Check(core.IsRunning && File.ReadAllText(config) == yaml && settings.GetDraft(config) is not null,
                 "startup connection uses the saved YAML and retains unapplied routing drafts");
             settings.AutoCheckUpdates = true;
-            Check(!window.CanInstallAutomatically, "automatic update never interrupts the running VPN");
+            Check(core.IsRunning && !Directory.Exists(Path.Combine(settings.StorageDirectory, ".update-cache")), "release discovery never downloads an update or interrupts the running VPN");
             settings.AutoCheckUpdates = false;
             var activeConfig = (string)Field("_runtimeConfigPath");
             Check(ClashConfigDocument.Load(activeConfig).Rules[0].Route == "DIRECT" && rules[0].Route == "Primary",

@@ -11,6 +11,7 @@ public sealed class CoreProcessManager
     private readonly TimeSpan _stopTimeout;
     private Process? _process;
     private ProcessLifetimeJob? _processLifetimeJob;
+    private WindowsConsoleProcess? _consoleProcess;
     private Task? _pendingStop;
     private string? _startupFailure;
     private readonly object _failureStateGate = new();
@@ -34,13 +35,25 @@ public sealed class CoreProcessManager
 
     public CoreProcessManager(Func<Process, Task>? terminate = null, TimeSpan? stopTimeout = null)
     {
-        _stopTimeout = stopTimeout ?? TimeSpan.FromSeconds(4);
-        _terminate = terminate ?? (process => Task.Run(() =>
-        {
-            if (!process.HasExited) process.Kill(entireProcessTree: true);
-            process.WaitForExit();
-        }));
+        _stopTimeout = stopTimeout ?? TimeSpan.FromSeconds(8);
+        _terminate = terminate ?? TerminateAsync;
     }
+
+    private Task TerminateAsync(Process process) => Task.Run(async () =>
+    {
+        if (_consoleProcess is { } console && ReferenceEquals(console.Process, process) && !process.HasExited)
+        {
+            try
+            {
+                if (await console.TryCloseAsync(TimeSpan.FromSeconds(4))) return;
+            }
+            catch (Exception) { /* A failed signal must not orphan the owned core. */ }
+            if (!process.HasExited)
+                Output?.Invoke("Ядро не подтвердило корректное завершение; выполняется принудительная остановка. FakeIP-кэш мог не сохраниться.");
+        }
+        if (!process.HasExited) process.Kill(entireProcessTree: true);
+        await process.WaitForExitAsync();
+    });
 
     public async Task StartAsync(ProcessStartInfo info, CancellationToken cancellationToken = default)
     {
@@ -56,19 +69,24 @@ public sealed class CoreProcessManager
                 _startupVerificationComplete = false;
                 _lateFailureQueued = false;
             }
-            var process = new Process { StartInfo = info, EnableRaisingEvents = true };
+            var privateConsole = OperatingSystem.IsWindows() && CoreBackend.IsSingBox(info.FileName);
+            var console = privateConsole ? WindowsConsoleProcess.Start(info) : null;
+            var process = console?.Process ?? new Process { StartInfo = info };
             process.OutputDataReceived += HandleOutput;
             process.ErrorDataReceived += HandleOutput;
             process.Exited += HandleExit;
             try
             {
-                if (!process.Start()) throw new IOException("Не удалось запустить ядро.");
+                if (console is null && !process.Start()) throw new IOException("Не удалось запустить ядро.");
             }
             catch { process.Dispose(); throw; }
             _process = process;
+            _consoleProcess = console;
             try
             {
                 _processLifetimeJob = ProcessLifetimeJob.Attach(process);
+                process.EnableRaisingEvents = true;
+                console?.Resume(HandleOutputLine);
             }
             catch (Exception attachError)
             {
@@ -85,8 +103,8 @@ public sealed class CoreProcessManager
                 }
                 throw new IOException("Не удалось включить безопасную очистку ядра при аварийном закрытии приложения. Mihomo не оставлен работать намеренно; проверь статус ядра и журнал.", attachError);
             }
-            if (info.RedirectStandardOutput) process.BeginOutputReadLine();
-            if (info.RedirectStandardError) process.BeginErrorReadLine();
+            if (console is null && info.RedirectStandardOutput) process.BeginOutputReadLine();
+            if (console is null && info.RedirectStandardError) process.BeginErrorReadLine();
             await Task.Delay(TimeSpan.FromMilliseconds(1400), cancellationToken);
             if (process.HasExited)
             {
@@ -168,6 +186,8 @@ public sealed class CoreProcessManager
         var process = _process;
         _process = null;
         _pendingStop = null;
+        _consoleProcess?.Dispose();
+        _consoleProcess = null;
         process.OutputDataReceived -= HandleOutput;
         process.ErrorDataReceived -= HandleOutput;
         process.Exited -= HandleExit;
@@ -178,15 +198,20 @@ public sealed class CoreProcessManager
 
     private void HandleOutput(object sender, DataReceivedEventArgs e)
     {
-        if (string.IsNullOrWhiteSpace(e.Data)) return;
-        if (IsNetworkStartupFailure(e.Data) && sender is Process process)
+        if (sender is Process process && e.Data is { } line) HandleOutputLine(process, line);
+    }
+
+    private void HandleOutputLine(Process process, string line)
+    {
+        if (string.IsNullOrWhiteSpace(line)) return;
+        if (IsNetworkStartupFailure(line))
         {
             var handleLateFailure = false;
             lock (_failureStateGate)
             {
                 if (ReferenceEquals(process, _process))
                 {
-                    _startupFailure ??= e.Data;
+                    _startupFailure ??= line;
                     if (_startupVerificationComplete && !_lateFailureQueued)
                     {
                         _lateFailureQueued = true;
@@ -194,9 +219,9 @@ public sealed class CoreProcessManager
                     }
                 }
             }
-            if (handleLateFailure) _ = HandleLateStartupFailureAsync(process, e.Data);
+            if (handleLateFailure) _ = HandleLateStartupFailureAsync(process, line);
         }
-        Output?.Invoke(e.Data);
+        Output?.Invoke(line);
     }
 
     private async Task HandleLateStartupFailureAsync(Process process, string failure)
@@ -294,7 +319,8 @@ public sealed class CoreProcessManager
     }
     private void HandleExit(object? sender, EventArgs e) => Exited?.Invoke();
 
-    public static async Task<(bool Success, string Message)> ValidateAsync(string executable, string configPath, CancellationToken cancellationToken = default)
+    public static async Task<(bool Success, string Message)> ValidateAsync(string executable, string configPath,
+        CancellationToken cancellationToken = default, bool fullTunnel = false)
     {
         if (CoreBackend.IsSingBox(executable) && !configPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
         {
@@ -303,7 +329,7 @@ public sealed class CoreProcessManager
             {
                 using var api = new CoreDiagnostics();
                 var document = ClashConfigDocument.Load(configPath);
-                await File.WriteAllTextAsync(temporary, SingBoxConfig.Build(document, api.Port, api.Secret, false), cancellationToken);
+                await File.WriteAllTextAsync(temporary, SingBoxConfig.Build(document, api.Port, api.Secret, fullTunnel), cancellationToken);
                 return await ValidateAsync(executable, temporary, cancellationToken);
             }
             catch (InvalidDataException error) { return (false, error.Message); }

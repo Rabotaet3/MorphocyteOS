@@ -4,6 +4,7 @@ using System.Collections.ObjectModel;
 using System.ComponentModel;
 using System.IO;
 using System.Text;
+using System.Text.Json;
 using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Data;
@@ -37,6 +38,9 @@ public partial class MainWindow : Window
     private ScrollViewer? _logScrollViewer;
     private DateTime _startedAt;
     private bool _dirty, _loading, _busy, _closing, _allowClose, _draftSaved;
+    private int _intentionalCoreStops;
+    private bool _pendingUnexpectedCoreExit;
+    private Action<bool> _setStartupRegistration = StartupRegistration.SetEnabled;
     private int _dialogBackdropVersion;
     private bool _dialogBackdropVisible, _logDisplayDeferred;
     private static readonly SemaphoreSlim LogWriteGate = new(1, 1);
@@ -90,15 +94,13 @@ public partial class MainWindow : Window
         LogText.Loaded += LogText_Loaded;
 
         _core.Output += message => _pendingCoreOutput.Enqueue(message);
-        _core.Exited += () => Post(() =>
+        _core.Exited += () =>
         {
-            if (_busy || _closing || _core.IsRunning) return;
-            _uptimeTimer.Stop();
-            SetStatus("ЯДРО ОСТАНОВЛЕНО", "Смотри журнал событий", "#FFD166");
-            ResetDiagnostics();
-            UpdateControls();
-            RecoverUnexpectedCoreExit();
-        });
+            // Capture the stop intent on the event thread: its UI callback may run
+            // only after a stop/restart operation has already released its gate.
+            var intentional = Volatile.Read(ref _intentionalCoreStops) > 0;
+            Post(() => HandleCoreExit(intentional));
+        };
         _core.StartupFailed += message => Post(() =>
         {
             _uptimeTimer.Stop();
@@ -184,7 +186,6 @@ public partial class MainWindow : Window
                 _dialogBackdropVisible = false;
                 UpdateUptime();
                 RefreshDeferredLog();
-                ScheduleAutoInstall();
             };
             DialogShade.BeginAnimation(UIElement.OpacityProperty, shadeFade);
         }
@@ -221,9 +222,29 @@ public partial class MainWindow : Window
         finally
         {
             _busy = false;
-            UpdateControls();
             _operations.Release();
+            ReconcilePendingCoreExit();
+            UpdateControls();
         }
+    }
+
+    private void HandleCoreExit(bool intentional)
+    {
+        if (intentional || _closing || _core.IsRunning) return;
+        _pendingUnexpectedCoreExit = true;
+        ReconcilePendingCoreExit();
+    }
+
+    private void ReconcilePendingCoreExit()
+    {
+        if (!_pendingUnexpectedCoreExit || _busy) return;
+        _pendingUnexpectedCoreExit = false;
+        if (_closing || _core.IsRunning) return; // An operation already replaced the exited child.
+        _uptimeTimer.Stop();
+        SetStatus("ЯДРО ОСТАНОВЛЕНО", "Смотри журнал событий", "#FFD166");
+        ResetDiagnostics();
+        UpdateControls();
+        RecoverUnexpectedCoreExit();
     }
 
     private void UpdateControls()
@@ -237,7 +258,6 @@ public partial class MainWindow : Window
         AddRuleButton.IsEnabled = _document is not null && !_busy && !_closing;
         InstallUpdateButton.IsEnabled = !_busy && !_closing;
         RefreshUpdateOffer();
-        ScheduleAutoInstall();
         EmptyRulesMessage.Opacity = 1;
         CheckConnectionButton.IsEnabled = _core.IsRunning && !_busy && !_closing && !_checkingConnection;
         RefreshConnectionsButton.IsEnabled = _core.IsRunning && !_closing;
@@ -254,12 +274,17 @@ public partial class MainWindow : Window
     private async Task LoadConfigAsync(string path)
     {
         if (_dirty) await SaveDraftAsync();
-        CancelConnectionIntent();
         var loaded = await Task.Run(() => ClashConfigDocument.Load(path)).WaitAsync(TimeSpan.FromSeconds(10), _lifetime.Token);
         var errors = loaded.Validate();
         if (errors.Count > 0) throw new InvalidDataException(string.Join(" ", errors));
         _lifetime.Token.ThrowIfCancellationRequested();
-        if (!await StopCoreAsync()) throw new IOException("Смена профиля отменена: остановка ядра не подтверждена.");
+        var previousIntent = _connectionRequested;
+        CancelConnectionIntent();
+        if (!await StopCoreAsync())
+        {
+            _connectionRequested = previousIntent;
+            throw new IOException("Смена профиля отменена: остановка ядра не подтверждена.");
+        }
 
         _loading = true;
         try
@@ -336,7 +361,7 @@ public partial class MainWindow : Window
         try
         {
             await File.WriteAllTextAsync(temp, candidate, new UTF8Encoding(false), _lifetime.Token);
-            var check = await CoreProcessManager.ValidateAsync(_settings.CorePath, temp, _lifetime.Token);
+            var check = await CoreProcessManager.ValidateAsync(_settings.CorePath, temp, _lifetime.Token, fullTunnel: _settings.FullTunnel);
             if (!check.Success) throw new InvalidDataException("Конфиг не применён. Проверка ядра: " + check.Message);
             _lifetime.Token.ThrowIfCancellationRequested();
             if (!await StopCoreAsync()) throw new IOException("Конфиг не изменён: остановка ядра не подтверждена.");
@@ -398,7 +423,7 @@ public partial class MainWindow : Window
         if (routingErrors.Count > 0) throw new InvalidDataException(string.Join("\n", routingErrors));
 
         SetStatus("ПРОВЕРКА…", "Проверяю конфигурацию", "#FFD166");
-        var check = await CoreProcessManager.ValidateAsync(_settings.CorePath, _settings.ConfigPath, startToken);
+        var check = await CoreProcessManager.ValidateAsync(_settings.CorePath, _settings.ConfigPath, startToken, fullTunnel: _settings.FullTunnel);
         if (!check.Success)
         {
             SetStatus("ОШИБКА YAML", "Ядро не запущено", "#FF6B8A");
@@ -414,13 +439,14 @@ public partial class MainWindow : Window
             var runtimeDirectory = Path.Combine(_settings.StorageDirectory, ".runtime");
             Directory.CreateDirectory(runtimeDirectory);
             _runtimeConfigPath = Path.Combine(runtimeDirectory, "active-" + Guid.NewGuid().ToString("N") + (CoreBackend.IsSingBox(_settings.CorePath) ? ".json" : ".yaml"));
-            var selectedServer = _settings.ProfileSubscriptions.GetValueOrDefault(_settings.ConfigPath)?.SelectedServer;
+            var selectedServer = _settings.ProfileSelections.GetValueOrDefault(_settings.ConfigPath)
+                ?? _settings.ProfileSubscriptions.GetValueOrDefault(_settings.ConfigPath)?.SelectedServer;
             await File.WriteAllTextAsync(_runtimeConfigPath, CoreBackend.RuntimeText(_settings.CorePath, actual, _diagnostics, _settings.FullTunnel, _speedTestPort, selectedServer), new UTF8Encoding(false), startToken);
-            var runtimeCheck = await CoreProcessManager.ValidateAsync(_settings.CorePath, _runtimeConfigPath, startToken);
+            var runtimeCheck = await CoreProcessManager.ValidateAsync(_settings.CorePath, _runtimeConfigPath, startToken, fullTunnel: _settings.FullTunnel);
             if (!runtimeCheck.Success) throw new InvalidDataException(runtimeCheck.Message);
             await _core.StartAsync(CoreProcessManager.CreateStartInfo(_settings.CorePath, _runtimeConfigPath,
                 Path.GetDirectoryName(_settings.ConfigPath)), startToken);
-            if (CoreBackend.IsSingBox(_settings.CorePath))
+            if (CoreBackend.IsSingBox(_settings.CorePath) || _settings.FullTunnel || !string.IsNullOrWhiteSpace(selectedServer))
             {
                 // A live process alone does not mean its TUN / API is ready.
                 using var ready = CancellationTokenSource.CreateLinkedTokenSource(startToken);
@@ -432,6 +458,8 @@ public partial class MainWindow : Window
                     catch (System.Net.Http.HttpRequestException) { await Task.Delay(150, ready.Token); }
                 }
             }
+            if (!string.IsNullOrWhiteSpace(selectedServer) && actual.VpnRoute is { } selectionGroup)
+                await _diagnostics.RestoreSelectionAsync(selectionGroup, selectedServer, startToken);
             if (_settings.FullTunnel && actual.VpnRoute is { } route)
             {
                 var selected = await _diagnostics.ReadSelectionAsync(route, startToken);
@@ -453,7 +481,7 @@ public partial class MainWindow : Window
         }
         catch
         {
-            if ((_settings.FullTunnel || CoreBackend.IsSingBox(_settings.CorePath)) && _core.HasTrackedProcess) await StopCoreAsync();
+            if (_core.HasTrackedProcess) await StopCoreAsync();
             if (!_core.HasTrackedProcess) ResetDiagnostics();
             SetStatus("ОШИБКА ЗАПУСКА", _core.IsRunning ? "Ядро требует остановки" : "Ядро не запущено", "#FF6B8A");
             throw;
@@ -515,12 +543,16 @@ public partial class MainWindow : Window
     {
         if (!_core.HasTrackedProcess) return true;
         SetStatus("ОСТАНОВКА…", "Ожидаю завершения ядра", "#FFD166");
-        var stopped = await _core.StopAsync();
+        bool stopped;
+        Interlocked.Increment(ref _intentionalCoreStops);
+        try { stopped = await _core.StopAsync(); }
+        finally { Interlocked.Decrement(ref _intentionalCoreStops); }
         if (stopped)
         {
-            if (_selectedConnection.Length > 0 && _settings.ProfileSubscriptions.TryGetValue(_settings.ConfigPath, out var source))
+            if (_selectedConnection.Length > 0)
             {
-                source.SelectedServer = _selectedConnection;
+                _settings.ProfileSelections[_settings.ConfigPath] = _selectedConnection;
+                if (_settings.ProfileSubscriptions.TryGetValue(_settings.ConfigPath, out var source)) source.SelectedServer = _selectedConnection;
                 try { await SaveSettingsAsync(); }
                 catch { SetLog("Не удалось сохранить выбор сервера. Остановка VPN выполнена."); }
             }
@@ -942,58 +974,173 @@ public partial class MainWindow : Window
     private async Task<SettingsDialogSelection?> SaveSettingsSelectionAsync(SettingsDialogSelection choice)
     {
         SettingsDialogSelection? applied = null;
-        await RunExclusiveAsync(async () =>
+        await RunExclusiveAsync(async () => applied = await ApplySettingsSelectionCoreAsync(choice));
+        return applied;
+    }
+
+    private async Task<SettingsDialogSelection> ApplySettingsSelectionCoreAsync(SettingsDialogSelection choice)
+    {
+        // Keep the settings object (and its private storage path) stable, but snapshot
+        // all persisted values and editor state before a multi-step change.
+        var previous = JsonSerializer.Deserialize<AppSettings>(JsonSerializer.Serialize(_settings))!;
+        var document = _document;
+        var editor = CaptureRuleEditState(_dirty);
+        var history = _historyState;
+        var undo = _undoRules.ToArray(); var redo = _redoRules.ToArray();
+        var appliedRules = _appliedRules;
+        var draftSaved = _draftSaved;
+        var wanted = _connectionRequested;
+        var wasRunning = _core.IsRunning;
+        var startupAttempted = false;
+        var settingsChanged = false;
+        try
         {
-            string? transferredPath = null;
+            var requestedCore = string.IsNullOrWhiteSpace(choice.CorePath) ? _settings.CorePath : Path.GetFullPath(choice.CorePath);
+            var coreChanged = !string.Equals(requestedCore, _settings.CorePath, StringComparison.OrdinalIgnoreCase);
+            if (coreChanged && _core.HasTrackedProcess) throw new InvalidOperationException("Перед сменой ядра останови VPN.");
+            if (coreChanged && !File.Exists(requestedCore)) throw new FileNotFoundException("Выбранный файл ядра не найден.");
+
+            string? preparedPath = null;
             if (choice.Transfer is { } transfer)
+                preparedPath = await ConfigurationTransfer.CreateProfileAsync(transfer, requestedCore, _settings.StorageDirectory, _lifetime.Token, fullTunnel: transfer.Options.FullTunnel ?? _settings.FullTunnel);
+            else if (choice.Imported is { } imported)
             {
-                if (_core.HasTrackedProcess && !string.Equals(choice.CorePath, _settings.CorePath, StringComparison.OrdinalIgnoreCase))
-                    throw new InvalidOperationException("Перед сменой ядра останови VPN.");
-                transferredPath = await ConfigurationTransfer.CreateProfileAsync(transfer, choice.CorePath, _settings.StorageDirectory, _lifetime.Token);
+                if (!File.Exists(requestedCore)) requestedCore = await BundledResources.EnsureCoreAsync(_lifetime.Token);
+                preparedPath = await ProfileStorage.CreateAsync(imported, requestedCore, _settings.StorageDirectory, _lifetime.Token, fullTunnel: _settings.FullTunnel);
             }
+            var requestedProfile = preparedPath ?? (string.IsNullOrWhiteSpace(choice.ConfigPath) ? _settings.ConfigPath : Path.GetFullPath(choice.ConfigPath));
+            var profileChanged = !string.Equals(requestedProfile, _settings.ConfigPath, StringComparison.OrdinalIgnoreCase);
+            // Validate before changing theme, autostart or the currently running VPN.
+            if (preparedPath is null && profileChanged)
+            {
+                var candidate = await Task.Run(() => ClashConfigDocument.Load(requestedProfile)).WaitAsync(TimeSpan.FromSeconds(10), _lifetime.Token);
+                var errors = candidate.Validate();
+                if (errors.Count > 0) throw new InvalidDataException(string.Join(" ", errors));
+            }
+            if (preparedPath is null && (coreChanged || profileChanged) && File.Exists(requestedProfile))
+            {
+                var compatibility = await CoreProcessManager.ValidateAsync(requestedCore, requestedProfile, _lifetime.Token, fullTunnel: _settings.FullTunnel);
+                if (!compatibility.Success) throw new InvalidDataException(compatibility.Message);
+            }
+            _lifetime.Token.ThrowIfCancellationRequested();
+            settingsChanged = true;
+            _settings.CorePath = requestedCore;
+            if (choice.Transfer is { } package) await ImportConfigurationAsync(package, preparedPath!);
+            else if (choice.Imported is { } importedProfile)
+            {
+                _settings.PreferredRoute = "VPN";
+                if (importedProfile.SubscriptionUrl is { } url)
+                    _settings.ProfileSubscriptions[preparedPath!] = SubscriptionSource.Create(url, DateTimeOffset.UtcNow);
+                await LoadConfigAsync(preparedPath!);
+            }
+            else if (profileChanged) await LoadConfigAsync(requestedProfile);
+
             _settings.Theme = ThemeManager.Normalize(choice.Theme);
             _settings.InterfaceScale = AppSettings.NormalizeScale(choice.InterfaceScale);
             _settings.AutoCheckUpdates = choice.AutoCheckUpdates;
-            if (choice.LaunchAtSignIn != _settings.LaunchAtSignIn)
-                StartupRegistration.SetEnabled(choice.LaunchAtSignIn);
             _settings.LaunchAtSignIn = choice.LaunchAtSignIn;
             _settings.AutoConnectOnStartup = choice.AutoConnectOnStartup;
             _settings.AutoReconnect = choice.AutoReconnect;
-            if (!_settings.AutoReconnect) _recoveryLifetime?.Cancel();
+            if (choice.LaunchAtSignIn != previous.LaunchAtSignIn)
+            {
+                // Even a throwing Windows registration may have partially changed
+                // the task; restore the former value in the failure path.
+                startupAttempted = true;
+                _setStartupRegistration(choice.LaunchAtSignIn);
+            }
+            await SaveSettingsAsync();
+            // The settings dialog can close while this async save is pending and
+            // roll its preview back. Apply the committed palette only afterwards.
             ThemeManager.Apply(_settings.Theme);
             ApplyInterfaceScale(_settings.InterfaceScale);
-            await SaveSettingsAsync();
-            if (!string.Equals(choice.CorePath, _settings.CorePath, StringComparison.OrdinalIgnoreCase)
-                && !string.IsNullOrWhiteSpace(choice.CorePath))
-            {
-                if (_core.HasTrackedProcess) throw new InvalidOperationException("Перед сменой ядра останови VPN.");
-                if (!File.Exists(choice.CorePath)) throw new FileNotFoundException("Выбранный файл ядра не найден.");
-                if (CoreBackend.IsSingBox(choice.CorePath) && choice.Imported is null && choice.Transfer is null && File.Exists(choice.ConfigPath))
-                {
-                    var compatibility = await CoreProcessManager.ValidateAsync(choice.CorePath, choice.ConfigPath, _lifetime.Token);
-                    if (!compatibility.Success) throw new InvalidDataException(compatibility.Message);
-                }
-                _settings.CorePath = Path.GetFullPath(choice.CorePath);
-                await SaveSettingsAsync();
-                SetLog("Выбрано ядро: " + CoreBackend.Name(_settings.CorePath) + ".");
-            }
-            if (choice.Transfer is { } package) await ImportConfigurationAsync(package, transferredPath!);
-            else if (choice.Imported is { } imported) await ImportProfileAsync(imported);
-            else if (!string.Equals(choice.ConfigPath, _settings.ConfigPath, StringComparison.OrdinalIgnoreCase)
-                && !string.IsNullOrWhiteSpace(choice.ConfigPath))
-                await LoadConfigAsync(choice.ConfigPath);
+            if (!_settings.AutoReconnect) _recoveryLifetime?.Cancel();
+            if (coreChanged) SetLog("Выбрано ядро: " + CoreBackend.Name(_settings.CorePath) + ".");
             SetLog("Настройки сохранены.");
-            applied = new SettingsDialogSelection(_settings.ConfigPath, _settings.CorePath, _settings.Theme,
+            return new SettingsDialogSelection(_settings.ConfigPath, _settings.CorePath, _settings.Theme,
                 _settings.InterfaceScale, _settings.AutoCheckUpdates, LaunchAtSignIn: _settings.LaunchAtSignIn,
                 AutoConnectOnStartup: _settings.AutoConnectOnStartup, AutoReconnect: _settings.AutoReconnect);
-        });
-        return applied;
+        }
+        catch (Exception saveError)
+        {
+            var rollbackIncomplete = false;
+            if (settingsChanged)
+            {
+                RestoreSettingsSnapshot(previous);
+                _document = document;
+                var loadingBeforeRollback = _loading;
+                _loading = true;
+                try
+                {
+                    var restoredAction = _settings.PreferredRoute is "DIRECT" or "REJECT" ? _settings.PreferredRoute : "VPN";
+                    RouteCombo.SelectedItem = RouteCombo.Items.OfType<ComboBoxItem>().First(item => Equals(item.Tag, restoredAction));
+                    UpdateRouteHint(restoredAction);
+                }
+                finally { _loading = loadingBeforeRollback; }
+                _folderOrder.Clear(); _folderOrder.AddRange(editor.Folders);
+                ReplaceRules(editor.Rules);
+                _dirty = editor.Dirty; _draftSaved = draftSaved;
+                _undoRules.Clear(); _undoRules.AddRange(undo); _redoRules.Clear(); _redoRules.AddRange(redo);
+                _historyState = history; _appliedRules = appliedRules;
+                SelectMainPage(previous.ShowEventLog);
+                _connectionRequested = wanted;
+                if (startupAttempted)
+                {
+                    try { _setStartupRegistration(previous.LaunchAtSignIn); }
+                    catch
+                    {
+                        rollbackIncomplete = true;
+                        SetLog("Не удалось восстановить прежний автозапуск Windows. Проверь настройку «Запуск».");
+                    }
+                }
+                try { await SaveSettingsAsync(); }
+                catch
+                {
+                    rollbackIncomplete = true;
+                    SetLog("Прежние настройки восстановлены в памяти, но файл недоступен для записи.");
+                }
+                if (wasRunning && !_core.IsRunning && !_closing)
+                {
+                    try
+                    {
+                        await StartCoreAsync(applyDraft: false);
+                        // A declined conflict/elevation prompt can return without
+                        // throwing, but it still did not restore the old VPN.
+                        if (!_core.IsRunning) throw new IOException("Прежнее ядро не запущено.");
+                    }
+                    catch
+                    {
+                        rollbackIncomplete = true;
+                        SetLog("Настройки отменены, но прежний VPN не удалось запустить. Запусти его вручную.");
+                    }
+                }
+            }
+            ThemeManager.Apply(previous.Theme);
+            ApplyInterfaceScale(previous.InterfaceScale);
+            RefreshRuleHistoryControls(); RefreshConnectionCard();
+            if (rollbackIncomplete)
+                throw new IOException("Настройки не сохранены; не все изменения удалось отменить. Проверь журнал, автозапуск и состояние VPN.", saveError);
+            throw;
+        }
+    }
+
+    private void RestoreSettingsSnapshot(AppSettings previous)
+    {
+        // Copy only public persisted properties. Recovery metadata and the storage
+        // path belong to the existing instance and must never be replaced.
+        foreach (var property in typeof(AppSettings).GetProperties())
+            if (property.GetMethod?.IsPublic == true && property.SetMethod?.IsPublic == true)
+                property.SetValue(_settings, property.GetValue(previous));
+        _settings.ProfileSubscriptions = new(_settings.ProfileSubscriptions, StringComparer.OrdinalIgnoreCase);
+        _settings.ProfileSelections = new(_settings.ProfileSelections, StringComparer.OrdinalIgnoreCase);
+        _settings.ProfileDrafts = new(_settings.ProfileDrafts, StringComparer.OrdinalIgnoreCase);
+        _settings.ProfileRuleStates = new(_settings.ProfileRuleStates, StringComparer.OrdinalIgnoreCase);
+        _settings.ProfileFolderOrders = new(_settings.ProfileFolderOrders, StringComparer.OrdinalIgnoreCase);
     }
 
     private async Task ImportProfileAsync(ImportedProfile imported)
     {
         if (!File.Exists(_settings.CorePath)) _settings.CorePath = await BundledResources.EnsureCoreAsync(_lifetime.Token);
-        var path = await ProfileStorage.CreateAsync(imported, _settings.CorePath, _settings.StorageDirectory, _lifetime.Token);
+        var path = await ProfileStorage.CreateAsync(imported, _settings.CorePath, _settings.StorageDirectory, _lifetime.Token, fullTunnel: _settings.FullTunnel);
         _settings.PreferredRoute = "VPN";
         if (imported.SubscriptionUrl is { } url) _settings.ProfileSubscriptions[path] = SubscriptionSource.Create(url, DateTimeOffset.UtcNow);
         await LoadConfigAsync(path);

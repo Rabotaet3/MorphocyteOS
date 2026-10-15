@@ -33,9 +33,11 @@ internal static class SubscriptionRefresh
                 if (newMembers.Count == 0)
                     throw new InvalidDataException("После обновления одна из групп останется без серверов. Измени её состав перед обновлением; текущий профиль сохранён.");
                 // Keep a still available selection first, including when imported nodes were reordered.
-                if (newNodes.Contains(selected) && newMembers.Remove(selected)) newMembers.Insert(0, selected);
+                var isSelectedGroup = group.Children.TryGetValue(new YamlScalarNode("name"), out var groupName)
+                    && (groupName as YamlScalarNode)?.Value == document.VpnRoute;
+                if (isSelectedGroup && newNodes.Contains(selected) && newMembers.Remove(selected)) newMembers.Insert(0, selected);
                 // A removed VPN selection must not silently fall back to DIRECT or REJECT.
-                if (selectionRemoved && oldMembers.Contains(selected))
+                if (isSelectedGroup && selectionRemoved && oldMembers.Contains(selected))
                 {
                     var fallback = newMembers.FirstOrDefault(newNodes.Contains);
                     if (fallback is null) throw new InvalidDataException("В группе выбранного сервера не осталось VPN-подключений. Измени состав группы; текущий профиль сохранён.");

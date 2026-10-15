@@ -77,6 +77,8 @@ public partial class MainWindow
     private void RefreshBandwidthReadout()
     {
         StabilityText.Text = VpnSpeedTest.FormatCapacity(_downloadCapacity);
+        if (_downloadCapacity is null && _speedTestLifetime is null)
+        { SpeedProgressText.Text = ""; SpeedProgressText.Visibility = Visibility.Hidden; }
         StabilityText.ToolTip = _downloadCapacity is > 0 && double.IsFinite(_downloadCapacity.Value)
             ? "Наибольшая измеренная скорость приёма по последнему тесту VPN: " + StabilityText.Text
             : "Нажми «Скорость», чтобы определить пропускную способность VPN.";
@@ -94,6 +96,15 @@ public partial class MainWindow
             || _document?.VpnRoute is not { } route || _speedTestPort == 0) return;
         var lifetime = CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token, _diagnosticLifetime?.Token ?? _lifetime.Token);
         _speedTestLifetime = lifetime;
+        var completed = false;
+        var shownProgress = 0;
+        void ShowProgress(int percent)
+        {
+            shownProgress = Math.Max(shownProgress, Math.Clamp(percent, 0, 100));
+            SpeedProgressText.Text = shownProgress + " %";
+            SpeedProgressText.Visibility = Visibility.Visible;
+        }
+        ShowProgress(0);
         LastIssueText.Text = "";
         RefreshTunnelControls();
         var transferStarted = false;
@@ -107,13 +118,21 @@ public partial class MainWindow
             SetLog("Замер скорости через VPN: тестовая загрузка Cloudflare, до 64 МБ / 15 секунд.");
             using var test = new VpnSpeedTest(_speedTestPort, diagnostics.Secret, socksProxy: CoreBackend.IsSingBox(_settings.CorePath));
             transferStarted = true;
-            var result = await test.MeasureAsync(lifetime.Token);
+            var progress = new Progress<int>(percent =>
+            {
+                if (!completed && ReferenceEquals(_speedTestLifetime, lifetime) && !lifetime.IsCancellationRequested && !_closing)
+                    ShowProgress(1 + percent * 96 / 100);
+            });
+            var result = await test.MeasureAsync(lifetime.Token, progress);
+            ShowProgress(98);
             var after = await diagnostics.ReadSelectionAsync(route, lifetime.Token);
             if (after != server)
             { _downloadCapacity = null; _capacityServer = ""; RefreshBandwidthReadout(); LastIssueText.Text = "Сервер изменился во время замера. Повтори проверку."; SetLog(LastIssueText.Text); return; }
             if (lifetime.IsCancellationRequested || !ReferenceEquals(diagnostics, _diagnostics) || !_core.IsRunning || _closing) return;
             _downloadCapacity = result.DownloadBytesPerSecond;
             _capacityServer = server;
+            completed = true;
+            ShowProgress(100);
             LastIssueText.Text = "";
             RefreshBandwidthReadout();
             SetLog("Максимальная скорость приёма по замеру через VPN: " + VpnSpeedTest.FormatCapacity(result.DownloadBytesPerSecond));
@@ -127,6 +146,7 @@ public partial class MainWindow
         finally
         {
             if (ReferenceEquals(_speedTestLifetime, lifetime)) _speedTestLifetime = null;
+            if (!completed) { SpeedProgressText.Text = ""; SpeedProgressText.Visibility = Visibility.Hidden; }
             lifetime.Dispose();
             if (!_closing) RefreshTunnelControls();
         }

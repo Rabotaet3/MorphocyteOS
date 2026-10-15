@@ -36,7 +36,8 @@ internal partial class Program
         foreach (var stack in new[] { "system", "gvisor" })
         {
             var text = SingBoxConfig.Build(Doc("tun: {stack: " + stack + ", mtu: 1500}\nrules:\n - MATCH,DIRECT\n"), api.Port, api.Secret, true);
-            using var json = JsonDocument.Parse(text); var tun = json.RootElement.GetProperty("inbounds")[0];
+            using var json = JsonDocument.Parse(text);
+            var tun = json.RootElement.GetProperty("inbounds").EnumerateArray().Single(item => item.GetProperty("type").GetString() == "tun");
             Check(tun.GetProperty("mtu").GetInt32() == 1500 && tun.GetProperty("stack").GetString() == stack, "explicit TUN MTU and stack survive translation: " + stack);
             await nativeCheck(text, "real sing-box validates explicit TUN settings: " + stack);
         }

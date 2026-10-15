@@ -33,13 +33,13 @@ public sealed class AppSettings
     public string Theme { get; set; } = "Тёмная морфоцитная";
     public double InterfaceScale { get; set; } = 1;
     public bool AutoCheckUpdates { get; set; } = true;
-    public string AutoUpdateBlockedVersion { get; set; } = "";
     public bool ShowEventLog { get; set; }
     public bool LaunchAtSignIn { get; set; }
     public bool AutoConnectOnStartup { get; set; } = true;
     public bool AutoReconnect { get; set; } = true;
     public bool FullTunnel { get; set; }
     public Dictionary<string, SubscriptionSource> ProfileSubscriptions { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, string> ProfileSelections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     // Legacy fields migrate 1.5.x drafts on load.
     public bool HasRuleDraft { get; set; }
     public string DraftConfigPath { get; set; } = "";
@@ -102,6 +102,10 @@ public sealed class AppSettings
             state.Rules = NormalizeRules(state.Rules);
         });
         settings.ProfileSubscriptions = NormalizeProfiles(settings.ProfileSubscriptions, source => { source.ProtectedUrl ??= ""; source.SelectedServer ??= ""; });
+        settings.ProfileSelections = NormalizeProfiles(settings.ProfileSelections, _ => { });
+        foreach (var key in settings.ProfileSelections.Keys.ToArray())
+            if (settings.ProfileSelections[key].Length is 0 or > 256 || settings.ProfileSelections[key].Any(char.IsControl))
+                settings.ProfileSelections.Remove(key);
         settings.ProfileFolderOrders = NormalizeProfiles(settings.ProfileFolderOrders, _ => { });
         foreach (var key in settings.ProfileFolderOrders.Keys.ToArray())
             settings.ProfileFolderOrders[key] = settings.ProfileFolderOrders[key]

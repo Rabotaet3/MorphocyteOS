@@ -42,34 +42,35 @@ internal static class SingBoxConfig
         if (Get(root, "sub-rules") is YamlMappingNode { Children.Count: > 0 }) throw Unsupported("sub-rules");
         if (Text(root, "interface-name").Length > 0 || Get(root, "routing-mark") is not null) throw Unsupported("привязка исходящего интерфейса");
         var vpn = document.VpnRoute ?? "DIRECT"; // Empty templates are valid; startup separately requires a VPN connection.
-        // Full-TUN rules already flatten deterministic exception aliases. sing-box
-        // has no reject outbound: omit only those now-unreferenced blocking aliases.
+        // sing-box has no reject outbound. Deterministic blocking aliases become
+        // rule actions in both modes; never turn a mixed VPN/block selector into
+        // a permanently blocked route or silently discard one of its choices.
         var exceptions = ClashConfigDocument.ExceptionRoutes(root);
-        bool FlattenedBlock(YamlMappingNode node) => fullTunnel && exceptions.GetValueOrDefault(Text(node, "name")) is "REJECT" or "REJECT-DROP";
+        bool FlattenedBlock(YamlMappingNode node) => exceptions.GetValueOrDefault(Text(node, "name")) is "REJECT" or "REJECT-DROP";
         var outbounds = new List<Dictionary<string, object>> { Obj(("type", "direct"), ("tag", "DIRECT")) };
         var names = new HashSet<string>(StringComparer.Ordinal) { "DIRECT", "REJECT", "REJECT-DROP" };
         if (Get(root, "proxies") is YamlSequenceNode proxies)
             foreach (var proxy in proxies.Children)
             {
                 if (proxy is not YamlMappingNode node) throw Unsupported("формат proxies");
-                if (FlattenedBlock(node)) continue;
                 var name = Text(node, "name");
                 if (name.Length == 0 || !names.Add(name)) throw Unsupported("повторяющееся/зарезервированное имя подключения");
+                if (FlattenedBlock(node)) { Only(node, "name", "type"); continue; }
                 outbounds.Add(Proxy(node));
             }
         if (Get(root, "proxy-groups") is YamlSequenceNode groups)
             foreach (var group in groups.Children)
             {
                 if (group is not YamlMappingNode node) throw Unsupported("формат proxy-groups");
-                if (FlattenedBlock(node)) continue;
                 Only(node, "name", "type", "proxies", "url", "interval", "tolerance", "lazy", "hidden", "icon");
                 var name = Text(node, "name"); var type = Text(node, "type");
                 if (name.Length == 0 || !names.Add(name)) throw Unsupported("повторяющееся имя группы");
+                if (FlattenedBlock(node)) continue;
                 if (type is not ("select" or "url-test")) throw Unsupported("тип VPN-группы");
                 var members = List(node, "proxies");
-                if (members.Length == 0 || members.Any(member => member is "REJECT" or "REJECT-DROP")) throw Unsupported("пустая группа или блокировка внутри группы");
+                if (members.Length == 0 || members.Any(member => exceptions.GetValueOrDefault(member, member) is "REJECT" or "REJECT-DROP")) throw Unsupported("пустая группа или блокировка внутри группы");
                 var converted = Obj(("type", type == "select" ? "selector" : "urltest"), ("tag", name), ("outbounds", members));
-                if (type == "select") converted["default"] = selectedServer is not null && members.Contains(selectedServer) ? selectedServer : members[0];
+                if (type == "select") converted["default"] = name == vpn && selectedServer is not null && members.Contains(selectedServer) ? selectedServer : members[0];
                 else
                 {
                     converted["url"] = Text(node, "url", "https://www.gstatic.com/generate_204");
@@ -99,8 +100,10 @@ internal static class SingBoxConfig
         rules.Add(Obj(("action", "sniff")));
         rules.Add(Obj(("protocol", "dns"), ("action", "hijack-dns")));
         // Drop packets to the adapter's own addresses to avoid a loop through a direct outbound.
-        rules.Add(Obj(("ip_cidr", new[] { "172.19.0.1/32", "fdfe:dcba:9876::1/128" }), ("action", "reject"), ("method", "drop")));
+        var adapterGuard = Obj(("ip_cidr", new[] { "172.19.0.1/32", "fdfe:dcba:9876::1/128" }), ("action", "reject"), ("method", "drop"));
+        rules.Add(adapterGuard);
         var domainRoutes = new List<Dictionary<string, object>>();
+        var upstreamRoutes = new List<Dictionary<string, object>> { adapterGuard };
         if (Get(root, "rules") is not YamlSequenceNode yamlRules) throw Unsupported("формат правил");
         var final = "DIRECT";
         var matched = false;
@@ -113,14 +116,14 @@ internal static class SingBoxConfig
             if (noResolve) parts = parts[..^1];
             var match = kind == "MATCH";
             if (parts.Length != (match ? 2 : 3)) throw Unsupported("составное правило или модификатор правил");
-            var target = parts[^1];
+            var target = exceptions.GetValueOrDefault(parts[^1], parts[^1]);
             if (!names.Contains(target)) throw Unsupported("неизвестный маршрут правила");
             var block = target is "REJECT" or "REJECT-DROP";
             var rule = block ? Obj(("action", "reject"), ("method", target == "REJECT-DROP" ? "drop" : "default")) : Obj(("action", "route"), ("outbound", target));
             if (match)
             {
                 matched = true;
-                if (block) rules.Add(rule); else final = target;
+                if (block) { rules.Add(rule); upstreamRoutes.Add(rule); } else final = target;
                 continue;
             }
             var key = kind switch {
@@ -144,21 +147,43 @@ internal static class SingBoxConfig
             // Clash resolves a domain before ordinary destination IP rules, but not
             // for no-resolve rules. sing-box does not do this implicitly for FakeIP.
             if (kind is "IP-CIDR" or "IP-CIDR6" && !noResolve)
+            {
                 rules.Add(Obj(("action", "resolve"), ("timeout", "5s")));
+                upstreamRoutes.Add(Obj(("action", "resolve"), ("timeout", "5s")));
+            }
             rules.Add(rule);
+            upstreamRoutes.Add(rule);
             if (key is "domain" or "domain_suffix" or "domain_keyword")
                 domainRoutes.Add(Obj((key, new[] { parts[1] }), ("outbound", exceptions.GetValueOrDefault(target, target))));
         }
         var mixedPort = Number(root, "mixed-port");
         var bootstrapPort = DnsPort(controllerPort, speedPort, mixedPort);
         var directPort = DnsPort(controllerPort, speedPort, mixedPort, bootstrapPort);
-        var dns = SingBoxDns.Build(root, vpn, tunTag, Internal, domainRoutes, bootstrapPort, directPort);
+        var respectDnsRules = Get(root, "dns") is YamlMappingNode dnsOptions && Flag(dnsOptions, "respect-rules");
+        var upstreamPort = respectDnsRules ? DnsPort(controllerPort, speedPort, mixedPort, bootstrapPort, directPort) : 0;
+        var upstreamTag = Internal("dns-upstream-in");
+        if (respectDnsRules)
+        {
+            var routed = upstreamRoutes.Select(rule => new Dictionary<string, object>(rule) { ["inbound"] = new[] { upstreamTag } }).ToList();
+            routed.Add(Obj(("inbound", new[] { upstreamTag }), ("action", "route"), ("outbound", final)));
+            // Re-enter only connection routing, before sniff/DNS hijacking; this
+            // prevents the upstream DNS request from being recursively hijacked.
+            rules.InsertRange(speedPort == 0 ? 0 : 1, routed);
+            outbounds.Add(Obj(("type", "socks"), ("tag", Internal("dns-upstream")), ("server", "127.0.0.1"),
+                ("server_port", upstreamPort), ("version", "5"), ("username", "morphocyte"), ("password", secret),
+                ("inet4_bind_address", "127.0.0.1")));
+        }
+        var dns = SingBoxDns.Build(root, vpn, tunTag, Internal, domainRoutes, bootstrapPort, directPort,
+            respectDnsRules ? Internal("dns-upstream") : null);
         // Resolver-only loopback listeners let domain_resolver use the same native
         // DNS races as normal queries. Numeric bootstrap upstreams break recursion.
         rules.Insert(speedPort == 0 ? 0 : 1, Obj(("inbound", new[] { Internal("bootstrap-in"), Internal("direct-dns-in") }), ("action", "hijack-dns")));
         foreach (var outbound in outbounds.Where(item => (string)item["type"] == "direct"))
             outbound["domain_resolver"] = Internal("direct-resolver");
         var inbounds = new List<Dictionary<string, object>>();
+        if (respectDnsRules)
+            inbounds.Add(Obj(("type", "socks"), ("tag", upstreamTag), ("listen", "127.0.0.1"), ("listen_port", upstreamPort),
+                ("users", new[] { Obj(("username", "morphocyte"), ("password", secret)) })));
         if (includeTun)
         {
             var tun = Get(root, "tun") as YamlMappingNode ?? new YamlMappingNode();
@@ -238,13 +263,14 @@ internal static class SingBoxConfig
         if (type is "socks5" or "http" or "ss" or "trojan" && Text(node, "password").Length > 0) output["password"] = Text(node, "password");
         if (type == "socks5") output["version"] = "5";
         if (Get(node, "udp") is not null && !Flag(node, "udp") && type != "http") output["network"] = "tcp";
+        var webSocket = Text(node, "network") == "ws" ? Get(node, "ws-opts") as YamlMappingNode : null;
+        var webSocketHeaders = webSocket is null ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) : WebSocketHeaders(webSocket);
         if (Flag(node, "tls") || type == "trojan")
         {
             var tls = Obj(("enabled", true), ("insecure", Flag(node, "skip-cert-verify")));
             var sni = Text(node, "servername", Text(node, "sni"));
-            if (sni.Length == 0 && Text(node, "network") == "ws" && Get(node, "ws-opts") is YamlMappingNode wsTls
-                && Get(wsTls, "headers") is YamlMappingNode wsHeaders)
-                sni = wsHeaders.Children.FirstOrDefault(pair => pair.Key.ToString().Equals("Host", StringComparison.OrdinalIgnoreCase)).Value?.ToString().Split(',')[0].Trim() ?? "";
+            if (sni.Length == 0 && webSocketHeaders.TryGetValue("Host", out var tlsHost))
+                sni = tlsHost.Split(',')[0].Trim();
             if (sni.Length > 0) tls["server_name"] = sni;
             if (List(node, "alpn") is { Length: > 0 } alpn) tls["alpn"] = alpn;
             if (Text(node, "client-fingerprint") is { Length: > 0 } fingerprint) tls["utls"] = Obj(("enabled", true), ("fingerprint", fingerprint));
@@ -267,7 +293,7 @@ internal static class SingBoxConfig
             {
                 Only(ws, "path", "headers", "max-early-data", "early-data-header-name", "v2ray-http-upgrade");
                 transport["path"] = Text(ws, "path", "/");
-                var headers = Get(ws, "headers") is YamlMappingNode values ? values.Children.ToDictionary(pair => pair.Key.ToString(), pair => pair.Value.ToString()) : new Dictionary<string, string>();
+                var headers = webSocketHeaders;
                 if (Flag(ws, "v2ray-http-upgrade"))
                 {
                     transport["type"] = "httpupgrade";
@@ -286,6 +312,25 @@ internal static class SingBoxConfig
         }
         else if (network is not ("tcp" or "raw")) throw Unsupported("транспорт подключения");
         return output;
+    }
+
+    private static Dictionary<string, string> WebSocketHeaders(YamlMappingNode options)
+    {
+        var headers = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
+        if (Get(options, "headers") is null) return headers;
+        if (Get(options, "headers") is not YamlMappingNode values) throw Unsupported("формат заголовков WebSocket");
+        foreach (var (key, value) in values.Children)
+        {
+            if (key is not YamlScalarNode { Value: { } name } || value is not YamlScalarNode { Value: { } text }
+                || !Regex.IsMatch(name, "^[A-Za-z0-9!#$%&'*+.^_`|~-]+$") || text.Any(char.IsControl))
+                throw Unsupported("формат заголовков WebSocket");
+            // Go's http.Header setters canonicalize names; normalize here too so
+            // transport-managed Connection/Upgrade fields replace, not duplicate,
+            // a user's differently-cased version of the same HTTP field.
+            var canonical = Regex.Replace(name.ToLowerInvariant(), "(^|-)[a-z]", match => match.Value.ToUpperInvariant());
+            if (!headers.TryAdd(canonical, text)) throw Unsupported("повторяющиеся заголовки WebSocket");
+        }
+        return headers;
     }
 
     private static void NormalizeWebSocketEarlyData(Dictionary<string, object> transport, YamlMappingNode ws)

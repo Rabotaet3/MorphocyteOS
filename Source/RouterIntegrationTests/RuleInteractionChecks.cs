@@ -110,7 +110,7 @@ internal partial class Program
                         updatesTab.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                         dialog.UpdateLayout();
                         Check(Descendants<CheckBox>(dialog).Single(option =>
-                            Descendants<TextBlock>(option).Any(text => text.Text == "Автоматическое обновление")).IsVisible
+                            Descendants<TextBlock>(option).Any(text => text.Text == "Проверять наличие обновлений")).IsVisible
                             && Descendants<Button>(dialog).Single(button => Equals(button.Content, "Проверить обновления")).IsVisible,
                             "settings expose automatic and manual release checks");
                         var settingsScroll = Descendants<ScrollViewer>(dialog).Single(page => page.Name == "SettingsScroll");
@@ -199,7 +199,7 @@ internal partial class Program
                     .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 settingsDialog.UpdateLayout();
                 Descendants<CheckBox>(settingsDialog).Single(option =>
-                    Descendants<TextBlock>(option).Any(text => text.Text == "Автоматическое обновление")).IsChecked = true;
+                    Descendants<TextBlock>(option).Any(text => text.Text == "Проверять наличие обновлений")).IsChecked = true;
                 var save = Descendants<Button>(settingsDialog).Single(button => Equals(button.Content, "СОХРАНИТЬ"));
                 save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 savedSettingsDialogStayedOpen = settingsDialog.IsVisible;
@@ -245,7 +245,7 @@ internal partial class Program
                     .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 dialog.UpdateLayout();
                 Descendants<CheckBox>(dialog).Single(option =>
-                    Descendants<TextBlock>(option).Any(text => text.Text == "Автоматическое обновление")).IsChecked = false;
+                    Descendants<TextBlock>(option).Any(text => text.Text == "Проверять наличие обновлений")).IsChecked = false;
                 CaptureInteraction(dialog, Path.Combine(scratch, "settings-scaled-release.png"));
                 save.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                 scaledSettingsDialogStayedOpen = dialog.IsVisible;

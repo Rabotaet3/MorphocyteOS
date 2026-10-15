@@ -42,10 +42,10 @@ public partial class MainWindow
         _diagnosticCheckedAt = DateTimeOffset.Now; _diagnosticCoreWasRunning = _core.IsRunning;
         _manualDiagnosticRunning = true; _lastDiagnostic = Array.Empty<DiagnosticStep>();
         _diagnosticStatus = "Проверяю подключение…";
-        DiagnosticChanged?.Invoke();
         var steps = new List<DiagnosticStep>();
         try
         {
+            DiagnosticChanged?.Invoke();
             var runtimeDocument = _runtimeConfigPath is { } runtime && !CoreBackend.IsSingBox(_settings.CorePath)
                 ? ClashConfigDocument.Load(runtime) : _document;
             _lastDiagnostic = await ConnectionDiagnostic.RunAsync(_core.IsRunning, runtimeDocument, diagnostics, lifetime.Token, step =>
@@ -56,11 +56,22 @@ public partial class MainWindow
             _diagnosticStatus = "Проверка завершена · " + _diagnosticCheckedAt.ToString("HH:mm:ss");
         }
         catch (OperationCanceledException) { _diagnosticStatus = lifetime.IsCancellationRequested ? "Проверка отменена." : "Время проверки истекло."; }
-        catch { _diagnosticStatus = "Не удалось завершить проверку. Подробности — в журнале."; }
+        catch (Exception error)
+        {
+            _diagnosticStatus = "Не удалось завершить проверку. Подробности — в журнале.";
+            // Exception messages can contain URLs, API payloads or profile data.
+            // Record only the stage and exception type, never the raw message.
+            SetLog("Диагностика подключения: проверка не завершена (" + error.GetType().Name + ").");
+        }
         finally
         {
             _manualDiagnosticLifetime = null; _manualDiagnosticRunning = false;
-            if (!_closing) DiagnosticChanged?.Invoke();
+            if (!_closing)
+            {
+                try { DiagnosticChanged?.Invoke(); }
+                catch (Exception error)
+                { SetLog("Диагностика подключения: не удалось обновить окно (" + error.GetType().Name + ")."); }
+            }
         }
     }
 }

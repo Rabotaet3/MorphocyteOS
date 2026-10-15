@@ -19,7 +19,10 @@ internal partial class Program
         void Check(bool ok, string message) { if (!ok) throw new Exception("FAIL: " + message); count++; Console.WriteLine("PASS: " + message); }
         const string yaml = "# retained header\nmixed-port: 7890\nproxies:\n  - {name: Alpha, type: socks5, server: 192.0.2.20, port: 1080, password: fixture-secret}\n  - {name: Beta, type: socks5, server: 192.0.2.21, port: 1080}\nproxy-groups:\n  - {name: VPN, type: select, proxies: [Alpha, Beta]}\ntun:\n  enable: true\ndns:\n  enable: true\nrules:\n  - DOMAIN-SUFFIX,first.example,VPN\n  - DOMAIN-SUFFIX,second.example,DIRECT\n  - MATCH,DIRECT\n";
         const string fresh = "proxies:\n  - {name: Beta, type: socks5, server: 192.0.2.22, port: 1080}\n  - {name: Gamma, type: socks5, server: 192.0.2.23, port: 1080}\nproxy-groups:\n  - {name: VPN, type: select, proxies: [Beta, Gamma]}\nrules:\n  - MATCH,DIRECT\n";
-        var path = Path.Combine(scratch, "improvements.yaml"); File.WriteAllText(path, yaml);
+        // Startup/selection restoration needs a controller, but recovery probes
+        // must still model an unresponsive VPN rather than a working transport.
+        var fixtureYaml = yaml.Replace("proxies:\n", "morphocyte-fake-api: startup-only\nproxies:\n");
+        var path = Path.Combine(scratch, "improvements.yaml"); File.WriteAllText(path, fixtureYaml);
         var imported = SubscriptionImporter.ParseContent(fresh);
         var merged = SubscriptionRefresh.Merge(path, yaml, imported, "Beta");
         Check(merged.Added == 1 && merged.Removed == 1 && !merged.SelectionRemoved, "subscription merge adds and removes servers while retaining an available selection");
@@ -57,7 +60,7 @@ internal partial class Program
             Check(((Button)Field("UndoButton")).IsEnabled && ((TextBlock)Field("ChangesSummaryText")).Text.Contains("Изменено: 1"),
                 "rule changes enable history and show an accurate pending-change summary");
             await window.UndoRuleEditAsync();
-            Check(Rules()[0].Route == "VPN" && settings.GetDraft(path) is null && !(bool)Field("_dirty") && File.ReadAllText(path) == yaml,
+            Check(Rules()[0].Route == "VPN" && settings.GetDraft(path) is null && !(bool)Field("_dirty") && File.ReadAllText(path) == fixtureYaml,
                 "undo restores the clean editor state without writing YAML or retaining a phantom draft");
             await window.UndoRuleEditAsync(redo: true);
             Check(Rules()[0].Route == "REJECT" && settings.GetDraft(path)!.Rules[0].Route == "REJECT", "redo restores the edited route and its persisted draft");

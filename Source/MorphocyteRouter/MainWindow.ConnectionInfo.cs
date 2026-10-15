@@ -168,6 +168,8 @@ public partial class MainWindow
         _manualDiagnosticLifetime?.Cancel();
         _speedTestLifetime?.Cancel();
         _downloadCapacity = null;
+        SpeedProgressText.Text = "";
+        SpeedProgressText.Visibility = System.Windows.Visibility.Hidden;
         _capacityServer = "";
         _speedTestPort = 0;
         _diagnosticLifetime?.Cancel();

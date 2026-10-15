@@ -282,7 +282,9 @@ internal static class SubscriptionImporter
         var types = new HashSet<string>(new[] { "vless", "vmess", "ss", "ssr", "trojan", "socks5", "http", "hysteria", "hysteria2", "tuic", "anytls", "snell" }, StringComparer.Ordinal);
         foreach (var rawNode in list.Children)
         {
-            if (rawNode is not YamlMappingNode node || !types.Contains(Scalar(node, "type") ?? "")
+            if (rawNode is not YamlMappingNode node) throw new InvalidDataException("Некорректный сервер в подписке.");
+            NormalizeOptions(node);
+            if (!types.Contains(Scalar(node, "type") ?? "")
                 || string.IsNullOrWhiteSpace(Scalar(node, "server")) || !int.TryParse(Scalar(node, "port"), out var port) || port is < 1 or > 65535)
                 throw new InvalidDataException("В YAML есть неподдерживаемый или некорректный сервер. Список не импортирован частично.");
             CheckNode(node);
@@ -311,14 +313,43 @@ internal static class SubscriptionImporter
     private static string? Scalar(YamlMappingNode node, string key)
         => node.Children.TryGetValue(new YamlScalarNode(key), out var value) ? (value as YamlScalarNode)?.Value : null;
 
+    private static void NormalizeOptions(YamlNode node)
+    {
+        if (node is YamlSequenceNode list) { foreach (var item in list.Children) NormalizeOptions(item); return; }
+        if (node is not YamlMappingNode mapping) return;
+        var normalized = new Dictionary<string, YamlNode>(StringComparer.Ordinal);
+        foreach (var pair in mapping.Children)
+        {
+            if (pair.Key is not YamlScalarNode { Value: { } key }) throw new InvalidDataException("Недопустимый ключ сервера.");
+            var name = key.Replace('_', '-').ToLowerInvariant();
+            // Clash's one mixed-case option keeps its canonical spelling.
+            if (name == "alterid") name = "alterId";
+            var value = pair.Value;
+            if (name == "skip-cert-verify")
+            {
+                var scalar = (value as YamlScalarNode)?.Value;
+                var flag = bool.TryParse(scalar, out var boolean) ? boolean
+                    : long.TryParse(scalar, System.Globalization.NumberStyles.Integer, System.Globalization.CultureInfo.InvariantCulture, out var number)
+                        ? number != 0 : throw new InvalidDataException("Некорректный переключатель проверки сертификата.");
+                value = new YamlScalarNode(flag ? "true" : "false");
+            }
+            // HTTP header names and application data are not decoder option keys.
+            if (name is not ("headers" or "payload")) NormalizeOptions(value);
+            if (!normalized.TryAdd(name, value)) throw new InvalidDataException("В подписке неоднозначные повторяющиеся параметры сервера.");
+        }
+        mapping.Children.Clear();
+        foreach (var pair in normalized) mapping.Add(pair.Key, pair.Value);
+    }
+
     private static void CheckNode(YamlNode node)
     {
         if (node is YamlMappingNode mapping)
             foreach (var pair in mapping.Children)
             {
                 if (pair.Key is not YamlScalarNode key || key.Value is null) throw new InvalidDataException("Недопустимый ключ сервера.");
-                if (key.Value is "dialer-proxy" or "certificate" or "private-key" or "client-certificate" or "client-key" or "ca" or "ca-str"
-                    || key.Value.EndsWith("-path", StringComparison.OrdinalIgnoreCase) || key.Value.EndsWith("-file", StringComparison.OrdinalIgnoreCase))
+                var canonical = key.Value.Replace('_', '-').ToLowerInvariant();
+                if (canonical is "dialer-proxy" or "certificate" or "private-key" or "client-certificate" or "client-key" or "ca" or "ca-str"
+                    || canonical.EndsWith("-path", StringComparison.Ordinal) || canonical.EndsWith("-file", StringComparison.Ordinal))
                     throw new InvalidDataException("Подписка содержит зависимости от других прокси или файлов. Такой сервер нужно настроить вручную.");
                 CheckNode(pair.Value);
             }

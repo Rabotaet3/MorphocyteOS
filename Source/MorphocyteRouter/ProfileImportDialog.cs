@@ -111,7 +111,8 @@ internal static class ProfileImportDialog
 
 internal static class ProfileStorage
 {
-    internal static async Task<string> CreateAsync(ImportedProfile imported, string corePath, string storageDirectory, CancellationToken token)
+    internal static async Task<string> CreateAsync(ImportedProfile imported, string corePath, string storageDirectory,
+        CancellationToken token, bool fullTunnel = false)
     {
         if (imported.NeedsName) throw new InvalidDataException("Сначала задай название подключения.");
         var directory = Path.Combine(storageDirectory, "Profiles");
@@ -122,7 +123,7 @@ internal static class ProfileStorage
         try
         {
             await Task.Run(() => AtomicFile.Write(candidate, imported.Yaml), token);
-            var check = await CoreProcessManager.ValidateAsync(corePath, candidate, token);
+            var check = await CoreProcessManager.ValidateAsync(corePath, candidate, token, fullTunnel: fullTunnel);
             if (!check.Success) throw new InvalidDataException("Выбранное ядро не приняло импортированный профиль. Проверь совместимость ядра и параметры ссылки. Текущий профиль не изменён.");
             token.ThrowIfCancellationRequested();
             File.Move(candidate, path); // Unique target; never overwrite the current or an earlier imported profile.

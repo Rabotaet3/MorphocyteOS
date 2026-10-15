@@ -14,6 +14,8 @@ internal partial class Program
     [STAThread]
     static int Main(string[] args)
     {
+        if (args.Length > 0 && args[0] == "--signal-owned-core")
+            return WindowsConsoleProcess.SignalOwnedCore(args);
         var app = new Application { ShutdownMode = ShutdownMode.OnExplicitShutdown };
         XNamespace ns = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
         var resources = XDocument.Load(Path.Combine(AppContext.BaseDirectory, "Theme.xaml")).Root!.Element(ns + "Application.Resources")!;
@@ -24,7 +26,7 @@ internal partial class Program
         {
             try
             {
-                await Run(args[0], args.Contains("--improvements-only"), args.Contains("--visual-only"), args.Contains("--tunnel-only"), args.Contains("--singbox-only"));
+                await Run(args[0], args.Contains("--improvements-only"), args.Contains("--visual-only"), args.Contains("--tunnel-only"), args.Contains("--singbox-only"), args.Contains("--ui-reliability-only"), args.Contains("--release210-only"));
                 if (Array.IndexOf(args, "--validate-profile") is var profileIndex && profileIndex >= 0)
                 {
                     var path = args[profileIndex + 1];
@@ -42,7 +44,7 @@ internal partial class Program
         Dispatcher.Run();
         return code;
     }
-    static async Task Run(string fakeExe, bool improvementsOnly = false, bool visualOnly = false, bool tunnelOnly = false, bool singboxOnly = false)
+    static async Task Run(string fakeExe, bool improvementsOnly = false, bool visualOnly = false, bool tunnelOnly = false, bool singboxOnly = false, bool uiReliabilityOnly = false, bool release210Only = false)
     {
         var scratch = Path.Combine(AppContext.BaseDirectory, "integration-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(scratch);
@@ -71,10 +73,18 @@ internal partial class Program
         try
         {
             if (singboxOnly) { passed += await RunSingBoxChecks(scratch); Console.WriteLine($"TOTAL: {passed} sing-box checks passed."); return; }
+            if (release210Only)
+            {
+                passed += await RunRelease210Checks(scratch, fakeExe);
+                passed += await RunNativeDnsCompatibilityChecks(scratch);
+                Console.WriteLine($"TOTAL: {passed} release 1.2.10 fix checks passed."); return;
+            }
+            if (uiReliabilityOnly) { passed += await RunUiReliabilityChecks(scratch, fakeExe); Console.WriteLine($"TOTAL: {passed} UI reliability checks passed."); return; }
             if (tunnelOnly)
             {
                 passed += await RunTunnelAndSpeedChecks(scratch, fakeExe);
                 passed += await RunRecoveryReliabilityChecks(scratch, fakeExe);
+                passed += await RunUiReliabilityChecks(scratch, fakeExe);
                 Console.WriteLine($"TOTAL: {passed} tunnel and speed checks passed."); return;
             }
             passed += await RunThemePolishChecks(scratch, fakeExe);
@@ -94,6 +104,9 @@ internal partial class Program
             passed += await RunTelemetryChecks();
             passed += await RunTunnelAndSpeedChecks(scratch, fakeExe);
             passed += await RunRecoveryReliabilityChecks(scratch, fakeExe);
+            passed += await RunUiReliabilityChecks(scratch, fakeExe);
+            passed += await RunRelease210Checks(scratch, fakeExe);
+            passed += await RunNativeDnsCompatibilityChecks(scratch);
             passed += await RunSingBoxChecks(scratch);
             var workspace = (FrameworkElement)Field("Workspace");
             var busyField = typeof(MainWindow).GetField("_busy", BindingFlags.Instance | BindingFlags.NonPublic)!;

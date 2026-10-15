@@ -3,6 +3,21 @@ using System.Text.Json;
 using MorphocyteRouter;
 using YamlDotNet.RepresentationModel;
 
+if (args.Length > 0 && args[0] == "--signal-owned-core")
+{
+    Environment.ExitCode = WindowsConsoleProcess.SignalOwnedCore(args);
+    return;
+}
+if (args.Contains("--console-only"))
+{
+    var consoleScratch = Path.Combine(AppContext.BaseDirectory, "console-check-" + Guid.NewGuid().ToString("N"));
+    Directory.CreateDirectory(consoleScratch);
+    var appIndex = Array.IndexOf(args, "--verify-wpf-signal");
+    var count = await CoreConsoleChecks.RunAsync(consoleScratch, appIndex >= 0 ? args[appIndex + 1] : null);
+    Console.WriteLine($"TOTAL: {count} core-console checks passed.");
+    return;
+}
+
 if (args.Length == 3 && args[0] == "--copy-profile")
 {
     var source = ClashConfigDocument.Load(args[1]);
@@ -30,6 +45,18 @@ if (args.Length == 1 && args[0] == "--job-owner")
 // The same tiny executable acts as an inert fake core for process-lifecycle tests.
 if (args.Contains("--fake-core"))
 {
+    if (Environment.GetEnvironmentVariable("MORPHOCYTE_FAKE_GRACEFUL_MARKER") is { } marker)
+    {
+        var signal = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+        Console.CancelKeyPress += (_, e) =>
+        {
+            e.Cancel = true;
+            if (Environment.GetEnvironmentVariable("MORPHOCYTE_FAKE_IGNORE_INTERRUPT") != "1") signal.TrySetResult();
+        };
+        await signal.Task.WaitAsync(TimeSpan.FromMinutes(2));
+        File.WriteAllText(marker, "closed normally");
+        return;
+    }
     if (args.Contains("-t"))
     {
         var config = args[Array.IndexOf(args, "-f") + 1];
@@ -373,4 +400,5 @@ try
     finally { await lateGuard.StopAsync(); }
 }
 finally { await manager.StopAsync(); }
+passed += await CoreConsoleChecks.RunAsync(scratch);
 Console.WriteLine($"TOTAL: {passed} checks passed. Fixtures: {scratch}");

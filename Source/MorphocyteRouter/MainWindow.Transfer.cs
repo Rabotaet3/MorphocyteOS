@@ -11,12 +11,15 @@ public partial class MainWindow
             AutoCheckUpdates = selection.AutoCheckUpdates, LaunchAtSignIn = selection.LaunchAtSignIn,
             AutoConnectOnStartup = selection.AutoConnectOnStartup, AutoReconnect = selection.AutoReconnect, ShowEventLog = _settings.ShowEventLog,
             PreferredRoute = _settings.PreferredRoute is "DIRECT" or "REJECT" ? _settings.PreferredRoute : "VPN" };
+        options.FullTunnel = _settings.FullTunnel;
         if (selection.Transfer is { } pending)
             return Task.Run(() =>
             {
                 var copy = ConfigurationTransfer.Deserialize(Encoding.UTF8.GetBytes(ConfigurationTransfer.Serialize(pending)));
                 options.PreferredRoute = pending.Options.PreferredRoute;
                 options.ShowEventLog = pending.Options.ShowEventLog;
+                options.FullTunnel = pending.Options.FullTunnel;
+                options.SelectedServer = pending.Options.SelectedServer;
                 copy.Options = options;
                 return copy;
             }, _lifetime.Token);
@@ -39,12 +42,16 @@ public partial class MainWindow
         var state = _settings.GetRuleState(configPath);
         var isDirty = _dirty;
         var subscriptionUrl = _settings.ProfileSubscriptions.GetValueOrDefault(configPath)?.ReadUrl();
+        options.SelectedServer = current && _selectedConnection.Length > 0 ? _selectedConnection
+            : _settings.ProfileSelections.GetValueOrDefault(configPath) ?? _settings.ProfileSubscriptions.GetValueOrDefault(configPath)?.SelectedServer;
         return Task.Run(() =>
         {
             using var stream = new MemoryStream(ConfigurationTransfer.ReadBounded(configPath, 4 * 1024 * 1024));
             using var reader = new StreamReader(stream, Encoding.UTF8, detectEncodingFromByteOrderMarks: true);
             var yaml = reader.ReadToEnd();
             var document = ClashConfigDocument.Parse(configPath, yaml);
+            if (options.SelectedServer is { } selected && selected is not ("DIRECT" or "REJECT") && !document.Routes.Contains(selected))
+                options.SelectedServer = null; // A remembered server may have been removed while the app was stopped.
             if (sourceHash is not null && sourceHash != document.SourceHash)
                 throw new IOException("Профиль изменён на диске. Открой его заново перед экспортом.");
             var restoreDraft = draft is not null && (draft.SourceHash.Length == 0 || draft.SourceHash == document.SourceHash);
@@ -64,7 +71,14 @@ public partial class MainWindow
         if (package.HasDraft) _settings.PutDraft(path, document.SourceHash, rules);
         else _settings.PutRuleState(path, document.SourceHash, rules);
         _settings.PreferredRoute = package.Options.PreferredRoute;
-        if (package.SubscriptionUrl is { } url) _settings.ProfileSubscriptions[path] = SubscriptionSource.Create(url);
+        if (package.Options.FullTunnel is { } fullTunnel) _settings.FullTunnel = fullTunnel;
+        if (package.Options.SelectedServer is { Length: > 0 } selected) _settings.ProfileSelections[path] = selected;
+        if (package.SubscriptionUrl is { } url)
+        {
+            var source = SubscriptionSource.Create(url);
+            source.SelectedServer = package.Options.SelectedServer ?? "";
+            _settings.ProfileSubscriptions[path] = source;
+        }
         await LoadConfigAsync(path);
         SelectMainPage(package.Options.ShowEventLog);
         SetLog("Настройки и профиль импортированы. " + (package.HasDraft ? "Правила восстановлены как черновик." : "Сохранённая конфигурация восстановлена."));

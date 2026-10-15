@@ -122,12 +122,18 @@ internal partial class Program
         Check(sparse.ReadRate() == 0, "a long duration without enough measured bytes is not a calibration");
 
         using var test = new VpnSpeedTest(19877, api.Secret, new SpeedHandler());
-        var result = await test.MeasureAsync(default);
+        var measurementProgress = new SpeedProgressRecorder();
+        var result = await test.MeasureAsync(default, measurementProgress);
+        var percentages = measurementProgress.Values.ToArray();
+        Check(percentages.First() == 0 && percentages.Last() == 100 && percentages.Zip(percentages.Skip(1), (a, b) => a <= b).All(value => value),
+            "speed measurement emits monotonic progress and completes only after a successful result");
         Check(result.DownloadedBytes == VpnSpeedTest.MaxBytes && result.DownloadBytesPerSecond > 0 && double.IsFinite(result.DownloadBytesPerSecond), "parallel speed test counts streamed bytes and measures a finite aggregate download rate");
         using var cancellation = new CancellationTokenSource(30);
         using var cancelTest = new VpnSpeedTest(19877, api.Secret, new SpeedHandler());
-        try { await cancelTest.MeasureAsync(cancellation.Token); throw new Exception("Cancelled speed test accepted"); }
+        var cancelledProgress = new SpeedProgressRecorder();
+        try { await cancelTest.MeasureAsync(cancellation.Token, cancelledProgress); throw new Exception("Cancelled speed test accepted"); }
         catch (OperationCanceledException) { Check(true, "user cancellation ends all test transfers without storing a partial calibration"); }
+        Check(!cancelledProgress.Values.Contains(100), "a cancelled measurement never emits a successful 100 percent");
         using var badTest = new VpnSpeedTest(19877, api.Secret, new DiagnosticHandler(_ => new(HttpStatusCode.Redirect) { Content = new StringContent("not a speed payload") }));
         try { await badTest.MeasureAsync(default); throw new Exception("Redirect accepted"); }
         catch (HttpRequestException) { Check(true, "failed or redirected download is not treated as a speed measurement"); }

@@ -83,6 +83,40 @@ internal sealed class CoreDiagnostics : IDisposable
         throw new InvalidDataException("Слишком много вложенных VPN-групп.");
     }
 
+    // Restore only selectors on a path below the main VPN group. Never apply a
+    // remembered leaf to an unrelated group that happens to contain that server.
+    internal async Task<bool> RestoreSelectionAsync(string group, string selection, CancellationToken token)
+    {
+        var visited = new HashSet<string>(StringComparer.Ordinal);
+        var current = new Dictionary<string, string>(StringComparer.Ordinal);
+        async Task<List<(string Group, string Choice)>?> Find(string route, int depth)
+        {
+            if (route == selection) return [];
+            if (route is "DIRECT" or "REJECT" || depth >= 12 || visited.Count >= 512 || !visited.Add(route)) return null;
+            using var proxy = await ReadJsonAsync("proxies/" + Uri.EscapeDataString(route), token);
+            if (!Text(proxy.RootElement, "type").Equals("Selector", StringComparison.OrdinalIgnoreCase)
+                || !proxy.RootElement.TryGetProperty("all", out var all) || all.ValueKind != JsonValueKind.Array) return null;
+            current[route] = Text(proxy.RootElement, "now");
+            var members = all.EnumerateArray().Where(item => item.ValueKind == JsonValueKind.String)
+                .Select(item => item.GetString()!).Take(512).ToArray();
+            if (members.Contains(selection)) return [(route, selection)];
+            foreach (var member in members.OrderByDescending(member => member == current[route]))
+                if (await Find(member, depth + 1) is { } path) { path.Add((route, member)); return path; }
+            return null;
+        }
+        if (await Find(group, 0) is not { } selections) return false;
+        foreach (var (route, choice) in selections)
+        {
+            if (current.GetValueOrDefault(route) == choice) continue;
+            using var request = new HttpRequestMessage(HttpMethod.Put, "proxies/" + Uri.EscapeDataString(route)) {
+                Content = new StringContent(JsonSerializer.Serialize(new { name = choice }), System.Text.Encoding.UTF8, "application/json")
+            };
+            using var response = await _client.SendAsync(request, token);
+            response.EnsureSuccessStatusCode();
+        }
+        return true;
+    }
+
     internal async Task<int> CheckProxyAsync(string route, CancellationToken token)
     {
         foreach (var url in ProbeUrls)

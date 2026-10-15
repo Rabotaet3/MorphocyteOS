@@ -104,8 +104,12 @@ internal partial class Program
                 && servers.Any(server => server.TryGetProperty("server", out var host) && host.GetString() == "8.8.8.8"), "sing-box retains both configured DNS upstreams rather than silently replacing them");
             Check(dnsRules.Any(rule => rule.TryGetProperty("domain_suffix", out var names) && names[0].GetString() == "policy.example"), "sing-box preserves supported per-domain DNS policy");
             Check(dnsRules.Any(rule => rule.TryGetProperty("race", out var race) && race.GetBoolean())
-                && servers.Where(server => server.TryGetProperty("tag", out var name) && name.GetString()!.Contains("remote-")).All(server => server.GetProperty("detour").GetString() == "VPN"),
-                "independent DNS upstreams race through VPN without falling back to a direct resolver for ordinary domains");
+                && servers.Where(server => server.TryGetProperty("tag", out var name) && name.GetString()!.Contains("remote-")).All(server => server.GetProperty("detour").GetString()!.EndsWith("-dns-upstream"))
+                && dnsJson.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray().Any(rule =>
+                    rule.TryGetProperty("inbound", out var inbound) && inbound[0].GetString()!.EndsWith("-dns-upstream-in")
+                    && rule.TryGetProperty("outbound", out var outbound) && outbound.GetString() == "VPN"
+                    && rule.EnumerateObject().Count() == 3),
+                "independent DNS upstreams race through rule-based routing whose full-TUN fallback remains VPN, with no direct DNS fallback");
             Check(dnsRules[0].GetProperty("query_type")[0].GetString() == "AAAA" && dnsRules[0].GetProperty("action").GetString() == "predefined", "disabled IPv6 DNS is honored by sing-box including its fake-IP path");
             var cache = dnsJson.RootElement.GetProperty("experimental").GetProperty("cache_file");
             Check(cache.GetProperty("enabled").GetBoolean() && cache.GetProperty("store_fakeip").GetBoolean(), "sing-box enables its persistent fake-IP cache (abrupt exit remains an upstream limitation)");
@@ -118,21 +122,81 @@ internal partial class Program
             " - {name: Bypass, type: direct}\n - {name: Blocked, type: reject}\n" + suffix.Replace("rules:\n", " - {name: BlockGroup, type: select, proxies: [Blocked]}\nrules:\n")
                 .Replace("DOMAIN-SUFFIX,direct.example,DIRECT", "DOMAIN-SUFFIX,direct.example,Bypass")
                 .Replace("DOMAIN,blocked.example,REJECT", "DOMAIN,blocked.example,BlockGroup"));
-        var aliasText = SingBoxConfig.Build(aliasProfile, api.Port, api.Secret, true);
-        await NativeCheck(aliasText, "real sing-box accepts canonicalized named direct and block exceptions in full TUN");
-        using (var aliases = JsonDocument.Parse(aliasText))
+        foreach (var fullTunnel in new[] { false, true })
         {
+            var aliasText = SingBoxConfig.Build(aliasProfile, api.Port, api.Secret, fullTunnel);
+            await NativeCheck(aliasText, "real sing-box accepts named direct and blocking exceptions, full TUN=" + fullTunnel);
+            using var aliases = JsonDocument.Parse(aliasText);
             var aliasRules = aliases.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray().ToArray();
             Check(aliasRules.Any(rule => rule.TryGetProperty("domain", out var value) && value[0].GetString() == "blocked.example" && rule.GetProperty("action").GetString() == "reject")
                 && aliasRules.Any(rule => rule.TryGetProperty("domain_suffix", out var value) && value[0].GetString() == "direct.example" && rule.GetProperty("outbound").GetString() == "DIRECT"),
-                "named full-TUN exceptions retain both direct and blocking semantics in sing-box");
+                "named exceptions retain both direct and blocking semantics, full TUN=" + fullTunnel);
+        }
+        var aliasPath = Path.Combine(home, "alias-validation.yaml");
+        File.WriteAllText(aliasPath, aliasProfile.BuildText(aliasProfile.Rules));
+        Check((await CoreProcessManager.ValidateAsync(executable, aliasPath, deadline.Token)).Success,
+            "actual YAML pre-validation accepts named blocking aliases before full-TUN startup");
+        Check((await CoreProcessManager.ValidateAsync(executable, aliasPath, deadline.Token, fullTunnel: true)).Success,
+            "actual YAML pre-validation uses full-TUN rules when that mode is requested");
+        // Use an explicit minimal fixture, independent of YAML reformatting.
+        var rejectDrop = prefix + fixtures[0] + "proxy-groups:\n - {name: VPN, type: select, proxies: [Server]}\n - {name: DropGroup, type: select, proxies: [REJECT-DROP]}\nrules:\n - DOMAIN,drop.example,DropGroup\n - MATCH,DropGroup\n";
+        var dropText = SingBoxConfig.Build(ClashConfigDocument.Parse(Path.Combine(home, "drop-alias.yaml"), rejectDrop), api.Port, api.Secret, false);
+        using (var drop = JsonDocument.Parse(dropText))
+        {
+            var dropRules = drop.RootElement.GetProperty("route").GetProperty("rules").EnumerateArray().ToArray();
+            // Other protective drop rules (for example the adapter's own IP)
+            // are expected; identify the two user rules instead of counting all drops.
+            Check(dropRules.Any(rule => rule.TryGetProperty("domain", out var domain) && domain[0].GetString() == "drop.example"
+                    && rule.GetProperty("action").GetString() == "reject" && rule.GetProperty("method").GetString() == "drop")
+                && dropRules[^1].GetProperty("action").GetString() == "reject"
+                && dropRules[^1].GetProperty("method").GetString() == "drop" && dropRules[^1].EnumerateObject().Count() == 2,
+                "named REJECT-DROP preserves drop for domain and catch-all rules");
+        }
+        await NativeCheck(dropText, "real sing-box accepts named REJECT-DROP rules and catch-all");
+        var mixedBlocked = ClashConfigDocument.Parse(Path.Combine(home, "mixed-block-alias.yaml"),
+            prefix + fixtures[0] + " - {name: Blocked, type: reject}\nproxy-groups:\n - {name: VPN, type: select, proxies: [Server, Blocked]}\nrules:\n - MATCH,VPN\n");
+        try { SingBoxConfig.Build(mixedBlocked, api.Port, api.Secret, false); throw new Exception("Mixed VPN/block selector was silently simplified"); }
+        catch (InvalidDataException) { Check(true, "mixed VPN/block selector fails safely rather than losing a selectable blocking member"); }
+
+        foreach (var headerName in new[] { "Host", "host", "HOST" })
+        {
+            var upgradeYaml = prefix + fixtures[5].Replace("headers: {Host: example.invalid}", "headers: {" + headerName + ": edge.example.invalid, x-fixture: fixture}")
+                .Replace("tls: true", "tls: true, servername: tls.example.invalid") + suffix;
+            var upgradeText = SingBoxConfig.Build(ClashConfigDocument.Parse(Path.Combine(home, "upgrade-host.yaml"), upgradeYaml), api.Port, api.Secret, false);
+            using var upgrade = JsonDocument.Parse(upgradeText);
+            var outbound = upgrade.RootElement.GetProperty("outbounds")[1]; var transport = outbound.GetProperty("transport");
+            Check(transport.GetProperty("host").GetString() == "edge.example.invalid"
+                && outbound.GetProperty("tls").GetProperty("server_name").GetString() == "tls.example.invalid"
+                && transport.GetProperty("headers").GetProperty("X-Fixture").GetString() == "fixture"
+                && !transport.GetProperty("headers").EnumerateObject().Any(header => header.Name.Equals("Host", StringComparison.OrdinalIgnoreCase)),
+                "HTTPUpgrade preserves case-insensitive Host independently of explicit TLS SNI: " + headerName);
+            await NativeCheck(upgradeText, "real sing-box accepts HTTPUpgrade Host header spelling " + headerName);
+        }
+        foreach (var upgrade in new[] { true, false })
+        {
+            var duplicateHeaders = prefix + fixtures[5].Replace("headers: {Host: example.invalid}", "headers: {Host: example.invalid, host: alternate.invalid}") + suffix;
+            if (!upgrade) duplicateHeaders = duplicateHeaders.Replace("v2ray-http-upgrade: true", "v2ray-http-upgrade: false");
+            try { SingBoxConfig.Build(ClashConfigDocument.Parse(Path.Combine(home, "duplicate-host.yaml"), duplicateHeaders), api.Port, api.Secret, false); throw new Exception("Ambiguous duplicate Host accepted"); }
+            catch (InvalidDataException error) { Check(!error.Message.Contains("alternate.invalid"), "case-colliding HTTP headers are rejected without leaking values, upgrade=" + upgrade); }
+        }
+        var duplicateCustomHeader = prefix + fixtures[2].Replace("headers: {Host: example.invalid}", "headers: {X-Fixture: first, x-fixture: second}") + suffix;
+        try { SingBoxConfig.Build(ClashConfigDocument.Parse(Path.Combine(home, "duplicate-custom-header.yaml"), duplicateCustomHeader), api.Port, api.Secret, false); throw new Exception("Case-colliding custom headers accepted"); }
+        catch (InvalidDataException) { Check(true, "duplicate header rejection applies to every HTTP field, not just Host"); }
+        var lowercaseWs = prefix + fixtures[2].Replace("Host: example.invalid", "host: edge.example.invalid") + suffix;
+        using (var lowercase = JsonDocument.Parse(SingBoxConfig.Build(ClashConfigDocument.Parse(Path.Combine(home, "ws-lowercase-host.yaml"), lowercaseWs), api.Port, api.Secret, false)))
+        {
+            var outbound = lowercase.RootElement.GetProperty("outbounds")[1];
+            Check(outbound.GetProperty("transport").GetProperty("headers").GetProperty("Host").GetString() == "edge.example.invalid",
+                "ordinary WebSocket retains a canonical Host header after case-insensitive parsing");
         }
         var unsupportedDns = ClashConfigDocument.Parse(Path.Combine(home, "advanced-dns.yaml"), prefix + fixtures[0] + suffix + "dns:\n nameserver-policy: {'geosite:private': '1.1.1.1'}\n");
         try { SingBoxConfig.Build(unsupportedDns, api.Port, api.Secret, false); throw new Exception("Advanced DNS policy silently dropped"); }
         catch (InvalidDataException error) { Check(error.Message.Contains("nameserver-policy") && !error.Message.Contains("private"), "untranslatable DNS policy fails safely rather than silently changing its meaning"); }
         using (var full = JsonDocument.Parse(SingBoxConfig.Build(document, api.Port, api.Secret, true)))
         {
-            var root = full.RootElement; var tun = root.GetProperty("inbounds")[0]; var route = root.GetProperty("route");
+            var root = full.RootElement;
+            var tun = root.GetProperty("inbounds").EnumerateArray().Single(item => item.GetProperty("type").GetString() == "tun");
+            var route = root.GetProperty("route");
             Check(tun.GetProperty("type").GetString() == "tun" && tun.GetProperty("stack").GetString() == "gvisor" && tun.GetProperty("mtu").GetInt32() == 1280, "native TUN uses gvisor and conservative MTU");
             Check(tun.GetProperty("auto_route").GetBoolean() && tun.GetProperty("strict_route").GetBoolean() && tun.GetProperty("dns_mode").GetString() == "hijack", "native TUN owns routing and DNS hijack");
             Check(route.GetProperty("final").GetString() == "VPN", "full tunnel sends unmatched traffic through VPN");

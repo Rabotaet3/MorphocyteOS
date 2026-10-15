@@ -144,6 +144,25 @@ try
     Reject(() => UpdatePackage.ParseManifest(new byte[2 * 1024 * 1024 + 1]), "manifest size bounded");
     var badManifest = Manifest("1.1.0", nextFiles); badManifest.Files.Add(badManifest.Files[0]);
     Reject(() => UpdatePackage.ParseManifest(JsonSerializer.SerializeToUtf8Bytes(badManifest)), "duplicate manifest paths rejected");
+    var installedManifest = Manifest("1.1.0", nextFiles);
+    installedManifest.Files.RemoveAll(file => file.Path == "mihomo.exe");
+    installedManifest.PreservedFiles.Add("mihomo.exe");
+    Check(UpdatePackage.ParseManifest(JsonSerializer.SerializeToUtf8Bytes(installedManifest), false).PreservedFiles.SequenceEqual(new[] { "mihomo.exe" }),
+        "installed manifest records selected user core without claiming ownership");
+    foreach (var unsafePreserved in new[] { "../outside.exe", "MorphocyteOS.exe", "private.yaml", "settings.json", "Licenses/../mihomo.exe", "Licenses/CON.txt" })
+    {
+        installedManifest.PreservedFiles = new() { unsafePreserved };
+        Reject(() => UpdatePackage.ParseManifest(JsonSerializer.SerializeToUtf8Bytes(installedManifest), false), "unsafe preserved path rejected: " + unsafePreserved);
+    }
+    installedManifest.PreservedFiles = new() { "mihomo.exe", "MIHOMO.EXE" };
+    Reject(() => UpdatePackage.ParseManifest(JsonSerializer.SerializeToUtf8Bytes(installedManifest), false), "duplicate preserved paths rejected");
+    installedManifest.PreservedFiles = new() { "README.md" };
+    Reject(() => UpdatePackage.ParseManifest(JsonSerializer.SerializeToUtf8Bytes(installedManifest), false), "owned and preserved path overlap rejected");
+    installedManifest.PreservedFiles = Enumerable.Range(0, 33).Select(index => "Licenses/preserved-" + index + ".txt").ToList();
+    Reject(() => UpdatePackage.ParseManifest(JsonSerializer.SerializeToUtf8Bytes(installedManifest), false), "preserved file list bounded");
+    var incomingPreserved = Manifest("1.1.0", nextFiles);
+    incomingPreserved.PreservedFiles.Add("Licenses/custom.txt");
+    Reject(() => UpdatePackage.ParseManifest(JsonSerializer.SerializeToUtf8Bytes(incomingPreserved)), "release cannot supply installed-only user exceptions");
     using (var client = new HttpClient(new StubHandler((_, _) => Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new ByteArrayContent(zipBytes) }))))
     {
         var download = await UpdateDownloader.PrepareAsync(client, Release(zipBytes), cache, null, default);
@@ -183,7 +202,73 @@ try
     Check(File.ReadAllText(Path.Combine(installed, "private.yaml")) == "secret user profile" && File.ReadAllText(Path.Combine(installed, "settings.json")) == "local settings"
         && File.ReadAllText(Path.Combine(installed, "notes.txt")) == "user notes" && File.Exists(Path.Combine(installed, "portable.flag"))
         && File.Exists(Path.Combine(installed, "Licenses", "unowned.txt")), "profiles, settings, portable flag and unowned files preserved");
-    Check(!UpdatePackage.ParseManifest(File.ReadAllBytes(Path.Combine(installed, UpdatePackage.ManifestName)), false).Files.Any(file => file.Path == "mihomo.exe"), "protected core is excluded from future cleanup ownership");
+    var protectedManifest = UpdatePackage.ParseManifest(File.ReadAllBytes(Path.Combine(installed, UpdatePackage.ManifestName)), false);
+    Check(!protectedManifest.Files.Any(file => file.Path == "mihomo.exe"), "protected core is excluded from future cleanup ownership");
+    Check(protectedManifest.PreservedFiles.SequenceEqual(new[] { "mihomo.exe" }), "protected core exception survives selected-core changes");
+
+    // Regression: first update keeps a replacement bundled core; a second update
+    // after selecting another external core must preserve it without deadlocking.
+    var laterFiles = Files("1.2.0");
+    var laterPayload = Stage("payload-later", "1.2.0", laterFiles);
+    var otherSelectedCore = Path.Combine(scratch, "external-core.exe");
+    File.WriteAllText(otherSelectedCore, "another selected user core");
+    var laterPlan = Plan(installed, "MorphocyteOS-test.exe"); laterPlan.Version = "1.2.0";
+    laterPlan.ProtectedFiles.Add(otherSelectedCore);
+    UpdateInstaller.Apply(laterPayload, laterPlan, Path.Combine(scratch, "rollback-later"));
+    Check(File.ReadAllBytes(Path.Combine(installed, "MorphocyteOS-test.exe")).SequenceEqual(laterFiles["MorphocyteOS.exe"]),
+        "second upgrade succeeds after selecting a different external core");
+    Check(File.ReadAllText(Path.Combine(installed, "mihomo.exe")) == "custom core" && File.ReadAllText(otherSelectedCore) == "another selected user core",
+        "second upgrade never overwrites either user-selected core");
+    var laterManifest = UpdatePackage.ParseManifest(File.ReadAllBytes(Path.Combine(installed, UpdatePackage.ManifestName)), false);
+    Check(laterManifest.Version == "1.2.0" && laterManifest.PreservedFiles.SequenceEqual(new[] { "mihomo.exe" }) && !laterManifest.Files.Any(file => file.Path == "mihomo.exe"),
+        "second upgrade retains explicit user ownership, not release cleanup ownership");
+    File.Delete(Path.Combine(installed, "mihomo.exe")); // Fixture user moved the override outside the installation.
+    var finalFiles = Files("1.3.0");
+    var finalPayload = Stage("payload-final", "1.3.0", finalFiles);
+    var finalPlan = Plan(installed, "MorphocyteOS-test.exe"); finalPlan.Version = "1.3.0";
+    finalPlan.ProtectedFiles.Add(otherSelectedCore);
+    UpdateInstaller.Apply(finalPayload, finalPlan, Path.Combine(scratch, "rollback-final"));
+    var finalManifest = UpdatePackage.ParseManifest(File.ReadAllBytes(Path.Combine(installed, UpdatePackage.ManifestName)), false);
+    Check(File.ReadAllBytes(Path.Combine(installed, "mihomo.exe")).SequenceEqual(finalFiles["mihomo.exe"]) && finalManifest.PreservedFiles.Count == 0 &&
+        finalManifest.Files.Any(file => file.Path == "mihomo.exe"), "moving a user override restores normal bundled-core installation and ownership");
+
+    const string nestedCorePath = "ThirdPartySource/Engine/sing-box.exe";
+    var nestedOldFiles = Files("1.0.0"); nestedOldFiles[nestedCorePath] = Bytes("original bundled sing-box");
+    var nestedFirstFiles = Files("1.1.0"); nestedFirstFiles[nestedCorePath] = Bytes("next bundled sing-box");
+    var nestedSecondFiles = Files("1.2.0"); nestedSecondFiles[nestedCorePath] = Bytes("later bundled sing-box");
+    var nestedInstall = Stage("nested-user-core-install", "1.0.0", nestedOldFiles);
+    var nestedCore = Path.Combine(nestedInstall, nestedCorePath.Replace('/', Path.DirectorySeparatorChar));
+    File.WriteAllText(nestedCore, "user-replaced sing-box");
+    var nestedFirstPlan = Plan(nestedInstall); nestedFirstPlan.ProtectedFiles.Add(nestedCore);
+    UpdateInstaller.Apply(Stage("nested-first-payload", "1.1.0", nestedFirstFiles), nestedFirstPlan, Path.Combine(scratch, "nested-first-rollback"));
+    var nestedSecondPlan = Plan(nestedInstall); nestedSecondPlan.Version = "1.2.0";
+    UpdateInstaller.Apply(Stage("nested-second-payload", "1.2.0", nestedSecondFiles), nestedSecondPlan, Path.Combine(scratch, "nested-second-rollback"));
+    var nestedManifest = UpdatePackage.ParseManifest(File.ReadAllBytes(Path.Combine(nestedInstall, UpdatePackage.ManifestName)), false);
+    Check(nestedManifest.Version == "1.2.0" && nestedManifest.PreservedFiles.SequenceEqual(new[] { nestedCorePath }) &&
+        File.ReadAllText(nestedCore) == "user-replaced sing-box", "nested bundled sing-box override survives two upgrades and switching to bundled Mihomo");
+
+    var removedCoreInstall = Stage("temporarily-removed-core-install", "1.0.0", nestedOldFiles);
+    var removedCore = Path.Combine(removedCoreInstall, nestedCorePath.Replace('/', Path.DirectorySeparatorChar));
+    File.WriteAllText(removedCore, "custom core surviving an absent release path");
+    var removedPlan = Plan(removedCoreInstall); removedPlan.ProtectedFiles.Add(removedCore);
+    UpdateInstaller.Apply(Stage("core-path-absent-payload", "1.1.0", Files("1.1.0")), removedPlan, Path.Combine(scratch, "core-path-absent-rollback"));
+    var absentManifest = UpdatePackage.ParseManifest(File.ReadAllBytes(Path.Combine(removedCoreInstall, UpdatePackage.ManifestName)), false);
+    Check(absentManifest.PreservedFiles.Contains(nestedCorePath) && File.Exists(removedCore),
+        "a protected obsolete core is retained with its ownership exception even when absent from the new release");
+    var reintroducedPlan = Plan(removedCoreInstall); reintroducedPlan.Version = "1.2.0";
+    UpdateInstaller.Apply(Stage("core-path-returned-payload", "1.2.0", nestedSecondFiles), reintroducedPlan, Path.Combine(scratch, "core-path-returned-rollback"));
+    Check(File.ReadAllText(removedCore) == "custom core surviving an absent release path"
+        && UpdatePackage.ParseManifest(File.ReadAllBytes(Path.Combine(removedCoreInstall, UpdatePackage.ManifestName)), false).PreservedFiles.Contains(nestedCorePath),
+        "a reintroduced core path cannot overwrite or block a previously preserved custom core after switching engines");
+
+    var unknownNestedInstall = Stage("unowned-nested-core-install", "1.0.0", Files("1.0.0"));
+    var unknownNestedCore = Path.Combine(unknownNestedInstall, nestedCorePath.Replace('/', Path.DirectorySeparatorChar));
+    Directory.CreateDirectory(Path.GetDirectoryName(unknownNestedCore)!);
+    File.WriteAllText(unknownNestedCore, "unselected unowned sing-box");
+    Reject(() => UpdateInstaller.Apply(Stage("unowned-nested-payload", "1.1.0", nestedFirstFiles), Plan(unknownNestedInstall), Path.Combine(scratch, "unowned-nested-rollback")),
+        "unknown nested core collision remains refused without explicit user preservation");
+    Check(File.ReadAllText(unknownNestedCore) == "unselected unowned sing-box" && File.ReadAllText(Path.Combine(unknownNestedInstall, "MorphocyteOS.exe")) == "app-1.0.0",
+        "unowned nested core refusal leaves app and user bytes untouched");
 
     // Test rollback after every changed file and after manifest replacement.
     var rollbackOld = Files("1.0.0"); rollbackOld.Remove("ThirdPartySource/example.txt"); rollbackOld["Licenses/obsolete.txt"] = Bytes("obsolete");

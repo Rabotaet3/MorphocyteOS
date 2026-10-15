@@ -11,6 +11,9 @@ internal sealed class ReleaseManifest
     public int SchemaVersion { get; set; } = 1;
     public string Version { get; set; } = "";
     public List<ReleaseFile> Files { get; set; } = new();
+    // Installed-only exceptions, not owned release bytes. Keep explicitly selected
+    // user files safe even when a later update selects a different core/profile.
+    public List<string> PreservedFiles { get; set; } = new();
 }
 
 internal sealed class ReleaseFile
@@ -70,7 +73,9 @@ internal static class UpdatePackage
         try { manifest = JsonSerializer.Deserialize<ReleaseManifest>(bytes) ?? throw new JsonException(); }
         catch (JsonException error) { throw new InvalidDataException("Повреждён список файлов обновления.", error); }
         if (manifest.SchemaVersion != 1 || !ReleaseUpdateService.SemanticVersion.TryParse(manifest.Version, out _) ||
-            manifest.Files is null || manifest.Files.Count is < 1 or > MaximumFiles)
+            manifest.Files is null || manifest.Files.Count is < 1 or > MaximumFiles ||
+            manifest.PreservedFiles is null || manifest.PreservedFiles.Count > 32 ||
+            (requireCore && manifest.PreservedFiles.Count != 0))
             throw new InvalidDataException("Неподдерживаемый список файлов обновления.");
         var paths = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
         long total = 0;
@@ -84,6 +89,11 @@ internal static class UpdatePackage
         }
         if (!paths.Contains("MorphocyteOS.exe") || (requireCore && !paths.Contains("mihomo.exe")))
             throw new InvalidDataException("В обновлении отсутствует приложение или комплектное ядро.");
+        var preserved = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        foreach (var path in manifest.PreservedFiles)
+            if (!IsManagedPath(path) || path.Equals("MorphocyteOS.exe", StringComparison.OrdinalIgnoreCase) ||
+                paths.Contains(path) || !preserved.Add(path))
+                throw new InvalidDataException("Небезопасный список сохраняемых пользовательских файлов.");
         return manifest;
     }
 

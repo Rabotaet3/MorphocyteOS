@@ -30,6 +30,9 @@ internal sealed class TransferOptions
     public bool AutoReconnect { get; set; } = true;
     public string PreferredRoute { get; set; } = "VPN";
     public bool ShowEventLog { get; set; }
+    // Null preserves the destination mode when reading an older transfer file.
+    public bool? FullTunnel { get; set; }
+    public string? SelectedServer { get; set; }
 }
 
 internal sealed class TransferRule
@@ -141,6 +144,9 @@ internal static class ConfigurationTransfer
             throw new InvalidDataException("Некорректные параметры интерфейса в файле переноса.");
         var document = ClashConfigDocument.Parse(System.IO.Path.Combine(System.IO.Path.GetTempPath(), "transfer-profile.yaml"), package.Yaml);
         if (document.Validate().Count != 0) throw new InvalidDataException("В файле переноса нет VPN-маршрутов.");
+        if (options.SelectedServer is { Length: > 0 } selected && (!ValidField(selected)
+            || selected is not ("DIRECT" or "REJECT") && !document.Routes.Contains(selected)))
+            throw new InvalidDataException("В файле переноса выбран неизвестный сервер.");
         foreach (var rule in package.Rules)
         {
             if (rule is null || rule.Kind is not ("DOMAIN" or "DOMAIN-SUFFIX" or "DOMAIN-KEYWORD" or "PROCESS-NAME")
@@ -175,7 +181,8 @@ internal static class ConfigurationTransfer
             throw new InvalidDataException("Правила не совпадают с сохранённой конфигурацией. Не указан черновик.");
     }
 
-    internal static async Task<string> CreateProfileAsync(ConfigurationPackage package, string corePath, string storageDirectory, CancellationToken token)
+    internal static async Task<string> CreateProfileAsync(ConfigurationPackage package, string corePath, string storageDirectory,
+        CancellationToken token, bool fullTunnel = false)
     {
         Validate(package);
         var profilesRoot = System.IO.Path.GetFullPath(System.IO.Path.Combine(storageDirectory, "Profiles"));
@@ -201,11 +208,11 @@ internal static class ConfigurationTransfer
                 }
                 AtomicFile.Write(path, package.Yaml);
             }, token);
-            var check = await CoreProcessManager.ValidateAsync(corePath, path, token);
+            var check = await CoreProcessManager.ValidateAsync(corePath, path, token, fullTunnel: fullTunnel);
             if (!check.Success) throw new InvalidDataException("Ядро не приняло конфигурацию из файла переноса. Текущий профиль не изменён.");
             var candidate = System.IO.Path.Combine(directory, ".draft-check.yaml");
             AtomicFile.Write(candidate, ClashConfigDocument.Parse(path, package.Yaml).BuildText(package.Rules.Select(rule => rule.ToRule())));
-            check = await CoreProcessManager.ValidateAsync(corePath, candidate, token);
+            check = await CoreProcessManager.ValidateAsync(corePath, candidate, token, fullTunnel: fullTunnel);
             File.Delete(candidate);
             if (!check.Success) throw new InvalidDataException("Ядро не приняло правила из файла переноса. Текущий профиль не изменён.");
             token.ThrowIfCancellationRequested();

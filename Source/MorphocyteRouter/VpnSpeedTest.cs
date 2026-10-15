@@ -27,7 +27,7 @@ internal sealed class VpnSpeedTest : IDisposable
         }) { Timeout = Timeout.InfiniteTimeSpan };
     }
 
-    internal async Task<SpeedTestResult> MeasureAsync(CancellationToken token)
+    internal async Task<SpeedTestResult> MeasureAsync(CancellationToken token, IProgress<int>? progress = null)
     {
         token.ThrowIfCancellationRequested();
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
@@ -36,6 +36,22 @@ internal sealed class VpnSpeedTest : IDisposable
         Exception? failure = null;
         var samples = new DownloadSamples();
         var clock = Stopwatch.StartNew();
+        using var reporting = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
+        async Task ReportProgressAsync()
+        {
+            try
+            {
+                while (true)
+                {
+                    progress!.Report(ProgressPercent(Interlocked.Read(ref total), clock.Elapsed));
+                    await Task.Delay(100, reporting.Token).ConfigureAwait(false);
+                }
+            }
+            catch (OperationCanceledException) when (reporting.IsCancellationRequested) { }
+        }
+        var progressTask = progress is null ? Task.CompletedTask : ReportProgressAsync();
+        try
+        {
         async Task<bool> Download(int index, int requestedBytes, bool measure, CancellationToken transferToken)
         {
             try
@@ -101,8 +117,16 @@ internal sealed class VpnSpeedTest : IDisposable
             if (deadline.IsCancellationRequested) throw new TimeoutException();
             throw new IOException("Недостаточно данных для замера скорости.");
         }
+        reporting.Cancel();
+        await progressTask.ConfigureAwait(false);
+        progress?.Report(100);
         return new SpeedTestResult(capacity, total);
+        }
+        finally { reporting.Cancel(); await progressTask.ConfigureAwait(false); }
     }
+
+    internal static int ProgressPercent(long bytes, TimeSpan elapsed) => Math.Clamp((int)Math.Floor(
+        Math.Max(Math.Clamp((double)bytes / MaxBytes, 0, 1), Math.Clamp(elapsed.TotalSeconds / 15, 0, 1)) * 100), 0, 99);
 
     // Aggregate all concurrent transfers on one clock. Fixed-size bins bound
     // memory even if a stream returns tiny reads. One-second windows suppress
@@ -138,7 +162,8 @@ internal sealed class VpnSpeedTest : IDisposable
             {
                 if (_start is null || _bytes < 262_144) return 0;
                 var duration = _last - _start.Value;
-                if (duration < .25) return 0; // A tiny burst is not a speed test.
+                if (duration < .25)
+                    return duration >= .001 && _bytes >= 16_000_000 ? _bytes / duration : 0;
                 if (duration < 1) return _bytes / duration;
                 var completeBins = Math.Min((int)Math.Floor(duration / BinSeconds), _bins.Length);
                 long rolling = 0, best = 0;

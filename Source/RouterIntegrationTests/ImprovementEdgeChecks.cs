@@ -18,7 +18,7 @@ internal partial class Program
         void Check(bool ok, string message) { if (!ok) throw new Exception("FAIL: " + message); count++; Console.WriteLine("PASS: " + message); }
         const string yaml = "proxies:\n  - {name: Alpha, type: socks5, server: 192.0.2.20, port: 1080}\n  - {name: Beta, type: socks5, server: 192.0.2.21, port: 1080}\nproxy-groups:\n  - {name: VPN, type: select, proxies: [Alpha, Beta, DIRECT]}\ntun:\n  enable: true\nrules:\n  - DOMAIN-SUFFIX,keep.example,VPN\n  - MATCH,DIRECT\n";
         const string fresh = "proxies:\n  - {name: Beta, type: socks5, server: 192.0.2.22, port: 1080}\n  - {name: Gamma, type: socks5, server: 192.0.2.23, port: 1080}\n";
-        var path = Path.Combine(scratch, "edge-profile.yaml"); File.WriteAllText(path, yaml);
+        var path = Path.Combine(scratch, "edge-profile.yaml"); File.WriteAllText(path, "morphocyte-fake-api: startup-only\n" + yaml);
         var settingsPath = Path.Combine(scratch, "edge-settings.json");
         var settings = AppSettings.Load(settingsPath);
         Check(settings.AutoReconnect, "connection recovery is enabled by default for existing and new settings");

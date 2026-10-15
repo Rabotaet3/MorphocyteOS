@@ -23,7 +23,8 @@ internal static class SingBoxDns
     }
 
     internal static Dictionary<string, object> Build(YamlMappingNode root, string vpn, string tunTag,
-        Func<string, string> tag, IReadOnlyList<Dictionary<string, object>> domainRoutes, int bootstrapPort, int directPort)
+        Func<string, string> tag, IReadOnlyList<Dictionary<string, object>> domainRoutes, int bootstrapPort, int directPort,
+        string? routedDetour = null)
     {
         var dns = Get(root, "dns") as YamlMappingNode ?? new YamlMappingNode();
         // These settings cannot safely be approximated by a plain resolver race.
@@ -33,6 +34,33 @@ internal static class SingBoxDns
             && filter.Children.Any(pair => pair.Key.ToString() != "geoip" || pair.Value.ToString() != "false")) throw Unsupported("fallback-filter");
         var servers = new List<Dictionary<string, object>>();
         var rules = new List<Dictionary<string, object>>();
+        bool Enabled(string key, bool fallback) => Get(dns, key) is null ? fallback
+            : bool.TryParse(Text(dns, key), out var flag) ? flag : throw Unsupported(key);
+        var useHosts = Enabled("use-hosts", true);
+        var useSystemHosts = Enabled("use-system-hosts", true);
+        var predefined = new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase);
+        if (useHosts && Get(root, "hosts") is { } hostsNode)
+        {
+            if (hostsNode is not YamlMappingNode hosts || hosts.Children.Count > 10000) throw Unsupported("hosts");
+            foreach (var entry in hosts.Children)
+            {
+                var domain = entry.Key.ToString().TrimEnd('.');
+                if (Uri.CheckHostName(domain) != UriHostNameType.Dns || domain.Contains('*')) throw Unsupported("hosts: шаблон или псевдоним");
+                var values = entry.Value is YamlSequenceNode addresses ? addresses.Children.ToArray() : new[] { entry.Value };
+                if (values.Length is 0 or > 64 || values.Any(value => value is not YamlScalarNode || !IPAddress.TryParse(value.ToString(), out _)))
+                    throw Unsupported("hosts: адрес");
+                if (!predefined.TryAdd(domain.ToLowerInvariant(), values.Select(value => IPAddress.Parse(value.ToString()).ToString()).ToArray()))
+                    throw Unsupported("hosts: повторяющееся имя");
+            }
+        }
+        if (Text(dns, "ipv6") == "false") rules.Add(Obj(("query_type", new[] { "AAAA" }), ("action", "predefined"), ("rcode", "NOERROR")));
+        if (useSystemHosts || predefined.Count > 0)
+        {
+            var hostsTag = tag("hosts");
+            servers.Add(Obj(("type", "hosts"), ("tag", hostsTag), ("predefined", predefined)));
+            var match = useSystemHosts ? Obj(("preferred_by", new[] { hostsTag })) : Obj(("domain", predefined.Keys.ToArray()));
+            rules.Add(new Dictionary<string, object>(match) { ["query_type"] = new[] { "A", "AAAA" }, ["action"] = "route", ["server"] = hostsTag });
+        }
         var bootstrap = tag("bootstrap");
         var directResolver = tag("direct-resolver");
         var bootstrapEndpoints = Endpoints(Get(dns, "proxy-server-nameserver") ?? Get(dns, "default-nameserver"), "proxy-server-nameserver", "1.1.1.1", "8.8.8.8");
@@ -76,9 +104,8 @@ internal static class SingBoxDns
         if (remoteEndpoints is ["https://1.1.1.1/dns-query"] or ["https://cloudflare-dns.com/dns-query"])
             remoteEndpoints = [.. remoteEndpoints, "https://8.8.8.8/dns-query"];
         remoteEndpoints = remoteEndpoints.Concat(Endpoints(Get(dns, "fallback"), "fallback")).Distinct().ToArray();
-        var remote = AddServers("remote", remoteEndpoints, vpn);
+        var remote = AddServers("remote", remoteEndpoints, routedDetour ?? vpn);
         var direct = AddServers("direct", Endpoints(Get(dns, "direct-nameserver"), "direct-nameserver", bootstrapEndpoints), null);
-        if (Text(dns, "ipv6") == "false") rules.Add(Obj(("query_type", new[] { "AAAA" }), ("action", "predefined"), ("rcode", "NOERROR")));
         Resolve(Obj(("inbound", new[] { tag("bootstrap-in") })), bootstrapTargets);
         Resolve(Obj(("inbound", new[] { tag("direct-dns-in") })), direct);
         if (Get(dns, "nameserver-policy") is YamlMappingNode policies)
@@ -90,7 +117,7 @@ internal static class SingBoxDns
                 var suffix = pattern.StartsWith("+.", StringComparison.Ordinal) || pattern.StartsWith("*.", StringComparison.Ordinal);
                 var domain = suffix ? pattern[2..] : pattern;
                 if (Uri.CheckHostName(domain) != UriHostNameType.Dns || domain.Contains(':') || domain.Contains('*')) throw Unsupported("nameserver-policy");
-                Resolve(Obj((suffix ? "domain_suffix" : "domain", new[] { domain })), AddServers("policy-" + index++, Endpoints(policy.Value, "nameserver-policy"), vpn));
+                Resolve(Obj((suffix ? "domain_suffix" : "domain", new[] { domain })), AddServers("policy-" + index++, Endpoints(policy.Value, "nameserver-policy"), routedDetour ?? vpn));
             }
         }
         Resolve(Obj(("domain_suffix", new[] { ".lan", ".local" })), direct);

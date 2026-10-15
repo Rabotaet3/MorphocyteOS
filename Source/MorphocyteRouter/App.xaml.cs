@@ -8,6 +8,12 @@ public partial class App : Application
     private bool _ownsMutex;
     protected override async void OnStartup(StartupEventArgs e)
     {
+        if (e.Args.Length > 0 && e.Args[0] == "--signal-owned-core")
+        {
+            ShutdownMode = ShutdownMode.OnExplicitShutdown;
+            Shutdown(WindowsConsoleProcess.SignalOwnedCore(e.Args));
+            return;
+        }
         if (e.Args.Length > 0 && e.Args[0].StartsWith("--installer-", StringComparison.Ordinal))
         {
             ShutdownMode = ShutdownMode.OnExplicitShutdown;

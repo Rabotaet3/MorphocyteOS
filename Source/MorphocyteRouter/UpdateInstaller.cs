@@ -207,6 +207,11 @@ internal static class UpdateInstaller
             return UpdatePackage.ResolveFile(plan.InstallDirectory, actual);
         }
         bool Protected(string path) => protectedFiles.Contains(Path.GetFullPath(path));
+        // A previous explicit user selection is not owned by the release. Do not
+        // turn it into an unowned-name collision or overwrite it after switching
+        // cores. Moving/removing the file releases this exception naturally.
+        var preserved = current.PreservedFiles.Where(relative => File.Exists(Target(relative)))
+            .ToHashSet(StringComparer.OrdinalIgnoreCase);
         var changed = new List<(string Relative, string Target, string? Source)>();
         var retained = new List<ReleaseFile>();
         foreach (var file in incoming.Files)
@@ -215,8 +220,10 @@ internal static class UpdateInstaller
             if (Protected(target))
             {
                 if (file.Path.Equals("MorphocyteOS.exe", StringComparison.OrdinalIgnoreCase)) throw new IOException("Файл приложения пересекается с выбранным пользовательским файлом.");
+                if (File.Exists(target)) preserved.Add(file.Path);
                 continue;
             }
+            if (preserved.Contains(file.Path)) continue;
             if (File.Exists(target))
             {
                 if (!oldFiles.TryGetValue(file.Path, out var previous)) throw new IOException("Файл не принадлежит установленному комплекту: " + file.Path);
@@ -230,11 +237,24 @@ internal static class UpdateInstaller
         foreach (var old in current.Files.Where(file => !newFiles.ContainsKey(file.Path)))
         {
             var target = Target(old.Path);
-            if (Protected(target) || !File.Exists(target)) continue;
+            if (Protected(target))
+            {
+                if (File.Exists(target)) preserved.Add(old.Path);
+                continue;
+            }
+            if (!File.Exists(target)) continue;
             if (!UpdatePackage.Hash(target).Equals(old.Sha256, StringComparison.OrdinalIgnoreCase))
                 continue; // A modified obsolete file is user data, not cleanup material.
             changed.Add((old.Path, target, null));
         }
+        var updated = new ReleaseManifest
+        {
+            Version = incoming.Version, Files = retained,
+            PreservedFiles = preserved.OrderBy(path => path, StringComparer.OrdinalIgnoreCase).ToList()
+        };
+        var updatedBytes = JsonSerializer.SerializeToUtf8Bytes(updated);
+        // Check installed-only exceptions before the first filesystem mutation.
+        _ = UpdatePackage.ParseManifest(updatedBytes, false);
         // Preflight locks before the first mutation; never stop another app's core.
         foreach (var change in changed.Where(change => File.Exists(change.Target)))
             using (var probe = new FileStream(change.Target, FileMode.Open, FileAccess.ReadWrite, FileShare.None)) { }
@@ -282,10 +302,9 @@ internal static class UpdateInstaller
                     throw new IOException("Файл изменился во время обновления: " + file.Path);
             var manifestBackup = Path.Combine(rollbackDirectory, "manifest");
             File.Copy(currentManifestPath, manifestBackup, false);
-            var updated = new ReleaseManifest { Version = incoming.Version, Files = retained };
             var manifestTemp = currentManifestPath + ".update-" + Guid.NewGuid().ToString("N");
             temporaryFiles.Add(manifestTemp);
-            File.WriteAllText(manifestTemp, JsonSerializer.Serialize(updated));
+            File.WriteAllBytes(manifestTemp, updatedBytes);
             var manifestHash = UpdatePackage.Hash(manifestTemp);
             File.Move(manifestTemp, currentManifestPath, true);
             backups.Add((currentManifestPath, manifestBackup, manifestHash));

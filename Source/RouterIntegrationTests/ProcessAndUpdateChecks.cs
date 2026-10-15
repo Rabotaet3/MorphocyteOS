@@ -76,7 +76,7 @@ internal partial class Program
                     "section buttons scroll the shared settings page without opening or hiding separate pages");
                 Check(!Descendants<TextBlock>(dialog).Any(text => text.Text.Contains("30 минут") || text.Text.StartsWith("Цвета меняются")
                     || text.Text.StartsWith("Меняет весь интерфейс") || text.Text.StartsWith("Приложение запускается в трее"))
-                    && Descendants<CheckBox>(dialog).Any(option => Descendants<TextBlock>(option).Any(text => text.Text == "Автоматическое обновление")),
+                    && Descendants<CheckBox>(dialog).Any(option => Descendants<TextBlock>(option).Any(text => text.Text == "Проверять наличие обновлений")),
                     "settings keep the short automatic-update label without instructional paragraphs");
                 settingsUpdated = Descendants<Button>(dialog).Any(button => Equals(button.Content, "ОБНОВИТЬ ДО 9.0.0") && button.IsVisible)
                     && !Descendants<TextBlock>(dialog).Any(text => text.Text.Contains("предложит открыть страницу загрузки"));
@@ -120,7 +120,7 @@ internal partial class Program
                         $"startup screenshot includes the entire window at {scale * 100:0}% rather than cropping the scaled content");
                     Descendants<Button>(dialog).Single(button => Equals(button.Content, "Обновления")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                     dialog.UpdateLayout();
-                    var automatic = Descendants<CheckBox>(dialog).Single(option => Descendants<TextBlock>(option).Any(text => text.Text == "Автоматическое обновление"));
+                    var automatic = Descendants<CheckBox>(dialog).Single(option => Descendants<TextBlock>(option).Any(text => text.Text == "Проверять наличие обновлений"));
                     var viewport = Descendants<ScrollContentPresenter>(settingsScroll).First();
                     var optionBounds = automatic.TransformToAncestor(viewport).TransformBounds(new Rect(automatic.RenderSize));
                     Check(optionBounds.Top >= 0 && optionBounds.Bottom <= viewport.ActualHeight,

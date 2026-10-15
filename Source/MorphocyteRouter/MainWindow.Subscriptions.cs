@@ -107,6 +107,7 @@ public partial class MainWindow
         var dirty = _dirty;
         var ruleState = _settings.GetRuleState(original.Path);
         var previousUpdatedAt = source.UpdatedAt; var previousSelection = source.SelectedServer;
+        var previousProfileSelection = _settings.ProfileSelections.GetValueOrDefault(original.Path);
         var undo = _undoRules.ToArray(); var redo = _redoRules.ToArray();
         var wantedBefore = _connectionRequested;
         var temp = Path.Combine(Path.GetDirectoryName(original.Path)!, ".subscription-" + Guid.NewGuid().ToString("N") + ".yaml");
@@ -114,12 +115,12 @@ public partial class MainWindow
         try
         {
             await File.WriteAllTextAsync(temp, merged.Yaml, token);
-            var check = await CoreProcessManager.ValidateAsync(_settings.CorePath, temp, token);
+            var check = await CoreProcessManager.ValidateAsync(_settings.CorePath, temp, token, fullTunnel: _settings.FullTunnel);
             if (!check.Success) throw new InvalidDataException("Ядро не приняло обновлённую подписку. Текущий профиль сохранён.");
             if (dirty)
             {
                 await File.WriteAllTextAsync(temp, candidate.BuildText(rules), token);
-                check = await CoreProcessManager.ValidateAsync(_settings.CorePath, temp, token);
+                check = await CoreProcessManager.ValidateAsync(_settings.CorePath, temp, token, fullTunnel: _settings.FullTunnel);
                 if (!check.Success) throw new InvalidDataException("Обновлённые серверы несовместимы с черновиком правил. Текущий профиль сохранён.");
             }
             token.ThrowIfCancellationRequested();
@@ -133,6 +134,7 @@ public partial class MainWindow
             else _settings.RemoveDraft(original.Path);
             if (ruleState is not null) _settings.PutRuleState(original.Path, candidate.SourceHash, ruleState.Rules);
             await LoadConfigAsync(original.Path);
+            if (merged.SelectedServer.Length > 0) _settings.ProfileSelections[original.Path] = merged.SelectedServer;
             _undoRules.AddRange(undo); _redoRules.AddRange(redo); _historyState = CaptureRuleEditState(_dirty);
             token.ThrowIfCancellationRequested();
             if (wasRunning && !_closing)
@@ -164,6 +166,8 @@ public partial class MainWindow
                 else _settings.ProfileRuleStates.Remove(original.Path);
                 _settings.PutFolderOrder(original.Path, folders);
                 source.UpdatedAt = previousUpdatedAt; source.SelectedServer = previousSelection;
+                if (previousProfileSelection is null) _settings.ProfileSelections.Remove(original.Path);
+                else _settings.ProfileSelections[original.Path] = previousProfileSelection;
                 _undoRules.Clear(); _undoRules.AddRange(undo); _redoRules.Clear(); _redoRules.AddRange(redo);
                 _historyState = CaptureRuleEditState(dirty);
                 try { await SaveSettingsAsync(); }
