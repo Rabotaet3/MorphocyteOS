@@ -81,6 +81,18 @@ internal static class SingBoxConfig
             }
         foreach (var group in outbounds.Where(item => item.ContainsKey("outbounds")))
             if (((string[])group["outbounds"]).Any(member => !names.Contains(member))) throw Unsupported("ссылка группы на неизвестное подключение");
+        // Do not reject traffic for a selectable DIRECT branch. Only routes
+        // whose entire reachable membership is proxy-only get the fallback.
+        var proxyRoutes = outbounds.Where(item => !item.ContainsKey("outbounds") && (string)item["type"] != "direct")
+            .Select(item => (string)item["tag"]).ToHashSet(StringComparer.Ordinal);
+        bool proxyRoutesChanged;
+        do
+        {
+            proxyRoutesChanged = false;
+            foreach (var group in outbounds.Where(item => item.ContainsKey("outbounds")))
+                if (((string[])group["outbounds"]).All(proxyRoutes.Contains))
+                    proxyRoutesChanged |= proxyRoutes.Add((string)group["tag"]);
+        } while (proxyRoutesChanged);
         var internalPrefix = "morphocyte-" + secret[..12] + "-";
         string Internal(string name)
         {
@@ -151,11 +163,16 @@ internal static class SingBoxConfig
                 rules.Add(Obj(("action", "resolve"), ("timeout", "5s")));
                 upstreamRoutes.Add(Obj(("action", "resolve"), ("timeout", "5s")));
             }
+            // Reject only the YouTube UDP/443 traffic that this exact rule would
+            // send through a proxy. Earlier DIRECT/block/process/IP exceptions
+            // keep their first-match semantics; DNS re-entry stays unchanged.
+            if (!block && proxyRoutes.Contains(target)) rules.Add(YouTubeTcpFallback(rule));
             rules.Add(rule);
             upstreamRoutes.Add(rule);
             if (key is "domain" or "domain_suffix" or "domain_keyword")
                 domainRoutes.Add(Obj((key, new[] { parts[1] }), ("outbound", exceptions.GetValueOrDefault(target, target))));
         }
+        if (proxyRoutes.Contains(final)) rules.Add(YouTubeTcpFallback());
         var mixedPort = Number(root, "mixed-port");
         var bootstrapPort = DnsPort(controllerPort, speedPort, mixedPort);
         var directPort = DnsPort(controllerPort, speedPort, mixedPort, bootstrapPort);
@@ -214,6 +231,22 @@ internal static class SingBoxConfig
                 ("clash_api", Obj(("external_controller", "127.0.0.1:" + controllerPort), ("secret", secret),
                 ("default_mode", "Rule"), ("access_control_allow_origin", new[] { "http://127.0.0.1" }))))));
         return JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private static Dictionary<string, object> YouTubeTcpFallback(Dictionary<string, object>? route = null)
+    {
+        // YouTube video compatibility: prompt the browser to retry TCP,
+        // rather than silently dropping QUIC or blocking UDP for other services.
+        var scope = Obj(("domain_suffix", new[] { "googlevideo.com" }), ("network", new[] { "udp" }), ("port", new[] { 443 }));
+        if (route is null)
+        {
+            scope["action"] = "reject"; scope["method"] = "default"; scope["no_drop"] = true;
+            return scope;
+        }
+        var match = route.Where(field => field.Key is not ("action" or "outbound"))
+            .ToDictionary(field => field.Key, field => field.Value);
+        return Obj(("type", "logical"), ("mode", "and"), ("rules", new[] { match, scope }),
+            ("action", "reject"), ("method", "default"), ("no_drop", true));
     }
 
     private static int DnsPort(params int[] excluded)

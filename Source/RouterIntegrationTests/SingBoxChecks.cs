@@ -93,6 +93,7 @@ internal partial class Program
         }
         var original = document.BuildText(document.Rules);
         passed += await RunNetworkCompatibilityChecks(home, api, NativeCheck);
+        passed += await RunYouTubeTcpFallbackChecks(home, api, NativeCheck);
         var dnsProfile = ClashConfigDocument.Parse(Path.Combine(home, "dns-custom.yaml"), prefix + fixtures[0] + suffix +
             "dns:\n ipv6: false\n nameserver: [https://9.9.9.9/dns-query, https://8.8.8.8/dns-query]\n nameserver-policy: {'+.policy.example': 'https://1.0.0.1/dns-query'}\n direct-nameserver: [8.8.4.4]\n");
         var customDnsText = SingBoxConfig.Build(dnsProfile, api.Port, api.Secret, true);
