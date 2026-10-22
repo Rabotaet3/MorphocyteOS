@@ -9,6 +9,7 @@ namespace MorphocyteRouter;
 public sealed class ClashConfigDocument
 {
     private const int MaxYamlBackups = 3;
+    private const string AddressOverrideComment = "# morphocyte-address-route";
     private readonly string _originalText;
     private readonly string _yamlText;
     private readonly YamlMappingNode _root;
@@ -55,7 +56,15 @@ public sealed class ClashConfigDocument
             throw new InvalidDataException("Секция rules должна быть списком правил.");
         _allRules = sequence.Children.Select(node => node is YamlScalarNode { Value: not null } scalar
             ? scalar.Value : throw new InvalidDataException("Каждое правило rules должно быть строкой.")).ToList();
-        Rules = _allRules.Select(ParseRule).Where(rule => rule is not null).Cast<DomainRule>().ToArray();
+        var parsedRules = _allRules.Select(ParseRule).Where(rule => rule is not null).Cast<DomainRule>().ToArray();
+        foreach (var rule in parsedRules.Where(rule => rule.Kind == "DOMAIN"))
+        {
+            var end = checked((int)sequence.Children[rule.SourceIndex].End.Index);
+            var lineEnd = _yamlText.IndexOf('\n', end);
+            var tail = _yamlText[end..(lineEnd < 0 ? _yamlText.Length : lineEnd)].Trim();
+            rule.AddressOverride = tail == AddressOverrideComment;
+        }
+        Rules = parsedRules;
 
         // Replace only the rules value; retain unrelated source text and credentials verbatim.
         var entry = root.Children.First(pair => pair.Key is YamlScalarNode { Value: "rules" });
@@ -103,8 +112,15 @@ public sealed class ClashConfigDocument
             // catch-all is replaced, so everything else uses the VPN by default.
             var exceptionRoutes = ExceptionRoutes(root);
             var exceptions = new List<YamlNode>();
-            foreach (var rule in _allRules)
-                if (ExceptionRule(rule, exceptionRoutes) is { } exception) exceptions.Add(new YamlScalarNode(exception));
+            var addressOverrides = Rules.Where(rule => rule.AddressOverride).Select(rule => rule.SourceIndex).ToHashSet();
+            for (var index = 0; index < _allRules.Count; index++)
+            {
+                var rule = _allRules[index];
+                // Explicit address choices must also beat broad DIRECT/app rules
+                // in TUN mode. Only marked exact-domain rules get this treatment.
+                if (addressOverrides.Contains(index)) exceptions.Add(new YamlScalarNode(rule));
+                else if (ExceptionRule(rule, exceptionRoutes) is { } exception) exceptions.Add(new YamlScalarNode(exception));
+            }
             exceptions.Add(new YamlScalarNode("MATCH," + VpnRoute));
             root.Children[new YamlScalarNode("rules")] = new YamlSequenceNode(exceptions);
             // Cached selector choices cannot leave the full-tunnel path on DIRECT.
@@ -288,6 +304,8 @@ public sealed class ClashConfigDocument
         {
             if (rule.Kind is not ("DOMAIN" or "DOMAIN-SUFFIX" or "DOMAIN-KEYWORD" or "PROCESS-NAME"))
                 throw new InvalidDataException("Неподдерживаемый тип редактируемого правила: " + rule.Kind);
+            if (rule.AddressOverride && rule.Kind != "DOMAIN")
+                throw new InvalidDataException("Исключение из журнала должно быть точным доменным правилом.");
             ValidateField(rule.Value);
             ValidateField(rule.Route);
             if (rule.Extra.Any(char.IsControl)) throw new InvalidDataException("Недопустимые символы в правиле.");
@@ -296,12 +314,14 @@ public sealed class ClashConfigDocument
         var matchedSources = new HashSet<int>();
         var additions = new List<DomainRule>();
         var promoted = new List<DomainRule>();
+        var addressOverrides = new List<DomainRule>();
         var exceptionRoutes = ExceptionRoutes(_root);
         foreach (var rule in edited)
         {
             var original = Rules.FirstOrDefault(old => old.SourceIndex == rule.SourceIndex && old.Kind == rule.Kind && old.Value == rule.Value && !matchedSources.Contains(old.SourceIndex))
                 ?? Rules.FirstOrDefault(old => old.Kind == rule.Kind && old.Value == rule.Value && !matchedSources.Contains(old.SourceIndex));
-            if (original is null) additions.Add(rule);
+            if (rule.AddressOverride) addressOverrides.Add(rule);
+            else if (original is null) additions.Add(rule);
             else if (original.Route != rule.Route && rule.Kind is "DOMAIN" or "DOMAIN-SUFFIX" or "DOMAIN-KEYWORD"
                 && exceptionRoutes.ContainsKey(rule.Route)) promoted.Add(rule);
             else matched.Add(original.SourceIndex, rule);
@@ -312,7 +332,7 @@ public sealed class ClashConfigDocument
         // This makes the UI scenario "application through VPN, selected sites DIRECT" safe.
         var priorityAdditions = promoted.Concat(additions.Where(rule => exceptionRoutes.ContainsKey(rule.Route))).ToList();
         var regularAdditions = additions.Except(priorityAdditions).ToList();
-        var output = new List<string>();
+        var output = addressOverrides.Select(FormatRule).ToList();
         var insertedPriority = false;
         var insertedRegular = false;
         for (var i = 0; i < _allRules.Count; i++)
@@ -337,7 +357,8 @@ public sealed class ClashConfigDocument
         }
         if (!insertedPriority) output.AddRange(priorityAdditions.Select(FormatRule));
         if (!insertedRegular) output.AddRange(regularAdditions.Select(FormatRule));
-        var body = output.Count == 0 ? " []\n" : "\n" + string.Join("\n", output.Select(rule => "  - '" + rule.Replace("'", "''") + "'")) + "\n";
+        var body = output.Count == 0 ? " []\n" : "\n" + string.Join("\n", output.Select((rule, index) =>
+            "  - '" + rule.Replace("'", "''") + "'" + (index < addressOverrides.Count ? " " + AddressOverrideComment : ""))) + "\n";
         var result = _yamlText[.._rulesValueStart] + ":" + body + _yamlText[_rulesValueEnd..];
         _ = Parse(Path, result);
         return result;

@@ -179,14 +179,39 @@ try
         Check(UpdatePackage.Hash(args[1]) == UpdatePackage.Hash(publishedHelper), "published helper copied exactly");
         install = NewInstall("published-helper-target");
         File.Copy(Path.Combine(install, UpdatePackage.ManifestName), Path.Combine(helperDirectory, "installer-payload-manifest.json"));
-        RunHelper("--installer-validate-target", install, 0);
         File.WriteAllText(Path.Combine(install, "profile.yaml"), "published helper preserved profile");
-        RunHelper("--installer-cleanup", install, 0);
-        Check(!File.Exists(Path.Combine(install, "MorphocyteOS.exe")), "published helper removes only fixture-owned app");
-        Check(File.ReadAllText(Path.Combine(install, "profile.yaml")) == "published helper preserved profile", "published helper leaves profile bytes");
-        Check(!File.Exists(Path.Combine(install, UpdatePackage.ManifestName)), "published helper finishes ownership cleanup");
-        RunHelper("--installer-cleanup", install, 1);
-        RunHelper("--installer-validate-target", Path.GetPathRoot(install)!, 1);
+        var originalFiles = Directory.GetFiles(install, "*", SearchOption.AllDirectories)
+            .ToDictionary(path => path, UpdatePackage.Hash);
+        // The release can be built while the user's VPN is running. Never ask
+        // the live app to exit or weaken the production mutex for a fixture.
+        var canCheckIdleHelper = false;
+        using (var gate = new Mutex(false, "Local\\MorphocyteOS.Router.SingleInstance"))
+        {
+            try { canCheckIdleHelper = gate.WaitOne(0); }
+            catch (AbandonedMutexException) { canCheckIdleHelper = true; }
+            try
+            {
+                // Either our fixture or the actual app owns the gate. A child
+                // process must refuse both operations without changing bytes.
+                RunHelper("--installer-validate-target", install, 1);
+                RunHelper("--installer-cleanup", install, 1);
+                Check(Directory.GetFiles(install, "*", SearchOption.AllDirectories).Length == originalFiles.Count
+                    && originalFiles.All(file => File.Exists(file.Key) && UpdatePackage.Hash(file.Key) == file.Value),
+                    "published helper refuses a live app and leaves every fixture file unchanged");
+            }
+            finally { if (canCheckIdleHelper) gate.ReleaseMutex(); }
+        }
+        if (canCheckIdleHelper)
+        {
+            RunHelper("--installer-validate-target", install, 0);
+            RunHelper("--installer-cleanup", install, 0);
+            Check(!File.Exists(Path.Combine(install, "MorphocyteOS.exe")), "published helper removes only fixture-owned app");
+            Check(File.ReadAllText(Path.Combine(install, "profile.yaml")) == "published helper preserved profile", "published helper leaves profile bytes");
+            Check(!File.Exists(Path.Combine(install, UpdatePackage.ManifestName)), "published helper finishes ownership cleanup");
+            RunHelper("--installer-cleanup", install, 1);
+            RunHelper("--installer-validate-target", Path.GetPathRoot(install)!, 1);
+        }
+        else Console.WriteLine("SKIP: idle published-helper success paths require a separate session or a closed app. The live app/VPN was not changed; direct maintenance fixtures still ran.");
 
         void RunHelper(string mode, string target, int expectedCode)
         {

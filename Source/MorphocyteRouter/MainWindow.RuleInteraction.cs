@@ -13,7 +13,6 @@ public partial class MainWindow
 {
     private Point _dragStart, _dragAnchor;
     private DomainRule? _dragRule;
-    private ListViewItem? _dragSourceItem;
     private FrameworkElement? _dragSourceElement;
     private string? _draggedFolderName;
     private DomainRule? _selectionAnchorRule;
@@ -51,7 +50,6 @@ public partial class MainWindow
             _draggedFolderName = folderName;
             _draggedRules = folderGroup.Items.OfType<DomainRule>().ToArray();
             _dragRule = _draggedRules.FirstOrDefault();
-            _dragSourceItem = null;
             _dragSourceElement = folderSurface;
             _pendingClickToggle = false;
             _dragStart = e.GetPosition(RuleListHost);
@@ -70,7 +68,6 @@ public partial class MainWindow
         _pendingClickToggle = modifiers == ModifierKeys.None && RulesList.SelectedItems.Contains(rule);
         SelectRuleForPointer(rule, modifiers);
         _dragRule = RulesList.SelectedItems.Contains(rule) ? rule : null;
-        _dragSourceItem = item;
         _dragSourceElement = item;
         _draggedFolderName = null;
         _dragStart = e.GetPosition(RuleListHost);
@@ -255,7 +252,6 @@ public partial class MainWindow
                 RulesList.SelectedItems.Remove(_dragRule);
             _pendingClickToggle = false;
             _dragRule = null;
-            _dragSourceItem = null;
             _dragSourceElement = null;
             _draggedFolderName = null;
             return;
@@ -294,7 +290,6 @@ public partial class MainWindow
     {
         _dragActive = false;
         _dragRule = null;
-        _dragSourceItem = null;
         _dragSourceElement = null;
         _draggedFolderName = null;
         _pendingClickToggle = false;

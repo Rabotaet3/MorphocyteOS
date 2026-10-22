@@ -177,9 +177,11 @@ internal partial class Program
             var toggle = (CheckBox)Field("FullTunnelCheck");
             Check(toggle.ToolTip is null, "TUN toggle has no explanatory hover popup");
             var tools = (FrameworkElement)Field("SidebarTools");
-            var toggleTop = toggle.TranslatePoint(new Point(), window).Y;
-            Check(toggleTop >= 0 && toggleTop + toggle.ActualHeight <= tools.TranslatePoint(new Point(), window).Y,
-                "TUN stays visible above sidebar tools outside the scrollable connection metrics");
+            var toggleBounds = toggle.TransformToAncestor(window).TransformBounds(new Rect(toggle.RenderSize));
+            var toolsBounds = tools.TransformToAncestor(window).TransformBounds(new Rect(tools.RenderSize));
+            Check(toggleBounds.Top >= 0 && !toggleBounds.IntersectsWith(toolsBounds)
+                && Math.Abs((toggleBounds.Top + toggleBounds.Bottom) / 2 - (toolsBounds.Top + toolsBounds.Bottom) / 2) < 1,
+                "TUN and sidebar tools share a fixed footer without overlapping the adaptive connection metrics");
             var uiRules = (System.Collections.ObjectModel.ObservableCollection<DomainRule>)Field("_rules");
             var list = (ListView)Field("RulesList");
             await window.ChangeRuleRouteAsync(uiRules[0], "VPN");

@@ -3,6 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              ShutdownMode="OnMainWindowClose">
     <Application.Resources>
+        <ui:ScrollThumbViewportConverter xmlns:ui="clr-namespace:MorphocyteRouter" x:Key="ScrollThumbViewport"/>
 
         <Style TargetType="ToolTip">
             <Setter Property="Background" Value="{DynamicResource ThemeTooltipBackground}"/>
@@ -286,12 +287,22 @@
                         <Grid Background="Transparent" Width="{TemplateBinding Width}" Height="{TemplateBinding Height}">
                             <Track x:Name="PART_Track" IsDirectionReversed="True" Orientation="{TemplateBinding Orientation}"
                                    Minimum="{TemplateBinding Minimum}" Maximum="{TemplateBinding Maximum}"
-                                   Value="{TemplateBinding Value}" ViewportSize="{TemplateBinding ViewportSize}">
+                                   Value="{TemplateBinding Value}">
+                                <Track.ViewportSize>
+                                    <MultiBinding Converter="{StaticResource ScrollThumbViewport}">
+                                        <Binding RelativeSource="{RelativeSource TemplatedParent}" Path="ViewportSize"/>
+                                        <Binding RelativeSource="{RelativeSource TemplatedParent}" Path="Minimum"/>
+                                        <Binding RelativeSource="{RelativeSource TemplatedParent}" Path="Maximum"/>
+                                        <Binding RelativeSource="{RelativeSource TemplatedParent}" Path="ActualHeight"/>
+                                        <Binding RelativeSource="{RelativeSource TemplatedParent}" Path="ActualWidth"/>
+                                        <Binding RelativeSource="{RelativeSource TemplatedParent}" Path="Orientation"/>
+                                    </MultiBinding>
+                                </Track.ViewportSize>
                                 <Track.DecreaseRepeatButton>
-                                    <RepeatButton Command="{x:Static ScrollBar.PageUpCommand}" Opacity="0" Focusable="False" IsTabStop="False"/>
+                                    <RepeatButton x:Name="ScrollPageBefore" Command="{x:Static ScrollBar.PageUpCommand}" Opacity="0" Focusable="False" IsTabStop="False"/>
                                 </Track.DecreaseRepeatButton>
                                 <Track.Thumb>
-                                    <Thumb MinHeight="54" MinWidth="14">
+                                    <Thumb MinHeight="0" MinWidth="0">
                                         <Thumb.Template>
                                             <ControlTemplate TargetType="Thumb">
                                                 <Border x:Name="ThumbBorder" Background="{DynamicResource ThemeScrollbarThumb}" BorderBrush="{DynamicResource ThemeScrollbarBorder}" BorderThickness="1" CornerRadius="6" Margin="2"/>
@@ -309,7 +320,7 @@
                                     </Thumb>
                                 </Track.Thumb>
                                 <Track.IncreaseRepeatButton>
-                                    <RepeatButton Command="{x:Static ScrollBar.PageDownCommand}" Opacity="0" Focusable="False" IsTabStop="False"/>
+                                    <RepeatButton x:Name="ScrollPageAfter" Command="{x:Static ScrollBar.PageDownCommand}" Opacity="0" Focusable="False" IsTabStop="False"/>
                                 </Track.IncreaseRepeatButton>
                             </Track>
                         </Grid>
@@ -324,6 +335,8 @@
                                 <Setter Property="MinWidth" Value="0"/>
                                 <Setter Property="Height" Value="10"/>
                                 <Setter TargetName="PART_Track" Property="IsDirectionReversed" Value="False"/>
+                                <Setter TargetName="ScrollPageBefore" Property="Command" Value="{x:Static ScrollBar.PageLeftCommand}"/>
+                                <Setter TargetName="ScrollPageAfter" Property="Command" Value="{x:Static ScrollBar.PageRightCommand}"/>
                             </Trigger>
                         </ControlTemplate.Triggers>
                     </ControlTemplate>

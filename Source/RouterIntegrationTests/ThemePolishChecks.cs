@@ -30,14 +30,15 @@ internal partial class Program
             var rows = new[] { new ConnectionActivity("Browser.exe", "example.org:443", "TCP", "DomainSuffix example.org", "Server ← VPN"),
                 new ConnectionActivity("Notes.exe", "sync.example.org:443", "TCP", "Match", "DIRECT"),
                 new ConnectionActivity("Player.exe", "media.example.org:443", "UDP", "ProcessName Player.exe", "Server ← VPN") };
-            grid.ItemsSource = rows;
+            typeof(MainWindow).GetField("_connections", BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, rows);
+            typeof(MainWindow).GetMethod("FilterConnections", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null);
             typeof(MainWindow).GetMethod("InitializeDesktopIntegration", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, null);
             var menu = (ContextMenu)Field("_trayMenu");
             Check(menu.Items.OfType<MenuItem>().Select(item => item.Header).SequenceEqual(new object[] { "Открыть MorphocyteOS", "Запустить VPN", "Настройки", "Журнал", "Выход" }), "tray has themed WPF actions including Settings");
             Check(menu.Style == window.FindResource("TrayMenuStyle") && menu.Items.OfType<MenuItem>().All(item => item.Template is not null), "tray uses application templates rather than Windows stock menu");
             foreach (var theme in ThemeManager.ThemeNames)
             {
-                ThemeManager.Apply(theme); window.UpdateLayout(); grid.SelectedItem = rows[0]; grid.Focus();
+                ThemeManager.Apply(theme); window.UpdateLayout(); grid.SelectedItem = grid.Items[0]; grid.Focus();
                 await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
                 var logo = (BitmapSource)Application.Current.Resources["ThemeLogo"];
                 Check(logo.IsFrozen && logo.PixelWidth == 512 && ReferenceEquals(window.Icon, logo), "high-resolution frozen window artwork follows theme: " + theme);

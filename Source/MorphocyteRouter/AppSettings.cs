@@ -34,6 +34,7 @@ public sealed class AppSettings
     public double InterfaceScale { get; set; } = 1;
     public bool AutoCheckUpdates { get; set; } = true;
     public bool ShowEventLog { get; set; }
+    public bool ShowCoreLog { get; set; }
     public bool LaunchAtSignIn { get; set; }
     public bool AutoConnectOnStartup { get; set; } = true;
     public bool AutoReconnect { get; set; } = true;

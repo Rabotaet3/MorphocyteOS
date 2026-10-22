@@ -42,11 +42,12 @@ internal sealed class TransferRule
     public string Route { get; set; } = "";
     public string Extra { get; set; } = "";
     public bool Enabled { get; set; }
+    public bool AddressOverride { get; set; }
     public string Folder { get; set; } = "";
     public int SourceIndex { get; set; } = -1;
-    internal DomainRule ToRule() => new() { Kind = Kind, Value = Value, Route = Route, Extra = Extra, Enabled = Enabled, Folder = Folder, SourceIndex = SourceIndex };
+    internal DomainRule ToRule() => new() { Kind = Kind, Value = Value, Route = Route, Extra = Extra, Enabled = Enabled, Folder = Folder, SourceIndex = SourceIndex, AddressOverride = AddressOverride };
     internal static TransferRule FromRule(DomainRule rule) => new() { Kind = rule.Kind, Value = rule.Value, Route = rule.Route,
-        Extra = rule.Extra, Enabled = rule.Enabled, Folder = rule.Folder, SourceIndex = rule.SourceIndex };
+        Extra = rule.Extra, Enabled = rule.Enabled, Folder = rule.Folder, SourceIndex = rule.SourceIndex, AddressOverride = rule.AddressOverride };
 }
 
 internal sealed class TransferFile
@@ -93,6 +94,10 @@ internal static class ConfigurationTransfer
             using var writer = new StringWriter();
             yaml.Save(writer, assignAnchors: false);
             package.Yaml = writer.ToString();
+            // The YAML emitter drops comments. Restore explicit address priorities
+            // in the applied YAML too, without accidentally applying draft rules.
+            if (document.Rules.Any(rule => rule.AddressOverride))
+                package.Yaml = ClashConfigDocument.Parse(path, package.Yaml).BuildText(document.Rules);
         }
         Validate(package);
         return package;
@@ -150,6 +155,7 @@ internal static class ConfigurationTransfer
         foreach (var rule in package.Rules)
         {
             if (rule is null || rule.Kind is not ("DOMAIN" or "DOMAIN-SUFFIX" or "DOMAIN-KEYWORD" or "PROCESS-NAME")
+                || rule.AddressOverride && rule.Kind != "DOMAIN"
                 || !ValidField(rule.Value) || !ValidField(rule.Route) || rule.Extra is null || rule.Extra.Length > 1024
                 || rule.Extra.Any(char.IsControl) || rule.Extra.Length > 0 && !rule.Extra.StartsWith(',')
                 || !ValidFolder(rule.Folder) || rule.SourceIndex is < -1 or > 10000000

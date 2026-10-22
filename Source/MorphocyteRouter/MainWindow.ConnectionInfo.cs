@@ -1,6 +1,8 @@
 using System.IO;
 using System.Windows.Controls;
 using System.Windows.Threading;
+using System.Windows.Data;
+using System.Windows;
 
 namespace MorphocyteRouter;
 
@@ -17,12 +19,17 @@ public partial class MainWindow
     private DispatcherTimer? _diagnosticTimer;
     private bool _refreshingConnections, _checkingConnection;
     private IReadOnlyList<ConnectionActivity> _connections = Array.Empty<ConnectionActivity>();
-    private string _selectedConnection = "", _runningCoreVersion = "";
+    // Batch updates behind the stable view, then refresh once.
+    private readonly List<ConnectionTableRow> _connectionRows = new();
+    private ListCollectionView? _connectionsView;
+    private string _selectedConnection = "";
     private readonly ConnectionHealth _health = new();
     private DateTime _nextHealthCheck = DateTime.MinValue;
 
     private void InitializeDiagnostics()
     {
+        _connectionsView = new ListCollectionView(_connectionRows) { Filter = MatchesConnectionSearch };
+        ConnectionsGrid.ItemsSource = _connectionsView;
         _diagnosticTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(3) };
         _diagnosticTimer.Tick += async (_, _) =>
         {
@@ -56,7 +63,6 @@ public partial class MainWindow
             if (_capacityServer.Length > 0 && _capacityServer != snapshot.Selection)
             { _downloadCapacity = null; _capacityServer = ""; RefreshBandwidthReadout(); }
             _selectedConnection = snapshot.Selection;
-            _runningCoreVersion = snapshot.Version;
             FilterConnections();
             RefreshConnectionCard();
             ConnectionsStatusText.Text = $"Активных соединений: {_connections.Count}. Обновлено {DateTime.Now:HH:mm:ss}. Короткие запросы могут не попасть в список.";
@@ -74,10 +80,60 @@ public partial class MainWindow
 
     private void FilterConnections()
     {
-        if (ConnectionsGrid is null) return;
+        if (_connectionsView is not { } view) return;
+        // Keep the chosen row still while its menu is open. Network polling
+        // continues; only painting the newest table snapshot is deferred.
+        if (_connectionRouteMenu is { IsOpen: true }) { _connectionTableRefreshPending = true; return; }
+        _connectionTableRefreshPending = false;
+        var scroll = FindVisualDescendant<ScrollViewer>(ConnectionsGrid);
+        var vertical = scroll?.VerticalOffset ?? 0;
+        var horizontal = scroll?.HorizontalOffset ?? 0;
+        var index = (int)(vertical / ConnectionsGrid.RowHeight);
+        var anchor = index >= 0 && index < view.Count ? view.GetItemAt(index) : null;
+        var selected = ConnectionsGrid.SelectedItems.Cast<ConnectionTableRow>().ToArray();
+        var current = ConnectionsGrid.CurrentCell;
+        var byKey = _connectionRows.ToDictionary(row => row.Key, StringComparer.Ordinal);
+        var retained = new HashSet<string>(StringComparer.Ordinal);
+        var occurrences = new Dictionary<string, int>(StringComparer.Ordinal);
+        // No collection notifications or view refresh until the snapshot is complete.
+        {
+            foreach (var activity in _connections)
+            {
+                var identity = activity.Id.Length > 0 ? "id:" + activity.Id
+                    : "row:" + string.Join('\0', activity.Process, activity.Destination, activity.Network, activity.Rule, activity.Route);
+                var occurrence = occurrences.GetValueOrDefault(identity);
+                occurrences[identity] = occurrence + 1;
+                var key = identity + "\0" + occurrence;
+                retained.Add(key);
+                if (byKey.TryGetValue(key, out var row)) row.Update(activity);
+                else _connectionRows.Add(new(key, activity));
+            }
+            for (var i = _connectionRows.Count - 1; i >= 0; i--)
+                if (!retained.Contains(_connectionRows[i].Key)) _connectionRows.RemoveAt(i);
+        }
+        // Retain the view and its sort descriptions, even when a visible field changes.
+        view.Refresh();
+        foreach (var row in selected)
+            if (view.Contains(row) && !ConnectionsGrid.SelectedItems.Contains(row)) ConnectionsGrid.SelectedItems.Add(row);
+        if (current.IsValid && view.Contains(current.Item)) ConnectionsGrid.CurrentCell = current;
+        ConnectionsGrid.UpdateLayout();
+        if (scroll is not null)
+        {
+            var anchorIndex = anchor is null ? -1 : view.IndexOf(anchor);
+            var offset = vertical > 0 && anchorIndex >= 0
+                ? anchorIndex * ConnectionsGrid.RowHeight + vertical % ConnectionsGrid.RowHeight : vertical;
+            scroll.ScrollToVerticalOffset(offset);
+            scroll.ScrollToHorizontalOffset(horizontal);
+        }
+        RefreshJournalRouteControls();
+    }
+
+    private bool MatchesConnectionSearch(object value)
+    {
+        var row = (ConnectionTableRow)value;
         var search = ConnectionSearchBox.Text.Trim();
-        ConnectionsGrid.ItemsSource = _connections.Where(row => search.Length == 0 ||
-            $"{row.Process} {row.Destination} {row.Network} {row.Rule} {row.Route}".Contains(search, StringComparison.OrdinalIgnoreCase)).ToArray();
+        return search.Length == 0 || $"{row.Process} {row.Destination} {row.Network} {row.RuleLabel} {row.RawRule} {row.Route}"
+            .Contains(search, StringComparison.OrdinalIgnoreCase);
     }
 
     private async void CheckConnection_Click(object sender, System.Windows.RoutedEventArgs e) => await CheckConnectionAsync(manual: true);
@@ -178,7 +234,6 @@ public partial class MainWindow
         _diagnostics?.Dispose();
         _diagnostics = null;
         _selectedConnection = "";
-        _runningCoreVersion = "";
         _connections = Array.Empty<ConnectionActivity>();
         _health.Clear();
         _nextHealthCheck = DateTime.MinValue;

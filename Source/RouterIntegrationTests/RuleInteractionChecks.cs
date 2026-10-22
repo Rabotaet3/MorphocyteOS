@@ -324,7 +324,6 @@ internal partial class Program
 
             firstItem = Descendants<ListViewItem>(list).Single(item => ReferenceEquals(item.DataContext, first));
             SetField("_dragRule", first);
-            SetField("_dragSourceItem", firstItem);
             SetField("_dragAnchor", new Point(120, 20));
             // Synthetic routed events have no native MouseDevice.ActiveSource in this runner.
             // Exercise drag state/rendering separately from the OS mouse-capture request.
@@ -372,6 +371,10 @@ internal partial class Program
             logToggle.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             await Idle();
             var logText = (TextBox)Field("LogText");
+            var coreLogToggle = (CheckBox)Field("CoreLogToggle");
+            coreLogToggle.IsChecked = true;
+            coreLogToggle.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await Idle();
             var pendingCoreOutput = (ConcurrentQueue<string>)Field("_pendingCoreOutput");
             for (var i = 0; i < 500; i++) pendingCoreOutput.Enqueue($"batched-core-line-{i:D3}");
             Check(!logText.Text.Contains("batched-core-line-499", StringComparison.Ordinal),

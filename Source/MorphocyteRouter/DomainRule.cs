@@ -8,9 +8,11 @@ public sealed class DomainRule
     public int SourceIndex { get; set; } = -1;
     public string Extra { get; set; } = "";
     public bool Enabled { get; set; } = true;
+    // A deliberately pinned exact-domain exception created from a connection.
+    public bool AddressOverride { get; set; }
     public string Folder { get; set; } = "";
     public string FolderLabel => string.IsNullOrWhiteSpace(Folder) ? "ОБЩИЕ ПРАВИЛА" : Folder;
-    public DomainRule Copy() => new() { Kind = Kind, Value = Value, Route = Route, SourceIndex = SourceIndex, Extra = Extra, Enabled = Enabled, Folder = Folder };
+    public DomainRule Copy() => new() { Kind = Kind, Value = Value, Route = Route, SourceIndex = SourceIndex, Extra = Extra, Enabled = Enabled, Folder = Folder, AddressOverride = AddressOverride };
 
     public string KindLabel => Kind switch
     {

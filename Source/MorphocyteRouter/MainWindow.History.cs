@@ -14,7 +14,7 @@ public partial class MainWindow
 
     private RuleEditState CaptureRuleEditState(bool dirty) => new(_rules.Select(rule => rule.Copy()).ToArray(), _folderOrder.ToArray(), dirty);
     private static string EditIdentity(DomainRule rule) => rule.Kind + "\u001f" + rule.Value;
-    private static string EditValue(DomainRule rule) => string.Join("\u001f", rule.Kind, rule.Value, rule.Route, rule.Extra, rule.Enabled, rule.Folder);
+    private static string EditValue(DomainRule rule) => string.Join("\u001f", rule.Kind, rule.Value, rule.Route, rule.Extra, rule.Enabled, rule.Folder, rule.AddressOverride);
 
     private void ResetRuleHistory()
     {

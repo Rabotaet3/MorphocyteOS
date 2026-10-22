@@ -148,12 +148,11 @@ internal partial class Program
             window.Height = 660;
             ((TextBlock)Field("LastIssueText")).Text = "Проверочный длинный текст ошибки подключения для проверки высоты карточки и доступности кнопок.";
             window.UpdateLayout();
-            var sidebar = (ScrollViewer)Field("SidebarScrollViewer");
-            sidebar.ScrollToBottom(); window.UpdateLayout();
+            var sidebar = (FrameworkElement)Field("SidebarPanel");
             var card = (FrameworkElement)Field("ConnectionCard");
             var tools = (FrameworkElement)Field("SidebarTools");
-            Check(sidebar.ScrollableHeight > 0 && card.TranslatePoint(new Point(0, card.ActualHeight), window).Y <= tools.TranslatePoint(new Point(0, 0), window).Y,
-                "sidebar remains scrollable without overlapping metrics and settings at the minimum size with a notification and error");
+            Check(!Descendants<ScrollViewer>(sidebar).Any() && card.TranslatePoint(new Point(0, card.ActualHeight), window).Y <= tools.TranslatePoint(new Point(0, 0), window).Y,
+                "sidebar fits without scrolling or overlapping metrics and settings at the minimum size with a notification and error");
             CaptureInteraction(window, Path.Combine(scratch, "minimum-window.png"));
             Method("SetAvailableUpdate").Invoke(window, new object?[] { null });
             await (Task)Method("ApplyChangesAsync").Invoke(window, new object[] { false })!;

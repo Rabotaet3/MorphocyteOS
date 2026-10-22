@@ -58,6 +58,7 @@ public partial class MainWindow : Window
         _settings.Theme = ThemeManager.Normalize(_settings.Theme);
         ThemeManager.Apply(_settings.Theme);
         InitializeComponent();
+        InitializeCoreLogPanel();
         ThemeManager.Changed += RefreshThemeIcons;
         SourceInitialized += (_, _) => RefreshThemeIcons();
         DpiChanged += (_, _) => RefreshThemeIcons();
@@ -129,7 +130,7 @@ public partial class MainWindow : Window
             if (_settings.AutoCheckUpdates) await CheckForUpdatesOnStartupAsync();
         };
         Closing += MainWindow_Closing;
-        Closed += (_, _) => { _logRefreshTimer.Stop(); _automaticUpdateTimer?.Stop(); DisposeDesktopIntegration(); DisposeConnectionRecovery(); ResetDiagnostics(); };
+        Closed += (_, _) => { ResetPageTransition(); _logRefreshTimer.Stop(); _automaticUpdateTimer?.Stop(); DisposeDesktopIntegration(); DisposeConnectionRecovery(); ResetDiagnostics(); };
         Deactivated += (_, _) => CancelRuleDrag();
         UpdateControls();
     }
@@ -141,6 +142,8 @@ public partial class MainWindow : Window
         if (System.Windows.Shell.WindowChrome.GetWindowChrome(this) is { } chrome)
             chrome.CaptionHeight = 58 * UiScaleManager.CurrentScale;
         UpdateFrameClip();
+        if (_coreLogWindow?.Content is FrameworkElement logFrame)
+            UiScaleManager.Apply(_coreLogWindow, logFrame, UiScaleManager.CurrentScale);
     }
 
     private async Task CheckForUpdatesOnStartupAsync()
@@ -266,6 +269,7 @@ public partial class MainWindow : Window
         RestartButton.IsEnabled = _core.IsRunning;
         ApplyButton.IsEnabled = _dirty && _document is not null;
         RefreshRuleHistoryControls();
+        RefreshJournalRouteControls();
         RefreshConnectionCard();
         RefreshTrayState();
         RefreshTunnelControls();
@@ -607,31 +611,41 @@ public partial class MainWindow : Window
     {
         if (entries.Count == 0) return;
         var oldVerticalOffset = _logScrollViewer?.VerticalOffset ?? 0;
-        var wasNearEnd = _logScrollViewer is null
-            || _logScrollViewer.ScrollableHeight - _logScrollViewer.VerticalOffset < 28;
+        var selectionStart = LogText.SelectionStart;
+        var selectionLength = LogText.SelectionLength;
+        var wasNearEnd = selectionLength == 0 && (_logScrollViewer is null
+            || _logScrollViewer.ScrollableHeight - _logScrollViewer.VerticalOffset < 28);
         var droppedOldLines = false;
+        var droppedCharacters = 0;
         foreach (var entry in entries)
         {
             _logLines.Enqueue(entry);
             while (_logLines.Count > MaxDisplayedLogLines)
             {
-                _logLines.Dequeue();
+                droppedCharacters += _logLines.Dequeue().Length + Environment.NewLine.Length;
                 droppedOldLines = true;
             }
         }
 
         // Keep collecting and persisting every entry while a dialog is visible,
         // but do not invalidate the blurred background bitmap with log text layout.
-        if (_dialogBackdropVisible)
+        if (_dialogBackdropVisible && _coreLogWindow is null)
         {
             _logDisplayDeferred = true;
             return;
         }
-        if (!JournalPage.IsVisible) return;
+        if (!IsCoreLogVisible) return;
         if (droppedOldLines || string.IsNullOrEmpty(LogText.Text))
             LogText.Text = string.Join(Environment.NewLine, _logLines);
         else
             LogText.AppendText(Environment.NewLine + string.Join(Environment.NewLine, entries));
+
+        if (selectionLength > 0)
+        {
+            var start = Math.Clamp(selectionStart - droppedCharacters, 0, LogText.Text.Length);
+            var end = Math.Clamp(selectionStart + selectionLength - droppedCharacters, start, LogText.Text.Length);
+            LogText.Select(start, end - start);
+        }
 
         if (wasNearEnd) LogText.ScrollToEnd();
         else if (_logScrollViewer is not null) _logScrollViewer.ScrollToVerticalOffset(oldVerticalOffset);
@@ -641,13 +655,8 @@ public partial class MainWindow : Window
     {
         if (!_logDisplayDeferred) return;
         _logDisplayDeferred = false;
-        if (!JournalPage.IsVisible || _closing) return;
-        var oldOffset = _logScrollViewer?.VerticalOffset ?? 0;
-        var wasNearEnd = _logScrollViewer is null
-            || _logScrollViewer.ScrollableHeight - _logScrollViewer.VerticalOffset < 28;
-        LogText.Text = string.Join(Environment.NewLine, _logLines);
-        if (wasNearEnd) LogText.ScrollToEnd();
-        else _logScrollViewer?.ScrollToVerticalOffset(oldOffset);
+        if (!IsCoreLogVisible || _closing) return;
+        RefreshCoreLogText();
     }
 
     private static async Task PersistLogAsync(string logPath, string entry)
@@ -883,8 +892,7 @@ public partial class MainWindow : Window
 
     private void LogText_Loaded(object sender, RoutedEventArgs e)
     {
-        _logScrollViewer ??= FindVisualDescendant<ScrollViewer>(LogText);
-        LogText.ScrollToEnd();
+        _logScrollViewer = FindVisualDescendant<ScrollViewer>(LogText);
     }
     private static T? FindVisualDescendant<T>(DependencyObject parent) where T : DependencyObject
     {
@@ -957,7 +965,7 @@ public partial class MainWindow : Window
     });
     private void CopyLog_Click(object sender, RoutedEventArgs e)
     {
-        try { Clipboard.SetText(LogText.Text); SetLog("Журнал скопирован в буфер обмена."); }
+        try { Clipboard.SetText(string.Join(Environment.NewLine, _logLines)); SetLog("Журнал скопирован в буфер обмена."); }
         catch (Exception ex) { SetLog("Не удалось скопировать журнал: " + ex.Message); }
     }
     private void FaqButton_Click(object sender, RoutedEventArgs e)
@@ -1135,16 +1143,6 @@ public partial class MainWindow : Window
         _settings.ProfileDrafts = new(_settings.ProfileDrafts, StringComparer.OrdinalIgnoreCase);
         _settings.ProfileRuleStates = new(_settings.ProfileRuleStates, StringComparer.OrdinalIgnoreCase);
         _settings.ProfileFolderOrders = new(_settings.ProfileFolderOrders, StringComparer.OrdinalIgnoreCase);
-    }
-
-    private async Task ImportProfileAsync(ImportedProfile imported)
-    {
-        if (!File.Exists(_settings.CorePath)) _settings.CorePath = await BundledResources.EnsureCoreAsync(_lifetime.Token);
-        var path = await ProfileStorage.CreateAsync(imported, _settings.CorePath, _settings.StorageDirectory, _lifetime.Token, fullTunnel: _settings.FullTunnel);
-        _settings.PreferredRoute = "VPN";
-        if (imported.SubscriptionUrl is { } url) _settings.ProfileSubscriptions[path] = SubscriptionSource.Create(url, DateTimeOffset.UtcNow);
-        await LoadConfigAsync(path);
-        SetLog("Создан новый локальный YAML. Остальные профили сохранены. Добавь сайты или приложения в правила VPN.");
     }
 
     private async void ChooseProcess_Click(object sender, RoutedEventArgs e)

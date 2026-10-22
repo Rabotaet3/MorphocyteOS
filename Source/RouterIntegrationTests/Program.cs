@@ -20,13 +20,29 @@ internal partial class Program
         XNamespace ns = "http://schemas.microsoft.com/winfx/2006/xaml/presentation";
         var resources = XDocument.Load(Path.Combine(AppContext.BaseDirectory, "Theme.xaml")).Root!.Element(ns + "Application.Resources")!;
         var dictionary = new XElement(ns + "ResourceDictionary", new XAttribute(XNamespace.Xmlns + "x", "http://schemas.microsoft.com/winfx/2006/xaml"), resources.Elements());
-        app.Resources = (ResourceDictionary)XamlReader.Parse(dictionary.ToString());
+        app.Resources = (ResourceDictionary)XamlReader.Parse(dictionary.ToString().Replace("clr-namespace:MorphocyteRouter\"",
+            "clr-namespace:MorphocyteRouter;assembly=MorphocyteOS\"", StringComparison.Ordinal));
         var code = 1;
         _ = app.Dispatcher.InvokeAsync(async () =>
         {
             try
             {
-                await Run(args[0], args.Contains("--improvements-only"), args.Contains("--visual-only"), args.Contains("--tunnel-only"), args.Contains("--singbox-only"), args.Contains("--ui-reliability-only"), args.Contains("--release210-only"));
+                if (args.Contains("--transition-only"))
+                {
+                    var scratch = Path.Combine(AppContext.BaseDirectory, "integration-" + Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(scratch);
+                    Console.WriteLine($"TOTAL: {await RunPageTransitionChecks(scratch, args[0])} page-transition checks passed.");
+                }
+                else if (args.Contains("--journal-only"))
+                {
+                    var scratch = Path.Combine(AppContext.BaseDirectory, "integration-" + Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(scratch);
+                    var checks = await RunConnectionJournalChecks(scratch, args[0]);
+                    checks += await RunConnectionRouteChecks(scratch, args[0]);
+                    checks += await RunPageTransitionChecks(scratch, args[0]);
+                    Console.WriteLine($"TOTAL: {checks} connection-journal checks passed.");
+                }
+                else await Run(args[0], args.Contains("--improvements-only"), args.Contains("--visual-only"), args.Contains("--tunnel-only"), args.Contains("--singbox-only"), args.Contains("--ui-reliability-only"), args.Contains("--release210-only"));
                 if (Array.IndexOf(args, "--validate-profile") is var profileIndex && profileIndex >= 0)
                 {
                     var path = args[profileIndex + 1];
@@ -94,6 +110,9 @@ internal partial class Program
             passed += await RunImprovementChecks(scratch, fakeExe);
             if (improvementsOnly) { Console.WriteLine($"TOTAL: {passed} improvement checks passed."); return; }
             passed += await RunVisualLayoutChecks(scratch, fakeExe);
+            passed += await RunConnectionJournalChecks(scratch, fakeExe);
+            passed += await RunConnectionRouteChecks(scratch, fakeExe);
+            passed += await RunPageTransitionChecks(scratch, fakeExe);
             passed += await RunFreshLaunchChecks(scratch);
             passed += await RunProfileImportChecks(scratch, fakeExe);
             passed += await RunConfigurationTransferChecks(scratch, fakeExe);

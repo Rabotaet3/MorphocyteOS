@@ -149,7 +149,7 @@ internal partial class Program
                 var bounds = copy.TransformToAncestor(page).TransformBounds(new Rect(copy.RenderSize));
                 Check(bounds.Right <= page.ActualWidth && bounds.Bottom <= page.ActualHeight && copy.IsVisible,
                     $"journal diagnostic actions fit inside the minimum window at {scale * 100:0}% scale");
-                ((ScrollViewer)Field("SidebarScrollViewer")).ScrollToBottom(); window.UpdateLayout();
+                window.UpdateLayout();
                 CaptureInteraction(window, Path.Combine(scratch, $"improvements-journal-{scale * 100:0}.png"));
             }
             window.ApplyInterfaceScale(1);

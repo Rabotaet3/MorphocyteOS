@@ -10,6 +10,38 @@
         <shell:WindowChrome CaptionHeight="58" ResizeBorderThickness="8" GlassFrameThickness="0" CornerRadius="23" UseAeroCaptionButtons="False"/>
     </shell:WindowChrome.WindowChrome>
     <Window.Resources>
+        <Style x:Key="CoreLogEdgeGrip" TargetType="Thumb">
+            <Setter Property="Cursor" Value="SizeAll"/>
+            <Setter Property="ToolTip" Value="Потяни за границу, чтобы вынести журнал в отдельное окно"/>
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Thumb"><Border Background="Transparent"/></ControlTemplate></Setter.Value></Setter>
+        </Style>
+        <Style x:Key="CoreLogToggleStyle" TargetType="CheckBox">
+            <Setter Property="Cursor" Value="Hand"/>
+            <Setter Property="Template"><Setter.Value>
+                <ControlTemplate TargetType="CheckBox">
+                    <StackPanel Orientation="Horizontal" Background="Transparent">
+                        <TextBlock Text="ТЕКСТОВЫЙ ЖУРНАЛ" FontSize="10" FontWeight="SemiBold" Foreground="{DynamicResource ThemeText}" VerticalAlignment="Center" Margin="0,0,10,0"/>
+                        <Grid Width="42" Height="22">
+                            <Border x:Name="LogToggleTrack" CornerRadius="11" Background="{DynamicResource ThemeSurfaceSelected}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" BorderThickness="1"/>
+                            <Ellipse x:Name="LogToggleThumb" Width="16" Height="16" HorizontalAlignment="Left" Margin="3,0,0,0" Fill="{DynamicResource ThemeMuted}">
+                                <Ellipse.RenderTransform><TranslateTransform/></Ellipse.RenderTransform>
+                            </Ellipse>
+                        </Grid>
+                    </StackPanel>
+                    <ControlTemplate.Triggers>
+                        <Trigger Property="IsChecked" Value="True">
+                            <Setter TargetName="LogToggleTrack" Property="Background" Value="{DynamicResource ThemeSurfaceActive}"/>
+                            <Setter TargetName="LogToggleThumb" Property="Fill" Value="{DynamicResource ThemeAccent}"/>
+                            <Trigger.EnterActions><BeginStoryboard><Storyboard><DoubleAnimation Storyboard.TargetName="LogToggleThumb" Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)" To="20" Duration="0:0:0.12"/></Storyboard></BeginStoryboard></Trigger.EnterActions>
+                            <Trigger.ExitActions><BeginStoryboard><Storyboard><DoubleAnimation Storyboard.TargetName="LogToggleThumb" Storyboard.TargetProperty="(UIElement.RenderTransform).(TranslateTransform.X)" To="0" Duration="0:0:0.12"/></Storyboard></BeginStoryboard></Trigger.ExitActions>
+                        </Trigger>
+                        <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="LogToggleTrack" Property="BorderBrush" Value="{DynamicResource ThemeAccentSecondary}"/></Trigger>
+                        <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="LogToggleTrack" Property="BorderBrush" Value="{DynamicResource ThemeAccentSecondary}"/></Trigger>
+                    </ControlTemplate.Triggers>
+                </ControlTemplate>
+            </Setter.Value></Setter>
+        </Style>
         <Style x:Key="TrayMenuStyle" TargetType="ContextMenu">
             <Setter Property="MinWidth" Value="248"/>
             <Setter Property="FontFamily" Value="Segoe UI"/>
@@ -144,10 +176,20 @@
         </Style>
         <Style x:Key="RouteMenuStyle" TargetType="ContextMenu">
             <Setter Property="MinWidth" Value="170"/>
+            <Setter Property="SnapsToDevicePixels" Value="True"/><Setter Property="UseLayoutRounding" Value="True"/>
             <Setter Property="Template"><Setter.Value>
                 <ControlTemplate TargetType="ContextMenu">
-                    <Border Background="{DynamicResource ThemeSurface}" BorderBrush="{DynamicResource ThemeRouteBorder}" BorderThickness="1" CornerRadius="12" Padding="5">
+                    <Border Background="{DynamicResource ThemeSurface}" BorderBrush="{DynamicResource ThemeRouteBorder}" BorderThickness="1" CornerRadius="12" Padding="7">
                         <ItemsPresenter KeyboardNavigation.DirectionalNavigation="Cycle"/>
+                    </Border>
+                </ControlTemplate>
+            </Setter.Value></Setter>
+        </Style>
+        <Style x:Key="RouteMenuHeaderStyle" TargetType="MenuItem">
+            <Setter Property="Template"><Setter.Value>
+                <ControlTemplate TargetType="MenuItem">
+                    <Border BorderBrush="{DynamicResource ThemeSurfaceBorder}" BorderThickness="0,0,0,1" Padding="10,4,10,10" Margin="0,0,0,5">
+                        <ContentPresenter ContentSource="Header"/>
                     </Border>
                 </ControlTemplate>
             </Setter.Value></Setter>
@@ -155,16 +197,18 @@
         <Style x:Key="RouteMenuItemStyle" TargetType="MenuItem">
             <Setter Property="Template"><Setter.Value>
                 <ControlTemplate TargetType="MenuItem">
-                    <Border x:Name="Option" Background="Transparent" CornerRadius="8" Padding="10,9" Margin="0,1">
-                        <Grid>
+                    <Border x:Name="Option" Background="Transparent" CornerRadius="7" Padding="10,8" Margin="0,1">
+                        <Grid MinHeight="20">
                             <Grid.ColumnDefinitions><ColumnDefinition Width="24"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-                            <TextBlock x:Name="Check" Text="✓" Foreground="{DynamicResource ThemeAccent}" Opacity="0" FontSize="13" VerticalAlignment="Center"/>
-                            <ContentPresenter Grid.Column="1" ContentSource="Header" RecognizesAccessKey="True" TextElement.Foreground="{DynamicResource ThemeText}" TextElement.FontSize="12" VerticalAlignment="Center"/>
+                            <Grid Width="16" Height="16" HorizontalAlignment="Left" VerticalAlignment="Center">
+                                <Path x:Name="Check" Data="M 1,4 L 4,7 L 10,0" Width="10" Height="7" Stretch="Uniform" Stroke="{DynamicResource ThemeAccent}" StrokeThickness="1.7" StrokeStartLineCap="Round" StrokeEndLineCap="Round" StrokeLineJoin="Round" Opacity="0" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+                            </Grid>
+                            <ContentPresenter Grid.Column="1" ContentSource="Header" RecognizesAccessKey="True" TextElement.Foreground="{DynamicResource ThemeText}" TextElement.FontSize="12" TextElement.FontWeight="Medium" VerticalAlignment="Center"/>
                         </Grid>
                     </Border>
                     <ControlTemplate.Triggers>
                         <Trigger Property="IsHighlighted" Value="True"><Setter TargetName="Option" Property="Background" Value="{DynamicResource ThemeSurfaceHover}"/></Trigger>
-                        <Trigger Property="IsChecked" Value="True"><Setter TargetName="Check" Property="Opacity" Value="1"/></Trigger>
+                        <Trigger Property="IsChecked" Value="True"><Setter TargetName="Check" Property="Opacity" Value="1"/><Setter TargetName="Option" Property="Background" Value="{DynamicResource ThemeSurfaceSelected}"/></Trigger>
                         <Trigger Property="IsEnabled" Value="False"><Setter TargetName="Option" Property="Opacity" Value="0.4"/></Trigger>
                     </ControlTemplate.Triggers>
                 </ControlTemplate>
@@ -343,11 +387,13 @@
                         <ColumnDefinition Width="*"/>
                     </Grid.ColumnDefinitions>
 
-                    <Border Grid.Column="0" Background="{DynamicResource ThemePanelGradient}" BorderBrush="{DynamicResource ThemePanelBorder}" BorderThickness="1" CornerRadius="18" Padding="20">
+                    <Border x:Name="SidebarPanel" Grid.Column="0" Background="{DynamicResource ThemePanelGradient}" BorderBrush="{DynamicResource ThemePanelBorder}" BorderThickness="1" CornerRadius="18" Padding="20">
                         <Grid>
-                            <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-                        <ScrollViewer x:Name="SidebarScrollViewer" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
-                        <Grid>
+                            <Grid.RowDefinitions><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
+                        <!-- Keep actions visible without scrolling, including at minimum height.
+                             Only the metrics area scales down when vertical space is limited. -->
+                        <Viewbox x:Name="SidebarMetricsFit" Stretch="Uniform" StretchDirection="DownOnly" VerticalAlignment="Top" HorizontalAlignment="Center">
+                        <Grid Width="250" Margin="0,5">
                             <Grid.RowDefinitions>
                                 <RowDefinition Height="Auto"/>
                                 <RowDefinition Height="Auto"/>
@@ -355,23 +401,25 @@
                             </Grid.RowDefinitions>
 
                             <StackPanel>
-                                <StackPanel Orientation="Horizontal" Margin="0,2,0,5">
-                                    <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="{DynamicResource ThemeStatusNeutral}" Margin="0,0,10,0">
+                                <StackPanel Orientation="Horizontal" Margin="0,0,0,5">
+                                    <Grid Width="20" Height="22" Margin="0,0,5,0">
+                                    <Ellipse x:Name="StatusDot" Width="10" Height="10" Fill="{DynamicResource ThemeStatusNeutral}">
                                         <Ellipse.Effect>
                                             <DropShadowEffect Color="{DynamicResource ThemeAccentGlowColor}" BlurRadius="9" ShadowDepth="0" Opacity="0.7"/>
                                         </Ellipse.Effect>
                                     </Ellipse>
+                                    </Grid>
                                     <TextBlock x:Name="StatusText" Text="НУЖЕН ПРОФИЛЬ" Foreground="{DynamicResource ThemeText}" FontSize="17" FontWeight="SemiBold"/>
                                 </StackPanel>
                                 <TextBlock x:Name="UptimeText" Text="Выбери своё подключение" Foreground="{DynamicResource ThemeMuted}" FontSize="12" TextWrapping="Wrap"/>
                             </StackPanel>
 
-                            <StackPanel Grid.Row="1" Margin="0,23,0,0">
+                            <StackPanel Grid.Row="1" Margin="0,18,0,0">
                                 <Button x:Name="PowerButton" Style="{StaticResource PrimaryButton}" Height="48" Content="ЗАПУСТИТЬ VPN" Click="PowerButton_Click"/>
                                 <Button x:Name="RestartButton" Style="{StaticResource FlatButton}" Height="39" Margin="0,9,0,0" Content="ПЕРЕЗАПУСТИТЬ ЯДРО" Click="RestartButton_Click" IsEnabled="False"/>
                             </StackPanel>
 
-                            <Border x:Name="ConnectionCard" Grid.Row="2" Margin="0,22,0,0" Background="{DynamicResource ThemeSurface}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" BorderThickness="1" CornerRadius="12" Padding="13">
+                            <Border x:Name="ConnectionCard" Grid.Row="2" Margin="0,18,0,0" Background="{DynamicResource ThemeSurface}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" BorderThickness="1" CornerRadius="12" Padding="13">
                                 <StackPanel>
                                     <TextBlock Text="ПОДКЛЮЧЕНИЕ" Foreground="{DynamicResource ThemeMuted}" FontSize="9" FontWeight="Bold"/>
                                     <TextBlock x:Name="EndpointText" Text="не определена" Foreground="{DynamicResource ThemeAccentSecondary}" FontSize="13" Margin="0,5,0,0" TextTrimming="CharacterEllipsis"/>
@@ -402,8 +450,10 @@
                                 </StackPanel>
                             </Border>
                         </Grid>
-                        </ScrollViewer>
-                            <Border Grid.Row="1" Margin="0,12,0,0" Background="{DynamicResource ThemeSurface}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" BorderThickness="1" CornerRadius="12" Padding="13">
+                        </Viewbox>
+                            <Grid x:Name="SidebarFooter" Grid.Row="1" Margin="0,12,0,2">
+                                <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition Width="6"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                            <Border Background="{DynamicResource ThemeSurface}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" BorderThickness="1" CornerRadius="12" Padding="10">
                                 <CheckBox x:Name="FullTunnelCheck" Click="FullTunnel_Click" Cursor="Hand" Focusable="True">
                                     <CheckBox.Template>
                                         <ControlTemplate TargetType="CheckBox">
@@ -433,7 +483,7 @@
                                     </CheckBox.Template>
                                 </CheckBox>
                             </Border>
-                            <Grid x:Name="SidebarTools" Grid.Row="2" VerticalAlignment="Bottom" Margin="0,14,0,2">
+                            <Grid x:Name="SidebarTools" Grid.Column="2" VerticalAlignment="Center">
                                 <Grid.ColumnDefinitions><ColumnDefinition/><ColumnDefinition/></Grid.ColumnDefinitions>
                                 <Button Grid.Column="0" Style="{StaticResource SidebarToolButton}" Click="FaqButton_Click" ToolTip="ЧаВо?">
                                     <TextBlock Text="?" FontSize="25" FontWeight="SemiBold" Foreground="{DynamicResource ThemeAccent}"/>
@@ -442,10 +492,11 @@
                                     <TextBlock Text="⚙" FontFamily="Segoe UI Symbol" FontSize="23" Foreground="{DynamicResource ThemeAccent}"/>
                                 </Button>
                             </Grid>
+                            </Grid>
                         </Grid>
                     </Border>
 
-                    <Grid Grid.Column="2">
+                    <Grid x:Name="MainPageHost" Grid.Column="2" SizeChanged="MainPageHost_SizeChanged">
                     <Grid x:Name="RoutesPage">
                         <Grid.RowDefinitions>
                             <RowDefinition Height="Auto"/>
@@ -625,13 +676,23 @@
                     <Border x:Name="JournalPage" Visibility="Collapsed" Background="{DynamicResource ThemeLogPanel}" BorderBrush="{DynamicResource ThemePanelBorder}" BorderThickness="1" CornerRadius="15" Padding="16">
                         <Grid>
                             <Grid.RowDefinitions>
-                                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="3*"/><RowDefinition Height="Auto"/><RowDefinition Height="2*"/>
+                                <RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition x:Name="ConnectionTableRow" Height="*"/><RowDefinition Height="Auto"/><RowDefinition x:Name="CoreLogRow" Height="0"/>
                             </Grid.RowDefinitions>
                             <StackPanel>
                                 <TextBlock Text="ЖУРНАЛ И СОЕДИНЕНИЯ" FontSize="23" FontWeight="Light" Foreground="{DynamicResource ThemeText}"/>
                                 <WrapPanel Margin="0,9,0,0">
                                     <Button x:Name="RunDiagnosticButton" Style="{StaticResource FlatButton}" Content="ПРОВЕРИТЬ ПОДКЛЮЧЕНИЕ" Padding="10,5" Margin="0,0,8,5" Click="RunDiagnostic_Click"/>
+                                    <CheckBox x:Name="CoreLogToggle" Style="{StaticResource CoreLogToggleStyle}" Margin="5,0,0,5" VerticalAlignment="Center" Click="CoreLogToggle_Click" ToolTip="Показать или скрыть текстовый журнал ядра"/>
                                 </WrapPanel>
+                                <Border x:Name="JournalDraftPanel" Visibility="Collapsed" Margin="0,5,0,0" Padding="10,7" CornerRadius="8" Background="{DynamicResource ThemeSurface}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" BorderThickness="1">
+                                    <DockPanel LastChildFill="True">
+                                        <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" VerticalAlignment="Center" Margin="10,0,0,0">
+                                            <Button x:Name="JournalUndoButton" Style="{StaticResource FlatButton}" Content="ОТМЕНИТЬ" Padding="9,5" Margin="0,0,7,0" Click="JournalUndo_Click" ToolTip="Отменить последнее изменение правил"/>
+                                            <Button x:Name="JournalApplyButton" Style="{StaticResource FlatButton}" Content="ПРИМЕНИТЬ" Padding="9,5" Click="ApplyButton_Click" ToolTip="Применить все изменения правил. Работающий VPN будет переподключён."/>
+                                        </StackPanel>
+                                        <TextBlock Text="Есть черновик. Применятся все изменения правил; работающий VPN переподключится." TextWrapping="Wrap" FontSize="11" Foreground="{DynamicResource ThemeMuted}" VerticalAlignment="Center"/>
+                                    </DockPanel>
+                                </Border>
                             </StackPanel>
                             <Grid Grid.Row="1" Margin="0,10,0,9">
                                 <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
@@ -639,7 +700,7 @@
                                 <Button x:Name="RefreshConnectionsButton" Grid.Column="1" Style="{StaticResource FlatButton}" Content="ОБНОВИТЬ" Padding="12,6" Margin="8,0,0,0" Click="RefreshConnections_Click"/>
                             </Grid>
                             <Border Grid.Row="2" CornerRadius="12" BorderThickness="1" BorderBrush="{DynamicResource ThemeSurfaceBorder}" Background="{DynamicResource ThemeSurface}" Padding="1">
-                            <DataGrid x:Name="ConnectionsGrid" SizeChanged="ConnectionsGrid_SizeChanged" IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="None" RowHeight="38" ColumnHeaderHeight="40" BorderThickness="0" SelectionUnit="FullRow" Background="{DynamicResource ThemeSurface}" Foreground="{DynamicResource ThemeText}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto">
+                            <DataGrid x:Name="ConnectionsGrid" SizeChanged="ConnectionsGrid_SizeChanged" IsReadOnly="True" AutoGenerateColumns="False" CanUserAddRows="False" CanUserDeleteRows="False" HeadersVisibility="Column" GridLinesVisibility="None" RowHeight="38" ColumnHeaderHeight="40" BorderThickness="0" SelectionUnit="FullRow" Background="{DynamicResource ThemeSurface}" Foreground="{DynamicResource ThemeText}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Auto" VirtualizingPanel.ScrollUnit="Pixel" EnableRowVirtualization="True">
                                 <DataGrid.Resources>
                                     <Style x:Key="ConnectionHeaderGrip" TargetType="Thumb">
                                         <Setter Property="Width" Value="5"/><Setter Property="Cursor" Value="SizeWE"/>
@@ -699,13 +760,46 @@
                                         </Setter.Value></Setter>
                                     </Style>
                                     <Style x:Key="ConnectionCellTextStyle" TargetType="TextBlock"><Setter Property="TextTrimming" Value="CharacterEllipsis"/><Setter Property="VerticalAlignment" Value="Center"/><Setter Property="ToolTip" Value="{Binding Text, RelativeSource={RelativeSource Self}}"/></Style>
+                                    <Style x:Key="ConnectionRuleTextStyle" TargetType="TextBlock" BasedOn="{StaticResource ConnectionCellTextStyle}"><Setter Property="ToolTip" Value="{Binding RuleHint}"/></Style>
+                                    <Style x:Key="ConnectionRouteButton" TargetType="Button" BasedOn="{StaticResource FlatButton}">
+                                        <Setter Property="MinHeight" Value="0"/><Setter Property="Padding" Value="4,1"/>
+                                        <Setter Property="Background" Value="Transparent"/>
+                                        <Setter Property="Template"><Setter.Value>
+                                            <ControlTemplate TargetType="Button">
+                                                <Border x:Name="RouteSurface" CornerRadius="5" Background="{TemplateBinding Background}" Padding="{TemplateBinding Padding}">
+                                                    <ContentPresenter HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+                                                </Border>
+                                                <ControlTemplate.Triggers>
+                                                    <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="RouteSurface" Property="Background" Value="{DynamicResource ThemeSurfaceHover}"/></Trigger>
+                                                    <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="RouteSurface" Property="Background" Value="{DynamicResource ThemeSurfaceHover}"/></Trigger>
+                                                    <Trigger Property="IsPressed" Value="True"><Setter TargetName="RouteSurface" Property="Opacity" Value="0.7"/></Trigger>
+                                                    <Trigger Property="IsEnabled" Value="False"><Setter TargetName="RouteSurface" Property="Opacity" Value="0.65"/></Trigger>
+                                                </ControlTemplate.Triggers>
+                                            </ControlTemplate>
+                                        </Setter.Value></Setter>
+                                    </Style>
                                 </DataGrid.Resources>
                                 <DataGrid.Columns>
                                     <DataGridTextColumn Header="Приложение" Binding="{Binding Process}" ElementStyle="{StaticResource ConnectionCellTextStyle}" Width="130" MinWidth="95"/>
                                     <DataGridTextColumn Header="Адрес" Binding="{Binding Destination}" ElementStyle="{StaticResource ConnectionCellTextStyle}" Width="*" MinWidth="130"/>
                                     <DataGridTextColumn Header="Протокол" Binding="{Binding Network}" ElementStyle="{StaticResource ConnectionCellTextStyle}" Width="85"/>
-                                    <DataGridTextColumn Header="Правило" Binding="{Binding Rule}" ElementStyle="{StaticResource ConnectionCellTextStyle}" Width="150" MinWidth="95"/>
-                                    <DataGridTextColumn Header="Маршрут" Binding="{Binding Route}" ElementStyle="{StaticResource ConnectionCellTextStyle}" Width="140" MinWidth="95"/>
+                                    <DataGridTextColumn Header="Правило" Binding="{Binding RuleLabel}" ElementStyle="{StaticResource ConnectionRuleTextStyle}" Width="180" MinWidth="95"/>
+                                    <DataGridTemplateColumn Header="Маршрут" SortMemberPath="Route" Width="170" MinWidth="95">
+                                        <DataGridTemplateColumn.CellTemplate><DataTemplate>
+                                            <Button Style="{StaticResource ConnectionRouteButton}" Tag="{Binding}" Click="ConnectionRoute_Click" IsEnabled="{Binding CanChangeAddress}" ToolTip="{Binding RouteHint}" ToolTipService.ShowOnDisabled="True">
+                                                <Grid>
+                                                    <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+                                                    <StackPanel VerticalAlignment="Center">
+                                                        <TextBlock Text="{Binding Route}" TextTrimming="CharacterEllipsis" FontSize="11"/>
+                                                        <TextBlock Text="{Binding PendingRouteLabel}" TextTrimming="CharacterEllipsis" FontSize="9" Foreground="{DynamicResource ThemeAccent}">
+                                                            <TextBlock.Style><Style TargetType="TextBlock"><Style.Triggers><DataTrigger Binding="{Binding PendingRouteLabel}" Value=""><Setter Property="Visibility" Value="Collapsed"/></DataTrigger></Style.Triggers></Style></TextBlock.Style>
+                                                        </TextBlock>
+                                                    </StackPanel>
+                                                    <TextBlock Grid.Column="1" Text="⌄" Margin="5,0,0,0" Foreground="{DynamicResource ThemeAccent}" VerticalAlignment="Center"/>
+                                                </Grid>
+                                            </Button>
+                                        </DataTemplate></DataGridTemplateColumn.CellTemplate>
+                                    </DataGridTemplateColumn>
                                 </DataGrid.Columns>
                             </DataGrid>
                             </Border>
@@ -714,9 +808,23 @@
                                 <TextBlock x:Name="ConnectionsStatusText" Text="Соединения появятся после запуска VPN. Короткие запросы могут завершиться между обновлениями." FontSize="10" TextWrapping="Wrap" Foreground="{DynamicResource ThemeMuted}" VerticalAlignment="Center" Margin="0,0,10,0"/>
                                 <Button x:Name="CopyLogButton" Grid.Column="1" Style="{StaticResource FlatButton}" Content="КОПИРОВАТЬ ЖУРНАЛ" Padding="10,5" Click="CopyLog_Click"/>
                             </Grid>
-                            <TextBox x:Name="LogText" Grid.Row="4" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled" Background="{DynamicResource ThemeLogBackground}" Foreground="{DynamicResource ThemeLogText}" BorderBrush="{DynamicResource ThemeSurfaceBorder}" FontFamily="Consolas" FontSize="11" Padding="9,7"/>
+                            <ContentControl x:Name="CoreLogHost" Grid.Row="4" Visibility="Collapsed" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch">
+                                <Border x:Name="CoreLogSurface" Background="{DynamicResource ThemeLogBackground}" CornerRadius="10">
+                                    <Grid>
+                                        <Border BorderBrush="{DynamicResource ThemeSurfaceBorder}" BorderThickness="1" CornerRadius="10" IsHitTestVisible="False"/>
+                                        <TextBox x:Name="LogText" Margin="6" IsReadOnly="True" AcceptsReturn="True" TextWrapping="Wrap" VerticalScrollBarVisibility="Hidden" HorizontalScrollBarVisibility="Disabled" Background="Transparent" Foreground="{DynamicResource ThemeLogText}" BorderThickness="0" FontFamily="Consolas" FontSize="11" Padding="3,1" Loaded="LogText_Loaded"/>
+                                        <Thumb x:Name="CoreLogTopGrip" Style="{StaticResource CoreLogEdgeGrip}" Height="6" VerticalAlignment="Top" DragStarted="CoreLogGrip_DragStarted" DragDelta="CoreLogGrip_DragDelta" DragCompleted="CoreLogGrip_DragCompleted"/>
+                                        <Thumb x:Name="CoreLogBottomGrip" Style="{StaticResource CoreLogEdgeGrip}" Height="6" VerticalAlignment="Bottom" DragStarted="CoreLogGrip_DragStarted" DragDelta="CoreLogGrip_DragDelta" DragCompleted="CoreLogGrip_DragCompleted"/>
+                                        <Thumb x:Name="CoreLogLeftGrip" Style="{StaticResource CoreLogEdgeGrip}" Width="6" HorizontalAlignment="Left" DragStarted="CoreLogGrip_DragStarted" DragDelta="CoreLogGrip_DragDelta" DragCompleted="CoreLogGrip_DragCompleted"/>
+                                        <Thumb x:Name="CoreLogRightGrip" Style="{StaticResource CoreLogEdgeGrip}" Width="6" HorizontalAlignment="Right" DragStarted="CoreLogGrip_DragStarted" DragDelta="CoreLogGrip_DragDelta" DragCompleted="CoreLogGrip_DragCompleted"/>
+                                    </Grid>
+                                </Border>
+                            </ContentControl>
                         </Grid>
                     </Border>
+                    <Canvas x:Name="PageTransitionLayer" Panel.ZIndex="10" Visibility="Collapsed" IsHitTestVisible="False" Opacity="0" ClipToBounds="True" UseLayoutRounding="False" SnapsToDevicePixels="False">
+                        <Image x:Name="PageTransitionImage" Stretch="None" UseLayoutRounding="False" SnapsToDevicePixels="False" RenderOptions.BitmapScalingMode="HighQuality"/>
+                    </Canvas>
                     </Grid>
                 </Grid>
                 </Grid>
