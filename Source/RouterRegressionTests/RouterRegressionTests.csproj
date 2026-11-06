@@ -14,5 +14,16 @@
     <Compile Include="../MorphocyteRouter/SingBoxDns.cs" Link="SingBoxDns.cs" />
     <Compile Include="../MorphocyteRouter/ProcessLifetimeJob.cs" Link="ProcessLifetimeJob.cs" />
     <Compile Include="../MorphocyteRouter/BundledResources.cs" Link="BundledResources.cs" />
+    <Compile Include="../MorphocyteRouter/CoreProcessManager.Xray.cs" Link="CoreProcessManager.Xray.cs" />
+    <Compile Include="../MorphocyteRouter/XrayBridgePlan.cs" Link="XrayBridgePlan.cs" />
+    <Compile Include="../MorphocyteRouter/XrayProfile.cs" Link="XrayProfile.cs" />
+    <Compile Include="../MorphocyteRouter/XrayFullProfile.cs" Link="XrayFullProfile.cs" />
+    <Compile Include="../MorphocyteRouter/XrayJsonConnection.cs" Link="XrayJsonConnection.cs" />
+    <Compile Include="../MorphocyteRouter/ProfileImporter.cs" Link="ProfileImporter.cs" />
+    <Compile Include="../MorphocyteRouter/ProfileImporter.Hysteria.cs" Link="ProfileImporter.Hysteria.cs" />
+    <Compile Include="../MorphocyteRouter/PhysicalUplink.cs" Link="PhysicalUplink.cs" />
+    <Compile Include="../MorphocyteRouter/SubscriptionMetadata.cs" Link="SubscriptionMetadata.cs" />
+    <Compile Include="../MorphocyteRouter/SubscriptionInformation.cs" Link="SubscriptionInformation.cs" />
+    <Compile Include="../MorphocyteRouter/VpnServerCatalog.cs" Link="VpnServerCatalog.cs" />
   </ItemGroup>
 </Project>

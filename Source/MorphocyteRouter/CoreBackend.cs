@@ -27,7 +27,12 @@ internal static class CoreBackend
         return path;
     }
 
-    internal static string RuntimeText(string executable, ClashConfigDocument document, CoreDiagnostics api, bool fullTunnel, int speedPort, string? selectedServer = null)
-        => IsSingBox(executable) ? SingBoxConfig.Build(document, api.Port, api.Secret, fullTunnel, speedPort, selectedServer)
-            : document.BuildRuntimeText(api.Port, api.Secret, fullTunnel, speedPort);
+    internal static string RuntimeText(string executable, ClashConfigDocument document, CoreDiagnostics api, bool fullTunnel, int speedPort, string? selectedServer = null,
+        IReadOnlyDictionary<string, XrayBridgeEndpoint>? xrayEndpoints = null, string? selectionCacheId = null)
+    {
+        if (!IsSingBox(executable) && XrayBridgePlan.ContainsConnections(document))
+            throw new InvalidDataException("Подключения Xray поддерживаются с основным ядром sing-box. Выбери его в настройках.");
+        return IsSingBox(executable) ? SingBoxConfig.Build(document, api.Port, api.Secret, fullTunnel, speedPort, selectedServer, xrayEndpoints: xrayEndpoints,selectionCacheId:selectionCacheId)
+            : document.BuildRuntimeText(api.Port, api.Secret, fullTunnel, speedPort, selectedServer);
+    }
 }

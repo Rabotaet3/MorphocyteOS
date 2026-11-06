@@ -170,7 +170,8 @@ internal static class UpdateInstaller
         if (plan.ProtectedFiles is null || plan.ProtectedFiles.Count > 32) throw new InvalidDataException("Небезопасный список сохраняемых файлов.");
         plan.ProtectedFiles = plan.ProtectedFiles.Select(Path.GetFullPath).ToList();
         // A copied installer is never part of the target release's file list.
-        if (plan.ExecutableName.Equals("mihomo.exe", StringComparison.OrdinalIgnoreCase) || plan.ExecutableName.Equals("installer.exe", StringComparison.OrdinalIgnoreCase))
+        if (plan.ExecutableName.Equals("mihomo.exe", StringComparison.OrdinalIgnoreCase) || plan.ExecutableName.Equals("sing-box.exe", StringComparison.OrdinalIgnoreCase)
+            || plan.ExecutableName.Equals("xray.exe", StringComparison.OrdinalIgnoreCase) || plan.ExecutableName.Equals("installer.exe", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Неподдерживаемый файл приложения.");
     }
 

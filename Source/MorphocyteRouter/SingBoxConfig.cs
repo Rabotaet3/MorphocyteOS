@@ -32,10 +32,12 @@ internal static class SingBoxConfig
     private static int Number(YamlMappingNode node, string key, int fallback = 0) => int.TryParse(Text(node, key), NumberStyles.Integer, CultureInfo.InvariantCulture, out var value) ? value : fallback;
 
     internal static string Build(ClashConfigDocument document, int controllerPort, string secret, bool fullTunnel,
-        int speedPort = 0, string? selectedServer = null, bool includeTun = true)
+        int speedPort = 0, string? selectedServer = null, bool includeTun = true,
+        IReadOnlyDictionary<string, XrayBridgeEndpoint>? xrayEndpoints = null, string? selectionCacheId = null)
     {
         // Reuse the tested full-VPN exception selection / pruning, without adding Mihomo listeners.
-        var yaml = new YamlStream(); yaml.Load(new StringReader(document.BuildRuntimeText(controllerPort, secret, fullTunnel)));
+        selectedServer=SubscriptionInformation.ResolveSelection(document,selectedServer);
+        var yaml = new YamlStream(); yaml.Load(new StringReader(document.BuildRuntimeText(controllerPort, secret, fullTunnel, selectedServer:selectedServer)));
         var root = (YamlMappingNode)yaml.Documents[0].RootNode;
         if (Get(root, "proxy-providers") is YamlMappingNode { Children.Count: > 0 }) throw Unsupported("proxy-providers");
         if (Get(root, "listeners") is YamlSequenceNode { Children.Count: > 0 }) throw Unsupported("пользовательские listeners");
@@ -56,7 +58,18 @@ internal static class SingBoxConfig
                 var name = Text(node, "name");
                 if (name.Length == 0 || !names.Add(name)) throw Unsupported("повторяющееся/зарезервированное имя подключения");
                 if (FlattenedBlock(node)) { Only(node, "name", "type"); continue; }
-                outbounds.Add(Proxy(node));
+                if (Text(node, "type") is XrayProfile.NodeType or XrayFullProfile.NodeType)
+                {
+                    if(Text(node,"type")==XrayFullProfile.NodeType) _=XrayFullProfile.FromNode(node); else _ = XrayProfile.FromNode(node);
+                    if (xrayEndpoints is null || !xrayEndpoints.TryGetValue(name, out var endpoint))
+                        throw new InvalidDataException("Для подключения Xray не подготовлен локальный канал. Прямой маршрут не используется.");
+                    var loopback = System.Net.NetworkInformation.NetworkInterface.GetAllNetworkInterfaces()
+                        .FirstOrDefault(adapter => adapter.NetworkInterfaceType == System.Net.NetworkInformation.NetworkInterfaceType.Loopback)?.Name
+                        ?? throw new IOException("Не найден локальный сетевой интерфейс для Xray.");
+                    outbounds.Add(Obj(("type", "socks"), ("tag", name), ("server", "127.0.0.1"), ("server_port", endpoint.Port),
+                        ("version", "5"), ("username", endpoint.Username), ("password", endpoint.Password), ("bind_interface", loopback)));
+                }
+                else outbounds.Add(Proxy(node));
             }
         if (Get(root, "proxy-groups") is YamlSequenceNode groups)
             foreach (var group in groups.Children)
@@ -70,7 +83,11 @@ internal static class SingBoxConfig
                 var members = List(node, "proxies");
                 if (members.Length == 0 || members.Any(member => exceptions.GetValueOrDefault(member, member) is "REJECT" or "REJECT-DROP")) throw Unsupported("пустая группа или блокировка внутри группы");
                 var converted = Obj(("type", type == "select" ? "selector" : "urltest"), ("tag", name), ("outbounds", members));
-                if (type == "select") converted["default"] = name == vpn && selectedServer is not null && members.Contains(selectedServer) ? selectedServer : members[0];
+                if (type == "select")
+                {
+                    converted["default"] = name == vpn && selectedServer is not null && members.Contains(selectedServer) ? selectedServer : members[0];
+                    if(name==vpn) converted["interrupt_exist_connections"]=true;
+                }
                 else
                 {
                     converted["url"] = Text(node, "url", "https://www.gstatic.com/generate_204");
@@ -103,6 +120,8 @@ internal static class SingBoxConfig
         var tunTag = Internal("tun"); var speedTag = Internal("speed");
         var bootstrap = Internal("bootstrap");
         var rules = new List<Dictionary<string, object>>();
+        if (xrayEndpoints is { Count: > 0 })
+            rules.Add(Obj(("process_path", new[] { XrayBridgePlan.EnginePath }), ("action", "route"), ("outbound", "DIRECT")));
         if (speedPort != 0)
         {
             if (speedPort is < 1 or > 65535 || speedPort == controllerPort) throw new ArgumentException("Некорректный порт замера.");
@@ -194,7 +213,7 @@ internal static class SingBoxConfig
             respectDnsRules ? Internal("dns-upstream") : null);
         // Resolver-only loopback listeners let domain_resolver use the same native
         // DNS races as normal queries. Numeric bootstrap upstreams break recursion.
-        rules.Insert(speedPort == 0 ? 0 : 1, Obj(("inbound", new[] { Internal("bootstrap-in"), Internal("direct-dns-in") }), ("action", "hijack-dns")));
+        rules.Insert(xrayEndpoints is { Count: > 0 } ? 0 : speedPort == 0 ? 0 : 1, Obj(("inbound", new[] { Internal("bootstrap-in"), Internal("direct-dns-in") }), ("action", "hijack-dns")));
         foreach (var outbound in outbounds.Where(item => (string)item["type"] == "direct"))
             outbound["domain_resolver"] = Internal("direct-resolver");
         var inbounds = new List<Dictionary<string, object>>();
@@ -221,15 +240,29 @@ internal static class SingBoxConfig
         if (speedPort != 0)
             inbounds.Add(Obj(("type", "socks"), ("tag", speedTag), ("listen", "127.0.0.1"), ("listen_port", speedPort),
                 ("users", new[] { Obj(("username", "morphocyte"), ("password", secret)) })));
+        var route=Obj(("auto_detect_interface",true),("default_domain_resolver",bootstrap),("rules",rules),("final",final));
+        // The external gateway binding prevents the application's own TUN from
+        // becoming its upstream. A standalone local proxy has no such tunnel;
+        // retain OS routing there, including local proxy/DNS fixtures.
+        if(includeTun&&xrayEndpoints is { Count:>0 }&&PhysicalUplink.Find() is { } uplink)
+        { route["auto_detect_interface"]=false; route["default_interface"]=uplink; }
         var config = Obj(("log", Obj(("level", "info"), ("timestamp", true))),
             ("inbounds", inbounds), ("outbounds", outbounds),
-            ("route", Obj(("auto_detect_interface", true), ("default_domain_resolver", bootstrap), ("rules", rules), ("final", final))),
+            ("route", route),
             ("dns", dns),
             ("experimental", Obj(("cache_file", Obj(("enabled", true), ("store_fakeip", true),
                 ("path", Path.Combine(Path.GetDirectoryName(document.Path)!, ".morphocyte-singbox-" +
                     ClashConfigDocument.Hash(document.Path.ToUpperInvariant())[..16] + ".db")))),
                 ("clash_api", Obj(("external_controller", "127.0.0.1:" + controllerPort), ("secret", secret),
                 ("default_mode", "Rule"), ("access_control_allow_origin", new[] { "http://127.0.0.1" }))))));
+        if(selectionCacheId is not null)
+        {
+            // Upstream restores a cached selector BEFORE its configured default.
+            // Each user choice gets a new namespace, while FakeIP remains in the
+            // same database's global buckets and survives server changes.
+            var experimental=(Dictionary<string,object>)config["experimental"];
+            ((Dictionary<string,object>)experimental["cache_file"])["cache_id"]=selectionCacheId;
+        }
         return JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
     }
 
@@ -266,9 +299,10 @@ internal static class SingBoxConfig
     private static Dictionary<string, object> Proxy(YamlMappingNode node)
     {
         var type = Text(node, "type");
-        if (type is not ("vless" or "socks5" or "http" or "ss" or "trojan" or "vmess" or "direct")) throw Unsupported("тип подключения");
+        if (type is not ("vless" or "socks5" or "http" or "ss" or "trojan" or "vmess" or "direct" or "hysteria2")) throw Unsupported("тип подключения");
         var allowed = new List<string> { "name", "type", "server", "port", "udp" };
         if (type is "vless" or "vmess" or "trojan" or "http") allowed.AddRange(["tls", "servername", "sni", "skip-cert-verify", "client-fingerprint", "alpn"]);
+        if (type == "hysteria2") allowed.AddRange(["password", "sni", "servername", "skip-cert-verify", "alpn", "obfs", "obfs-password"]);
         if (type is "vless" or "vmess" or "trojan") allowed.AddRange(["network", "ws-opts", "grpc-opts"]);
         if (type is "vless" or "vmess") allowed.Add("uuid");
         if (type == "vless") allowed.AddRange(["flow", "reality-opts", "packet-encoding"]);
@@ -282,6 +316,19 @@ internal static class SingBoxConfig
         var port = Number(node, "port");
         if (port is < 1 or > 65535 || Text(node, "server").Length == 0) throw Unsupported("адрес/порт подключения");
         output["server"] = Text(node, "server"); output["server_port"] = port;
+        if (type == "hysteria2")
+        {
+            if (Text(node, "password").Length == 0) throw Unsupported("пустой пароль Hysteria2");
+            output["password"] = Text(node, "password");
+            var obfs = Text(node, "obfs");
+            if (obfs.Length > 0)
+            {
+                if (obfs != "salamander" || Text(node, "obfs-password").Length == 0) throw Unsupported("обфускация Hysteria2");
+                output["obfs"] = Obj(("type", obfs), ("password", Text(node, "obfs-password")));
+            }
+            else if (Text(node, "obfs-password").Length > 0) throw Unsupported("пароль обфускации без типа Hysteria2");
+            if (Get(node, "udp") is not null && !Flag(node, "udp")) throw Unsupported("отключение UDP Hysteria2");
+        }
         if (type is "vless" or "vmess") output["uuid"] = Text(node, "uuid");
         if (type == "vless" && Text(node, "flow").Length > 0) output["flow"] = Text(node, "flow");
         if (type == "vless" && Get(node, "packet-encoding") is not null)
@@ -298,7 +345,7 @@ internal static class SingBoxConfig
         if (Get(node, "udp") is not null && !Flag(node, "udp") && type != "http") output["network"] = "tcp";
         var webSocket = Text(node, "network") == "ws" ? Get(node, "ws-opts") as YamlMappingNode : null;
         var webSocketHeaders = webSocket is null ? new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase) : WebSocketHeaders(webSocket);
-        if (Flag(node, "tls") || type == "trojan")
+        if (Flag(node, "tls") || type is "trojan" or "hysteria2")
         {
             var tls = Obj(("enabled", true), ("insecure", Flag(node, "skip-cert-verify")));
             var sni = Text(node, "servername", Text(node, "sni"));

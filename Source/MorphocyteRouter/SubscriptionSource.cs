@@ -8,14 +8,14 @@ public sealed partial class SubscriptionSource
 {
     private static readonly byte[] Entropy = Encoding.UTF8.GetBytes("MorphocyteOS.Subscription.1");
 
-    internal static SubscriptionSource Create(string url, DateTimeOffset? updatedAt = null)
+    internal static SubscriptionSource Create(string url, DateTimeOffset? updatedAt = null, bool sendHardwareId = true, bool allowPartialImport = true)
     {
         _ = SubscriptionImporter.ValidateUrl(url);
         var bytes = Encoding.UTF8.GetBytes(url);
         try
         {
             return new SubscriptionSource { ProtectedUrl = Convert.ToBase64String(ProtectedData.Protect(bytes, Entropy,
-                DataProtectionScope.CurrentUser)), UpdatedAt = updatedAt };
+                DataProtectionScope.CurrentUser)), UpdatedAt = updatedAt, SendHardwareId = sendHardwareId, AllowPartialImport = allowPartialImport };
         }
         finally { CryptographicOperations.ZeroMemory(bytes); }
     }

@@ -10,39 +10,52 @@ public partial class MainWindow
 {
     private int _pageTransitionVersion;
     private Func<bool> _pageAnimationsEnabled = () => SystemParameters.ClientAreaAnimation;
+    private enum WorkspacePage { Subscription, Routes, Journal }
+    private WorkspacePage _activePage=WorkspacePage.Routes;
 
     private void RoutesTab_Click(object sender, RoutedEventArgs e) => ChangeMainPage(false);
     private void JournalTab_Click(object sender, RoutedEventArgs e) => ChangeMainPage(true);
+    private void SubscriptionTab_Click(object sender,RoutedEventArgs e) => ChangeWorkspacePage(WorkspacePage.Subscription);
 
-    private async void ChangeMainPage(bool journal)
+    private void ChangeMainPage(bool journal) => ChangeWorkspacePage(journal?WorkspacePage.Journal:WorkspacePage.Routes);
+
+    private async void ChangeWorkspacePage(WorkspacePage page)
     {
         if (_busy || _closing) return;
         // Capture before the save operation temporarily changes button states.
-        AnimateMainPage(journal);
+        AnimateWorkspacePage(page);
         await RunExclusiveAsync(async () =>
         {
-            _settings.ShowEventLog = journal;
+            _settings.ShowEventLog = page==WorkspacePage.Journal;
             await SaveSettingsAsync();
         });
-        if (journal && JournalPage.IsVisible) await RefreshConnectionSnapshotAsync();
+        if (page==WorkspacePage.Journal && JournalPage.IsVisible) await RefreshConnectionSnapshotAsync();
     }
 
-    private void SelectMainPage(bool journal)
+    private void SelectMainPage(bool journal) => SelectWorkspacePage(journal?WorkspacePage.Journal:WorkspacePage.Routes);
+
+    private void SelectWorkspacePage(WorkspacePage page)
     {
         ResetPageTransition();
-        RoutesPage.Visibility = journal ? Visibility.Collapsed : Visibility.Visible;
-        JournalPage.Visibility = journal ? Visibility.Visible : Visibility.Collapsed;
-        RoutesTabButton.SetResourceReference(Control.BorderBrushProperty, journal ? "ThemeButtonBorder" : "ThemeAccent");
-        JournalTabButton.SetResourceReference(Control.BorderBrushProperty, journal ? "ThemeAccent" : "ThemeButtonBorder");
-        if (journal && IsCoreLogVisible)
+        _activePage=page;
+        RoutesPage.Visibility = page==WorkspacePage.Routes ? Visibility.Visible : Visibility.Collapsed;
+        JournalPage.Visibility = page==WorkspacePage.Journal ? Visibility.Visible : Visibility.Collapsed;
+        SubscriptionPage.Visibility=page==WorkspacePage.Subscription?Visibility.Visible:Visibility.Collapsed;
+        RoutesTabButton.SetResourceReference(Control.BorderBrushProperty, page==WorkspacePage.Routes ? "ThemeAccent" : "ThemeButtonBorder");
+        JournalTabButton.SetResourceReference(Control.BorderBrushProperty, page==WorkspacePage.Journal ? "ThemeAccent" : "ThemeButtonBorder");
+        SubscriptionTabButton.SetResourceReference(Control.BorderBrushProperty,page==WorkspacePage.Subscription?"ThemeAccent":"ThemeButtonBorder");
+        if(page==WorkspacePage.Subscription) RefreshSubscriptionServers();
+        if (page==WorkspacePage.Journal && IsCoreLogVisible)
         {
             RefreshCoreLogText();
         }
     }
 
-    private void AnimateMainPage(bool journal)
+    private void AnimateMainPage(bool journal) => AnimateWorkspacePage(journal?WorkspacePage.Journal:WorkspacePage.Routes);
+
+    private void AnimateWorkspacePage(WorkspacePage page)
     {
-        if ((JournalPage.Visibility == Visibility.Visible) == journal) return;
+        if (_activePage==page) return;
         BitmapSource? frame = null;
         var displaySize = MainPageHost.RenderSize;
         var displayOffset = new Vector();
@@ -97,8 +110,13 @@ public partial class MainWindow
                 catch (ArgumentException) { }
             }
         }
-        SelectMainPage(journal);
+        SelectWorkspacePage(page);
         if (frame is null) return;
+        var incoming=page switch { WorkspacePage.Subscription=>(FrameworkElement)SubscriptionPage,WorkspacePage.Journal=>JournalPage,_=>RoutesPage };
+        // Two separate phases prevent the text of unrelated pages from being
+        // composited on top of each other. The incoming page stays transparent
+        // until the outgoing snapshot has completely disappeared.
+        incoming.Opacity=0;
         PageTransitionImage.Source = frame;
         PageTransitionImage.Width = displaySize.Width; PageTransitionImage.Height = displaySize.Height;
         Canvas.SetLeft(PageTransitionImage, displayOffset.X); Canvas.SetTop(PageTransitionImage, displayOffset.Y);
@@ -107,11 +125,20 @@ public partial class MainWindow
         PageTransitionLayer.Opacity = 1;
         PageTransitionLayer.Visibility = Visibility.Visible;
         var version = _pageTransitionVersion;
-        var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(180))
+        var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(85))
         {
             EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }, FillBehavior = FillBehavior.HoldEnd
         };
-        fade.Completed += (_, _) => { if (version == _pageTransitionVersion) ResetPageTransition(); };
+        fade.Completed += (_, _) => {
+            if(version!=_pageTransitionVersion) return;
+            PageTransitionLayer.Visibility=Visibility.Collapsed;
+            PageTransitionImage.Source=null;
+            var reveal=new DoubleAnimation(0,1,TimeSpan.FromMilliseconds(115)) {
+                EasingFunction=new SineEase { EasingMode=EasingMode.EaseOut },FillBehavior=FillBehavior.HoldEnd
+            };
+            reveal.Completed+=(_,_)=> { if(version==_pageTransitionVersion) ResetPageTransition(); };
+            incoming.BeginAnimation(OpacityProperty,reveal,HandoffBehavior.SnapshotAndReplace);
+        };
         PageTransitionLayer.BeginAnimation(OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
     }
 
@@ -122,6 +149,8 @@ public partial class MainWindow
         PageTransitionLayer.Opacity = 0;
         PageTransitionLayer.Visibility = Visibility.Collapsed;
         PageTransitionImage.Source = null;
+        foreach(var page in new FrameworkElement[]{SubscriptionPage,RoutesPage,JournalPage})
+        { page.BeginAnimation(OpacityProperty,null); page.Opacity=1; }
     }
 
     private void MainPageHost_SizeChanged(object sender, SizeChangedEventArgs e) => ResetPageTransition();

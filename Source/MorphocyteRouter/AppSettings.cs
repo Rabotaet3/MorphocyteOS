@@ -18,9 +18,12 @@ public sealed class ProfileRuleState
 
 public sealed partial class SubscriptionSource
 {
+    public bool SendHardwareId { get; set; } = true;
+    public bool AllowPartialImport { get; set; } = true;
     public string ProtectedUrl { get; set; } = "";
     public DateTimeOffset? UpdatedAt { get; set; }
     public string SelectedServer { get; set; } = "";
+    public SubscriptionMetadata? Metadata { get; set; }
 }
 
 public sealed class AppSettings
@@ -41,6 +44,7 @@ public sealed class AppSettings
     public bool FullTunnel { get; set; }
     public Dictionary<string, SubscriptionSource> ProfileSubscriptions { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string> ProfileSelections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public long ServerSelectionRevision { get; set; }
     // Legacy fields migrate 1.5.x drafts on load.
     public bool HasRuleDraft { get; set; }
     public string DraftConfigPath { get; set; } = "";

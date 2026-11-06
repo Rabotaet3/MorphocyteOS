@@ -124,7 +124,12 @@ internal static class ConnectionDiagnostic
             {
                 string Get(string key) => node.Children.TryGetValue(new YamlScalarNode(key), out var field) ? (field as YamlScalarNode)?.Value ?? "" : "";
                 if (Get("name") == selected && int.TryParse(Get("port"), out var port) && port is > 0 and <= 65535 && Get("server").Length > 0)
-                    return (Get("server"), port, Get("type"));
+                {
+                    var type = Get("type");
+                    if (type == XrayProfile.NodeType && Uri.TryCreate(Get("xray-link"), UriKind.Absolute, out var link)
+                        && link.Scheme is "hy2" or "hysteria2") type = "hysteria2";
+                    return (Get("server"), port, type);
+                }
             }
         }
         catch (Exception error) when (error is IOException or UnauthorizedAccessException or YamlDotNet.Core.YamlException) { }

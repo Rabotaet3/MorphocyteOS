@@ -24,9 +24,13 @@ public sealed class ClashConfigDocument
 
     public string? VpnRoute { get; }
     public int ConnectionCount { get; }
+    internal IEnumerable<YamlMappingNode> ProxyNodes => Get(_root, "proxies") is YamlSequenceNode list
+        ? list.Children.OfType<YamlMappingNode>() : [];
+    internal IEnumerable<YamlMappingNode> ProxyGroups => Get(_root, "proxy-groups") is YamlSequenceNode list
+        ? list.Children.OfType<YamlMappingNode>() : [];
 
     public bool HasVpnConnection => Get(_root, "proxies") is YamlSequenceNode proxies && proxies.Children.OfType<YamlMappingNode>()
-        .Any(proxy => Scalar(proxy, "type") is { } type && type is not ("direct" or "reject"))
+        .Any(proxy => Scalar(proxy, "type") is { } type && type is not ("direct" or "reject") && !SubscriptionInformation.IsSection(proxy))
         || Get(_root, "proxy-providers") is YamlMappingNode providers && providers.Children.Count > 0;
     public int PreservedRuleCount => _allRules.Count - Rules.Count;
     public string Endpoint { get; } = "не определён";
@@ -51,7 +55,7 @@ public sealed class ClashConfigDocument
         if (yaml.Documents.Count != 1 || yaml.Documents[0].RootNode is not YamlMappingNode root)
             throw new InvalidDataException("Ожидается один YAML-документ с настройками.");
         _root = root;
-        ConnectionCount = (Get(root, "proxies") as YamlSequenceNode)?.Children.Count ?? 0;
+        ConnectionCount = ProxyNodes.Count(node => !SubscriptionInformation.IsSection(node));
         if (Get(root, "rules") is not YamlSequenceNode sequence)
             throw new InvalidDataException("Секция rules должна быть списком правил.");
         _allRules = sequence.Children.Select(node => node is YamlScalarNode { Value: not null } scalar
@@ -79,6 +83,7 @@ public sealed class ClashConfigDocument
             if (Get(root, section) is not YamlSequenceNode list) continue;
             foreach (var item in list.Children.OfType<YamlMappingNode>())
             {
+                if(section=="proxies" && SubscriptionInformation.IsSection(item)) continue;
                 var name = Scalar(item, "name");
                 if (!string.IsNullOrWhiteSpace(name) && name is not "DIRECT" and not "REJECT" && !routes.Contains(name)) routes.Add(name);
                 if (section == "proxies" && Endpoint == "не определён" && Scalar(item, "server") is { } server)
@@ -93,13 +98,29 @@ public sealed class ClashConfigDocument
         VpnRoute = groups?.FirstOrDefault(name => name == "VPN") ?? groups?.FirstOrDefault() ?? routes.FirstOrDefault();
     }
 
-    internal string BuildRuntimeText(int controllerPort, string secret, bool fullTunnel = false, int speedTestPort = 0)
+    internal string BuildRuntimeText(int controllerPort, string secret, bool fullTunnel = false, int speedTestPort = 0, string? selectedServer = null)
     {
         if (controllerPort is < 1 or > 65535 || !System.Text.RegularExpressions.Regex.IsMatch(secret, "^[A-F0-9]{64}$"))
             throw new ArgumentException("Недопустимые параметры локальной диагностики.");
         var yaml = new YamlStream();
         yaml.Load(new StringReader(_yamlText));
         var root = (YamlMappingNode)yaml.Documents[0].RootNode;
+        selectedServer=SubscriptionInformation.ResolveSelection(this,selectedServer);
+        SubscriptionInformation.RemoveFromRuntime(root);
+        if(selectedServer is not null && VpnServerCatalog.Choices(this).Contains(selectedServer,StringComparer.Ordinal))
+        {
+            var selections=VpnServerCatalog.SelectionPath(this,selectedServer);
+            var profile=Get(root,"profile") as YamlMappingNode ?? new YamlMappingNode();
+            root.Children[new YamlScalarNode("profile")]=profile;
+            profile.Children[new YamlScalarNode("store-selected")]=new YamlScalarNode("false");
+            if(Get(root,"proxy-groups") is YamlSequenceNode selectableGroups)
+                foreach(var group in selectableGroups.Children.OfType<YamlMappingNode>())
+                    if(selections.TryGetValue(Scalar(group,"name")??"",out var choice) && Get(group,"proxies") is YamlSequenceNode members)
+                    {
+                        var selected=members.Children.FirstOrDefault(node=>node.ToString()==choice);
+                        if(selected is not null) { members.Children.Remove(selected); members.Children.Insert(0,selected); }
+                    }
+        }
         foreach (var key in new[] { "external-controller", "external-controller-tls", "external-controller-unix", "external-controller-pipe", "secret", "external-ui", "external-ui-url", "external-ui-name", "external-controller-cors" })
             root.Children.Remove(new YamlScalarNode(key));
         root.Add("external-controller", $"127.0.0.1:{controllerPort}");

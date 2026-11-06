@@ -9,11 +9,15 @@ internal sealed record ImportedProfile(string Yaml, string Description, bool Ins
 {
     internal bool NeedsName { get; init; }
     internal string? SubscriptionUrl { get; init; }
+    internal bool SendHardwareId { get; init; }
+    internal bool AllowPartialSubscription { get; init; }
+    internal IReadOnlyList<string> CompatibilityWarnings { get; init; } = Array.Empty<string>();
+    internal SubscriptionMetadata? Metadata { get; init; }
 }
 
 // Connection import only. Xray routing/inbounds/DNS are not equivalent to Mihomo
 // and are deliberately not silently translated into system-wide traffic rules.
-internal static class ProfileImporter
+internal static partial class ProfileImporter
 {
     internal const int MaxInputLength = 262144;
     private const string NodeName = "Подключение";
@@ -30,8 +34,17 @@ internal static class ProfileImporter
             text = text[(newline + 1)..^3].Trim();
         }
         if (text.StartsWith("vless://", StringComparison.OrdinalIgnoreCase)) return FromLink(text);
-        if (text.StartsWith('{')) return FromJson(text);
-        throw new InvalidDataException("Поддерживаются vless:// и JSON Xray с одним VLESS-подключением. HTTPS-ссылку вставь в окно импорта профиля; готовый YAML можно выбрать в настройках.");
+        if (text.StartsWith("hysteria2://", StringComparison.OrdinalIgnoreCase) || text.StartsWith("hy2://", StringComparison.OrdinalIgnoreCase)) return FromHysteriaLink(text);
+        if (text.StartsWith('{'))
+        {
+            try
+            {
+            using var document=JsonDocument.Parse(text);
+            return XrayFullProfile.IsFull(document.RootElement)?XrayFullProfile.Import(text):FromJson(text);
+            }
+            catch(JsonException) { throw new InvalidDataException("Некорректный JSON-профиль. Проверь формат исходной конфигурации."); }
+        }
+        throw new InvalidDataException("Поддерживаются vless://, hysteria2://, hy2:// и JSON Xray с одним VLESS-подключением. HTTPS-ссылку вставь в окно импорта профиля; готовый YAML можно выбрать в настройках.");
     }
 
     private static ImportedProfile FromLink(string text)
@@ -40,6 +53,7 @@ internal static class ProfileImporter
             throw new InvalidDataException("В ссылке есть пробелы или некорректное URL-кодирование.");
         if (!Uri.TryCreate(text, UriKind.Absolute, out var uri) || uri.Port is < 1 or > 65535 || uri.AbsolutePath is not ("" or "/"))
             throw new InvalidDataException("В ссылке должны быть корректные адрес и порт сервера.");
+        if (XrayProfile.Requires(uri, XrayProfile.Query(uri))) return XrayProfile.Import(text);
         var query = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
         var allowed = new HashSet<string>(new[] { "encryption", "security", "sni", "allowInsecure", "insecure", "type", "host", "path", "flow", "fp", "alpn", "pbk", "sid", "serviceName", "mode", "headerType", "ed", "eh" }, StringComparer.OrdinalIgnoreCase);
         foreach (var part in uri.Query.TrimStart('?').Split('&', StringSplitOptions.RemoveEmptyEntries))
@@ -107,7 +121,8 @@ internal static class ProfileImporter
         if (nodes.Children.Count != 1 || nodes.Children[0] is not YamlMappingNode node)
             throw new InvalidDataException("Название задаётся для одного подключения.");
         Put(node, "name", name);
-        return BuildConnections(new[] { node }, profile.Description, profile.InsecureTls) with { SubscriptionUrl = profile.SubscriptionUrl };
+        return BuildConnections(new[] { node }, profile.Description, profile.InsecureTls) with { SubscriptionUrl = profile.SubscriptionUrl, SendHardwareId = profile.SendHardwareId,
+            AllowPartialSubscription = profile.AllowPartialSubscription, CompatibilityWarnings = profile.CompatibilityWarnings, Metadata=profile.Metadata };
     }
 
     private static ImportedProfile FromJson(string text)

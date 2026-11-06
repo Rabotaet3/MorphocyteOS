@@ -77,13 +77,13 @@ foreach ($directory in $sourceDirectories) {
                 'Source/MorphocyteRouter/Assets/morphocyte.ico', 'Source/MorphocyteRouter/Assets/morphocyte-icon.png') -or
             $relative -match '^Source/(IconAssetBuilder|InstallerArtworkBuilder|SubscriptionImportTests|RouterRegressionTests|RouterIntegrationTests|UpdateServiceTests|UpdaterTests|InstallerTests|InstallerHelper|FakeMihomo)/[^/]+\.(cs|csproj)$' -or
             $relative -match '^Source/Packaging/Licenses/' -or
-            $relative -in @('Source/Packaging/Engine/mihomo.exe', 'Source/Packaging/Engine/sing-box.exe', 'Source/Packaging/LICENSE.txt',
+            $relative -in @('Source/Packaging/Engine/mihomo.exe', 'Source/Packaging/Engine/sing-box.exe', 'Source/Packaging/Engine/xray.exe', 'Source/Packaging/LICENSE.txt',
                 'Source/Packaging/THIRD-PARTY-NOTICES.md', 'Source/Packaging/ThirdPartySource/Build-Mihomo.ps1',
                 'Source/Packaging/ThirdPartySource/README.md', 'Source/Packaging/ThirdPartySource/mihomo-v1.19.31.tar.gz',
                 'Source/Packaging/ThirdPartySource/mihomo-v1.19.31-corresponding-source.tar.gz',
                 'Source/Packaging/ThirdPartySource/sing-box-v1.14.2.tar.gz',
                 'Source/Packaging/ThirdPartySource/sing-box-v1.14.2-corresponding-source.tar.gz',
-                'Source/Packaging/ThirdPartySource/Build-SingBox.ps1')
+                'Source/Packaging/ThirdPartySource/Build-SingBox.ps1', 'Source/Packaging/ThirdPartySource/xray-v26.10.31.tar.gz')
         if (-not $allowedSource) { throw "Unexpected source file: $relative" }
         if (($file.Attributes -band [System.IO.FileAttributes]::ReparsePoint) -ne 0) { throw "Linked source file: $relative" }
         $destination = Join-Path $sourceStage $relative
@@ -138,7 +138,10 @@ try {
         'Source/MorphocyteRouter/IconArtwork.cs', 'Source/IconAssetBuilder/IconAssetBuilder.csproj', 'Source/IconAssetBuilder/Program.cs',
         'Source/Packaging/ThirdPartySource/mihomo-v1.19.31-corresponding-source.tar.gz',
         'Source/Packaging/Engine/sing-box.exe', 'Source/MorphocyteRouter/SingBoxDns.cs',
-        'Source/Packaging/ThirdPartySource/sing-box-v1.14.2-corresponding-source.tar.gz')) {
+        'Source/Packaging/ThirdPartySource/sing-box-v1.14.2-corresponding-source.tar.gz',
+        'Source/Packaging/Engine/xray.exe', 'Source/Packaging/ThirdPartySource/xray-v26.10.31.tar.gz',
+        'Source/Packaging/Licenses/Xray-MPL-2.0.txt', 'Source/MorphocyteRouter/XrayBridgePlan.cs',
+        'Source/MorphocyteRouter/SubscriptionDeviceIdentity.cs')) {
         if (-not $archive.GetEntry("MorphocyteOS-$version-source/$name")) { throw "Missing source archive entry: $name" }
     }
 }

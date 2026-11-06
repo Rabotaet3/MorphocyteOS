@@ -8,7 +8,7 @@ namespace MorphocyteRouter;
 
 internal sealed record SettingsDialogSelection(string ConfigPath, string CorePath, string Theme, double InterfaceScale, bool AutoCheckUpdates, ImportedProfile? Imported = null, bool LaunchAtSignIn = false, bool AutoConnectOnStartup = true, ConfigurationPackage? Transfer = null, bool AutoReconnect = true);
 
-internal static class UtilityDialogs
+internal static partial class UtilityDialogs
 {
     private static Brush Ink => ThemeManager.GetBrush("ThemeText");
     private static Brush Muted => ThemeManager.GetBrush("ThemeMuted");
@@ -361,12 +361,13 @@ internal static class UtilityDialogs
         sourceButton.Click += (_, _) =>
         {
             if (!SavedProfileSelected()) { subscriptionFeedback.Text = "Сначала сохрани выбранный профиль."; return; }
-            owner.ShowSubscriptionSource(dialog);
-            subscriptionFeedback.Text = owner.HasSubscriptionSource ? "Ссылка сохранена." : "Ссылка не сохранена.";
+            var applied = owner.ShowSubscriptionSource(dialog);
+            subscriptionFeedback.Text = applied ? "Подписка применена; список серверов обновлён." : "Подписка не изменена.";
         };
         subscriptionActions.Children.Add(sourceButton); subscriptionActions.Children.Add(refreshSubscription);
         var subscriptionBody = new StackPanel(); subscriptionBody.Children.Add(subscriptionActions); subscriptionBody.Children.Add(subscriptionFeedback);
         profile.Children.Add(Card("ПОДПИСКА", null, subscriptionBody));
+        profile.Children.Add(DeviceIdentityCard(owner,dialog));
         var transferActions = new WrapPanel();
         var export = DialogChrome.MakeButton("Экспорт настроек", false);
         export.Margin = new Thickness(0, 0, 8, 4);

@@ -19,6 +19,7 @@ internal static class SubscriptionRefresh
         var newOrder = Sequence(next, "proxies").Children.OfType<YamlMappingNode>().Select(node =>
             ((YamlScalarNode)node.Children[new YamlScalarNode("name")]).Value!).ToList();
         if (newNodes.Count == 0) throw new InvalidDataException("Подписка не содержит доступных серверов. Профиль сохранён.");
+        if (oldNodes.Count == 0) selected = newOrder[0];
         var replacements = new Dictionary<string, YamlNode> { ["proxies"] = Sequence(next, "proxies") };
         if (prior.Children.TryGetValue(new YamlScalarNode("proxy-groups"), out var groupsNode) && groupsNode is YamlSequenceNode groups)
         {
@@ -27,15 +28,16 @@ internal static class SubscriptionRefresh
                 if (!group.Children.TryGetValue(new YamlScalarNode("proxies"), out var membersNode) || membersNode is not YamlSequenceNode members) continue;
                 var names = members.Children.OfType<YamlScalarNode>().Select(node => node.Value ?? "").ToList();
                 var oldMembers = names.Where(oldNodes.Contains).ToHashSet(StringComparer.Ordinal);
-                var followsSubscription = oldMembers.SetEquals(oldNodes) && oldMembers.Count > 0;
+                var isSelectedGroup = group.Children.TryGetValue(new YamlScalarNode("name"), out var groupName)
+                    && (groupName as YamlScalarNode)?.Value == document.VpnRoute;
+                var followsSubscription = oldMembers.SetEquals(oldNodes) && oldMembers.Count > 0 || oldNodes.Count == 0 && isSelectedGroup;
                 var newMembers = followsSubscription ? names.Where(name => !oldNodes.Contains(name)).Concat(newOrder).ToList()
                     : names.Where(name => !oldNodes.Contains(name) || newNodes.Contains(name)).ToList();
                 if (newMembers.Count == 0)
                     throw new InvalidDataException("После обновления одна из групп останется без серверов. Измени её состав перед обновлением; текущий профиль сохранён.");
-                // Keep a still available selection first, including when imported nodes were reordered.
-                var isSelectedGroup = group.Children.TryGetValue(new YamlScalarNode("name"), out var groupName)
-                    && (groupName as YamlScalarNode)?.Value == document.VpnRoute;
-                if (isSelectedGroup && newNodes.Contains(selected) && newMembers.Remove(selected)) newMembers.Insert(0, selected);
+                // Selection is persisted separately and applied only to runtime
+                // selectors. Keep the subscription's display order intact.
+                if (isSelectedGroup && oldNodes.Count == 0 && newMembers.Remove(selected)) newMembers.Insert(0, selected);
                 // A removed VPN selection must not silently fall back to DIRECT or REJECT.
                 if (isSelectedGroup && selectionRemoved && oldMembers.Contains(selected))
                 {

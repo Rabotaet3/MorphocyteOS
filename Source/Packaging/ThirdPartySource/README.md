@@ -1,5 +1,11 @@
 # Mihomo: исходный код, сборка и происхождение
 
+## Xray 26.10.31
+
+Комплектный `Engine/xray.exe` взят без изменений из официального `Xray-windows-64.zip` версии v26.10.31 (commit `a4a3dff`, Go 1.27.3). SHA-256 ZIP: `2e04a9995a6f2ad1b28c0bb25c708ecb2695e43a1c9c7889c4b6ac2b48cf7a6a`; SHA-256 EXE: `d5b558191cccb1e92a5772b68b8cab67717b26f634b0f15153215f65ae982a7e`.
+
+Официальный релиз: https://github.com/XTLS/Xray-core/releases/tag/v26.10.31 . Неизменённый snapshot исходников — `xray-v26.10.31.tar.gz`, SHA-256 `be44f95d497ad4ba6e9d1dcfbbd71e8e51f812aff077d4c15c9947eff5e3046a`. Зависимости закреплены в `go.mod` и `go.sum` этого snapshot. Лицензия MPL 2.0 приложена как `Licenses/Xray-MPL-2.0.txt`. Геоданные и Wintun из upstream ZIP не поставляются, поскольку вспомогательный процесс использует только локальные SOCKS-входы и подключения к VPN-серверам.
+
 ## sing-box 1.14.2
 
 Дополнительно поставляется неизменённое официальное Windows amd64 ядро sing-box (`af6e64c3b69e6132ebaee0e1a3d24e93903f6709`, Go 1.26.8, CGO отключён). Исходный snapshot — `sing-box-v1.14.2.tar.gz`; архив с vendored Go-зависимостями для Windows — `sing-box-v1.14.2-corresponding-source.tar.gz`, SHA-256 `c2b3d9ae082a364aa082e120931b1df44e68e63aa27c7ca51201b4ae19660d75`. Версии закреплены upstream в go.mod/go.sum и проверены `go mod verify`. Лицензионные уведомления сохранены в vendor и отдельно в `Licenses/SingBox-Go`.

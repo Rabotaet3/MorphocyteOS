@@ -83,6 +83,12 @@ internal sealed class CoreDiagnostics : IDisposable
         throw new InvalidDataException("Слишком много вложенных VPN-групп.");
     }
 
+    internal async Task<string> ReadImmediateSelectionAsync(string route,CancellationToken token)
+    {
+        using var proxy=await ReadJsonAsync("proxies/"+Uri.EscapeDataString(route),token);
+        return Text(proxy.RootElement,"now") is { Length:>0 } now?now:route;
+    }
+
     // Restore only selectors on a path below the main VPN group. Never apply a
     // remembered leaf to an unrelated group that happens to contain that server.
     internal async Task<bool> RestoreSelectionAsync(string group, string selection, CancellationToken token)

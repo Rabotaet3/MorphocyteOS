@@ -65,6 +65,11 @@ foreach ($name in @('Licenses', 'ThirdPartySource')) {
 $engineDestination = Join-Path $OutputPath 'ThirdPartySource/Engine'
 New-Item -ItemType Directory -Path $engineDestination -Force | Out-Null
 Copy-Item -LiteralPath $singBoxSource -Destination (Join-Path $engineDestination 'sing-box.exe')
+$xraySource = Join-Path $PSScriptRoot 'Packaging/Engine/xray.exe'
+if (-not (Test-Path -LiteralPath $xraySource) -or (Get-FileHash -LiteralPath $xraySource -Algorithm SHA256).Hash -ne 'D5B558191CCCB1E92A5772B68B8CAB67717B26F634B0F15153215F65AE982A7E') {
+    throw 'Missing or modified official Xray 26.10.31 executable.'
+}
+Copy-Item -LiteralPath $xraySource -Destination (Join-Path $engineDestination 'xray.exe')
 [xml]$project = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'MorphocyteRouter/MorphocyteRouter.csproj') -Raw
 $manifestFiles = @(Get-ChildItem -LiteralPath $OutputPath -Recurse -File | Sort-Object FullName | ForEach-Object {
     [ordered]@{

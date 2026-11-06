@@ -42,9 +42,12 @@ public partial class MainWindow
 
     private void RefreshConnectionCard()
     {
+        var servers=_document is { } document?VpnServerCatalog.Choices(document):Array.Empty<string>();
+        var remembered=RememberedVpnServer();
         EndpointText.Text = _document is null || !_document.HasVpnConnection ? "Нет подключения" : _selectedConnection.Length > 0
-            ? _selectedConnection : _document.ConnectionCount == 1 ? _document.Endpoint : "VPN-подключение";
+            ? _selectedConnection : servers.Contains(remembered,StringComparer.Ordinal)?remembered : _document.ConnectionCount == 1 ? _document.Endpoint : "Выбрать сервер";
         EndpointText.ToolTip = EndpointText.Text;
+        _subscriptionServers?.SetCurrent(_selectedConnection.Length>0?_selectedConnection:remembered);
     }
 
     private async void RefreshConnections_Click(object sender, System.Windows.RoutedEventArgs e) => await RefreshConnectionSnapshotAsync();

@@ -93,17 +93,22 @@ internal partial class Program
                 "real journal-tab click starts a smooth overlay while immediately selecting just the journal page");
             Check(!layer.IsHitTestVisible && !layer.Focusable && layer.HasAnimatedProperties,
                 "decorative transition cannot intercept pointer or keyboard interaction");
-            Check(host.RenderSize == originalSize && routes.Opacity == 1 && journal.Opacity == 1,
-                "page transition does not move layout, sidebar, or the real page opacity");
+            Check(host.RenderSize == originalSize && routes.Opacity == 1 && journal.Opacity == 0,
+                "page transition keeps layout still and hides incoming text until outgoing text disappears");
             layer.Visibility = Visibility.Hidden;
+            journal.Opacity=1;
             var incomingFrame = CapturePage();
+            journal.Opacity=0;
             layer.Visibility = Visibility.Visible;
-            await Task.Delay(60);
+            await Task.Delay(35);
             var middleOpacity = layer.Opacity;
             var middleFrame = CapturePage();
             Check(middleOpacity is > 0 and < 1 && ChangedPixels(firstFrame, middleFrame) > .01
                 && ChangedPixels(middleFrame, incomingFrame) > .01,
-                "rendered middle frame is an actual intermediate blend, neither an instant cut nor a delayed jump");
+                "outgoing page fades smoothly against the background without showing the incoming text");
+            Check(journal.Opacity==0,"outgoing phase never superimposes two pages of text");
+            await Task.Delay(75);
+            Check(!layer.IsVisible && journal.Opacity is >0 and <1,"incoming page fades in only after the outgoing snapshot is hidden");
             await Finish();
             Check(layer.Visibility == Visibility.Collapsed && image.Source is null && !layer.HasAnimatedProperties,
                 "completed fade releases its bitmap and animation clock");
@@ -173,6 +178,20 @@ internal partial class Program
                     await Finish();
                 }
             window.ApplyInterfaceScale(1); ThemeManager.Apply("Аврора"); await Idle();
+            foreach(var target in new[]{"SubscriptionPage","RoutesPage","JournalPage","RoutesPage","SubscriptionPage","JournalPage","SubscriptionPage"})
+            {
+                var tab=target switch { "SubscriptionPage"=>"SubscriptionTabButton","JournalPage"=>"JournalTabButton",_=>"RoutesTabButton" };
+                var incoming=(FrameworkElement)Field(target)!;
+                ((Button)Field(tab)!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                Check(incoming.IsVisible&&incoming.Opacity==0&&layer.IsVisible,$"{tab} starts with incoming content fully hidden");
+                await Task.Delay(30);
+                Check(incoming.Opacity==0,$"{tab} cannot double the outgoing text during its fade");
+                var deadline=DateTime.UtcNow.AddMilliseconds(220);
+                while(layer.IsVisible&&DateTime.UtcNow<deadline) await Task.Delay(5);
+                Check(!layer.IsVisible&&image.Source is null,$"{tab} removes the outgoing snapshot before revealing the incoming page");
+                await Finish();
+                Check(incoming.Opacity==1&&!incoming.HasAnimatedProperties,$"{tab} finishes with a sharp page and no retained animation clock");
+            }
             Check(File.ReadAllText(path) == initial && !((CoreProcessManager)Field("_core")!).HasTrackedProcess,
                 "decorative page transitions neither edit routing nor start a VPN");
             Invoke("AnimateMainPage", false);

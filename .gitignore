@@ -20,6 +20,7 @@ Thumbs.db
 !Source/MorphocyteRouter/Assets/profile-template.yaml
 **/settings.json
 **/settings.json.*
+**/subscription-device-id.dat
 **/router.log*
 **/portable.flag
 **/cache.db*

@@ -68,7 +68,7 @@ internal partial class Program
         Reject(link.Replace("path=%2Fws50", "path=ws50"), "WebSocket path requires a leading slash");
         Reject(link.Replace("&host=", "&unknown=1&host="), "unknown link parameters are not silently discarded");
         Reject(link.Replace("&host=", "&type=ws&host="), "duplicate link parameters are rejected");
-        Reject(link.Replace("type=ws", "type=xhttp"), "unsupported transports are explicitly rejected");
+        Check(Field(Proxy(ProfileImporter.Parse(link.Replace("type=ws", "type=xhttp")).Yaml), "type") == "xray", "XHTTP imports through the native Xray bridge");
         Reject(link.Replace("encryption=none", "encryption=unsupported"), "unsupported VLESS encryption is rejected");
         Reject("https://subscription.example/token", "HTTPS subscriptions are not downloaded unexpectedly");
         Reject("{bad json secret-token", "invalid JSON reports a safe error");
@@ -130,6 +130,10 @@ internal partial class Program
                 if (dialog is null) return;
                 timer.Stop(); seen = true;
                 var input = Descendants<TextBox>(dialog).Single(value => value.Name == "ImportProfileInput");
+                Check(!Descendants<CheckBox>(dialog).Any(value => value.Name == "ImportCompatibleSubset"),
+                    "compatible-part import no longer requires a confusing checkbox");
+                Check(!Descendants<CheckBox>(dialog).Any(value => value.Name == "ImportSubscriptionHwid"),
+                    "automatic app identity does not require a subscription checkbox");
                 var submit = Descendants<Button>(dialog).Single(value => Equals(value.Content, "СОЗДАТЬ ПРОФИЛЬ"));
                 input.Text = "https://127.0.0.1/private-token";
                 submit.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -138,6 +142,8 @@ internal partial class Program
                     && !Descendants<TextBlock>(dialog).Any(value => value.Text.Contains("private-token")), "HTTPS import shows safe error without leaking the URL");
                 input.Text = link;
                 dialog.UpdateLayout(); CaptureInteraction(dialog, Path.Combine(scratch, "profile-import-dialog.png"));
+                Check(input.ActualWidth > 250 && input.ActualHeight > 100 && submit.IsVisible,
+                    "simplified import dialog retains a usable input and submit layout");
                 Descendants<Button>(dialog).Single(value => Equals(value.Content, "СОЗДАТЬ ПРОФИЛЬ")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             };
             timer.Start();
@@ -149,6 +155,26 @@ internal partial class Program
             Check(ClashConfigDocument.Load(settings.ConfigPath).HasVpnConnection && settings.PreferredRoute == "VPN", "UI activates the imported profile and selects VPN for new rules");
             Check(AppSettings.Load(Path.Combine(scratch, "import-ui", "settings.json")).ConfigPath == settings.ConfigPath, "imported profile path is persisted across launches");
             var savedPath = settings.ConfigPath;
+            foreach (var acceptSubset in new[] { false, true })
+            {
+                var warningTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(70) };
+                warningTimer.Tick += (_, _) =>
+                {
+                    var notice = Application.Current.Windows.Cast<Window>().FirstOrDefault(value => value.Title == "НЕПОЛНЫЙ ИМПОРТ ПОДПИСКИ");
+                    if (notice is null) return;
+                    warningTimer.Stop();
+                    Check(Descendants<TextBlock>(notice).Any(value => value.Text.Contains("Пропущено записей: 1")),
+                        "incompatible entries are disclosed before accepting a partial subscription");
+                    Descendants<Button>(notice).Single(value => Equals(value.Content, acceptSubset ? "СОХРАНИТЬ ЧАСТЬ" : "ОТМЕНА"))
+                        .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                };
+                warningTimer.Start();
+                var decision = ProfileImportDialog.ConfirmCompatibility(window, new ImportedProfile("", "Подписка · серверов: 2", false)
+                    { CompatibilityWarnings = new[] { "Запись 2: неподдерживаемые параметры." }, AllowPartialSubscription = true });
+                warningTimer.Stop();
+                Check(decision == acceptSubset && settings.ConfigPath == savedPath && File.ReadAllText(oldTemplate) == oldText,
+                    "partial-import confirmation respects explicit accept/cancel without changing the current profile");
+            }
             var cancelTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
             cancelTimer.Tick += (_, _) => { var dialog = Application.Current.Windows.Cast<Window>().FirstOrDefault(value => value.Title == "ИМПОРТ ПРОФИЛЯ"); if (dialog is null) return; cancelTimer.Stop(); dialog.Close(); };
             cancelTimer.Start();

@@ -27,7 +27,37 @@ internal partial class Program
         {
             try
             {
-                if (args.Contains("--transition-only"))
+                if (args.Contains("--subscription-page-only"))
+                {
+                    var scratch = Path.Combine(AppContext.BaseDirectory, "integration-" + Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(scratch);
+                    Console.WriteLine($"TOTAL: {await RunSubscriptionPageChecks(scratch, args[0])} subscription-page checks passed.");
+                }
+                else if (args.Contains("--rule-interaction-only"))
+                {
+                    var scratch = Path.Combine(AppContext.BaseDirectory, "integration-" + Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(scratch);
+                    Console.WriteLine($"TOTAL: {await RunRuleInteractionChecks(scratch,args[0])} rule-interaction checks passed.");
+                }
+                else if (args.Contains("--server-picker-only"))
+                {
+                    var scratch = Path.Combine(AppContext.BaseDirectory, "integration-" + Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(scratch);
+                    Console.WriteLine($"TOTAL: {await RunServerPickerChecks(scratch, args[0])} server-picker checks passed.");
+                }
+                else if (args.Contains("--subscription-source-only"))
+                {
+                    var scratch = Path.Combine(AppContext.BaseDirectory, "integration-" + Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(scratch);
+                    Console.WriteLine($"TOTAL: {await RunSubscriptionSourceChecks(scratch, args[0])} subscription-source checks passed.");
+                }
+                else if (args.Contains("--profile-import-only"))
+                {
+                    var scratch = Path.Combine(AppContext.BaseDirectory, "integration-" + Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(scratch);
+                    Console.WriteLine($"TOTAL: {await RunProfileImportChecks(scratch, args[0])} profile-import checks passed.");
+                }
+                else if (args.Contains("--transition-only"))
                 {
                     var scratch = Path.Combine(AppContext.BaseDirectory, "integration-" + Guid.NewGuid().ToString("N"));
                     Directory.CreateDirectory(scratch);
@@ -108,7 +138,13 @@ internal partial class Program
             passed += await RunDiagnosticDialogChecks(scratch, fakeExe);
             if (visualOnly) { await RunVisualLayoutChecks(scratch, fakeExe); return; }
             passed += await RunImprovementChecks(scratch, fakeExe);
+            passed += await RunSubscriptionSourceChecks(scratch, fakeExe);
+            passed += await RunServerPickerChecks(scratch, fakeExe);
             if (improvementsOnly) { Console.WriteLine($"TOTAL: {passed} improvement checks passed."); return; }
+            var subscriptionTheme=ThemeManager.CurrentTheme;
+            var subscriptionScale=UiScaleManager.CurrentScale;
+            try { passed+=await RunSubscriptionPageChecks(scratch,fakeExe); }
+            finally { UiScaleManager.CurrentScale=subscriptionScale; ThemeManager.Apply(subscriptionTheme); }
             passed += await RunVisualLayoutChecks(scratch, fakeExe);
             passed += await RunConnectionJournalChecks(scratch, fakeExe);
             passed += await RunConnectionRouteChecks(scratch, fakeExe);

@@ -180,7 +180,7 @@ internal sealed class VpnSpeedTest : IDisposable
 
     internal static string FailureMessage(Exception error) => error switch
     {
-        HttpRequestException { HttpRequestError: HttpRequestError.ProxyTunnelError } => "Ядро не открыло канал замера. Перезапусти VPN и повтори попытку.",
+        HttpRequestException { HttpRequestError: HttpRequestError.ProxyTunnelError } => "Не удалось подключиться к сервису замера через выбранный VPN-сервер. Проверь подключение или выбери другой сервер.",
         HttpRequestException { StatusCode: HttpStatusCode.Forbidden or HttpStatusCode.TooManyRequests } => "Сервис замера ограничил запросы с этого VPN. Попробуй позже или выбери другой сервер.",
         HttpRequestException { HttpRequestError: HttpRequestError.SecureConnectionError } => "Не удалось установить защищённое соединение с сервисом замера.",
         HttpRequestException => "Сервис замера недоступен через выбранный VPN. Попробуй позже или другой сервер.",

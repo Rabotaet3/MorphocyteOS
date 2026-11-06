@@ -25,6 +25,13 @@ SHA-256 официального ZIP: `c2d8bfff918755808781dfdeeb8581b6c91eb3a24
 
 `libcronet.dll` из upstream ZIP не входит в комплект: Naive outbound в этом адаптере не поддерживается.
 
+## Xray 26.10.31
+
+`ThirdPartySource/Engine/xray.exe` — неизменённый официальный Windows x64 бинарник XTLS/Xray-core v26.10.31 (commit `a4a3dff`). SHA-256: `d5b558191cccb1e92a5772b68b8cab67717b26f634b0f15153215f65ae982a7e`.
+Он запускается отдельным вспомогательным процессом только для подключений с расширениями Xray; собственный TUN Xray не используется. Геоданные, Wintun и запускающие скрипты из upstream ZIP не включены.
+
+Лицензия MPL 2.0: `Licenses/Xray-MPL-2.0.txt`. Исходники этой версии: `ThirdPartySource/xray-v26.10.31.tar.gz` (SHA-256 `be44f95d497ad4ba6e9d1dcfbbd71e8e51f812aff077d4c15c9947eff5e3046a`). Исходники и метаданные Go-зависимостей доступны в https://github.com/XTLS/Xray-core/tree/v26.10.31 ; оригинальный бинарный пакет — https://github.com/XTLS/Xray-core/releases/tag/v26.10.31 .
+
 ## YamlDotNet 18.1.0
 
 MIT, полный текст: `Licenses/YamlDotNet-18.1.0-MIT.txt`. Версия и commit подтверждены метаданными восстановленного NuGet-пакета; лицензия взята из upstream commit `748334a8fa7c227740018b284b71ad95cc6b7fc7`.

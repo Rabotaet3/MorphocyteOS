@@ -24,7 +24,7 @@ internal static class SubscriptionImporter
         ConnectTimeout = TimeSpan.FromSeconds(5), ConnectCallback = ConnectResolverAsync
     }) { Timeout = Timeout.InfiniteTimeSpan };
 
-    private static HttpClient CreateClient()
+    internal static HttpClient CreateClient()
     {
         var handler = new SocketsHttpHandler
         {
@@ -37,7 +37,7 @@ internal static class SubscriptionImporter
     }
 
     internal static async Task<ImportedProfile> ImportAsync(string input, CancellationToken token,
-        HttpClient? client = null, TimeSpan? timeout = null)
+        HttpClient? client = null, TimeSpan? timeout = null, string? hardwareId = null, bool allowPartial = false, bool headersOnly = false)
     {
         var text = input.Trim();
         if (!text.StartsWith("https://", StringComparison.OrdinalIgnoreCase))
@@ -47,16 +47,23 @@ internal static class SubscriptionImporter
             return await Task.Run(() => ProfileImporter.Parse(text), token);
         }
         var uri = ValidateUrl(text);
+        var origin = uri;
+        if (hardwareId is not null && !Guid.TryParseExact(hardwareId, "D", out _))
+            throw new InvalidDataException("Некорректный HWID MorphocyteOS.");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(timeout ?? TimeSpan.FromSeconds(30));
+        var happFormat=false;
+        string? originalView=null;
         try
         {
             for (var redirects = 0; ; redirects++)
             {
                 deadline.Token.ThrowIfCancellationRequested();
                 using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-                request.Headers.UserAgent.ParseAdd("MorphocyteOS/" + BuildInfo.Version);
+                request.Headers.UserAgent.ParseAdd((happFormat?"Happ/compatible (Windows) ":"")+"MorphocyteOS/" + BuildInfo.Version);
+                request.Headers.Add("x-device-os","Windows");
                 request.Headers.Accept.ParseAdd("application/yaml, application/json, text/plain, */*");
+                if (hardwareId is not null) request.Headers.Add("x-hwid", hardwareId);
                 using var response = await (client ?? Client).SendAsync(request,
                     HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
                 if ((int)response.StatusCode is 301 or 302 or 303 or 307 or 308)
@@ -64,10 +71,14 @@ internal static class SubscriptionImporter
                     if (redirects >= 5 || response.Headers.Location is not { } location)
                         throw new InvalidDataException("Сервер подписки возвращает слишком много или некорректные перенаправления.");
                     uri = ValidateUrl(new Uri(uri, location).AbsoluteUri);
+                    if (hardwareId is not null && (uri.IdnHost != origin.IdnHost || uri.Port != origin.Port))
+                        throw new InvalidDataException("Подписка перенаправляет на другой сервер. HWID ему не передан; укажи конечную HTTPS-ссылку отдельно.");
                     continue;
                 }
                 if (!response.IsSuccessStatusCode)
                     throw new InvalidDataException($"Сервер подписки ответил HTTP {(int)response.StatusCode}. Проверь ссылку и срок действия подписки.");
+                var metadata=SubscriptionMetadata.FromResponse(response);
+                if(headersOnly) return new ImportedProfile("","",false) { Metadata=metadata };
                 if (response.Content.Headers.ContentLength is > MaxBytes)
                     throw new InvalidDataException("Подписка слишком большая: допустимо до 1 МБ.");
                 await using var stream = await response.Content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false);
@@ -80,7 +91,23 @@ internal static class SubscriptionImporter
                     data.Write(buffer, 0, count);
                 }
                 var downloaded = Utf8.GetString(data.ToArray());
-                return (await Task.Run(() => ParseContent(downloaded), deadline.Token).ConfigureAwait(false)) with { SubscriptionUrl = text };
+                // Section-heading placeholders indicate that this endpoint offers
+                // a simplified share-link view. Negotiate the complete desktop
+                // format once, keeping our real product name and the same ID.
+                if(!happFormat && NeedsDesktopJson(downloaded)) { originalView=downloaded; happFormat=true; continue; }
+                var parsed=await Task.Run(() => ParseContent(downloaded, allowPartial), deadline.Token).ConfigureAwait(false);
+                if(originalView is not null && parsed.Yaml.Length>0)
+                {
+                    ImportedProfile? originalProfile=null;
+                    try { originalProfile=ParseContent(originalView,allowPartial:true); }
+                    catch(InvalidDataException) { }
+                    if(originalProfile is not null)
+                    {
+                        var merged=Finish(SubscriptionFormats.Merge(originalProfile,parsed),parsed.InsecureTls||originalProfile.InsecureTls);
+                        parsed=merged with { CompatibilityWarnings=parsed.CompatibilityWarnings.Concat(originalProfile.CompatibilityWarnings).ToArray(),AllowPartialSubscription=allowPartial };
+                    }
+                }
+                return parsed with { SubscriptionUrl = text, SendHardwareId = hardwareId is not null, AllowPartialSubscription = allowPartial, Metadata=metadata };
             }
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
@@ -227,13 +254,14 @@ internal static class SubscriptionImporter
             && !(b[0] == 0x20 && b[1] == 0x01 && (b[2] == 0 && b[3] == 0 || b[2] == 0x0d && b[3] == 0xb8));
     }
 
-    internal static ImportedProfile ParseContent(string text)
+    internal static ImportedProfile ParseContent(string text, bool allowPartial = false)
     {
         text = text.Trim().TrimStart('\uFEFF').Trim();
         if (text.Length == 0) throw new InvalidDataException("Сервер вернул пустую подписку.");
-        if (text.Length > ProfileImporter.MaxInputLength) throw new InvalidDataException("В подписке слишком много текста: допустимо до 256 тысяч символов.");
+        if (text.Length > MaxBytes || text.Length > ProfileImporter.MaxInputLength && !text.StartsWith('[')) throw new InvalidDataException("В подписке слишком много текста.");
         if (text.StartsWith('<')) throw new InvalidDataException("Ссылка ведёт на веб-страницу, а не на подписку. Нужна прямая ссылка на конфигурацию.");
         if (text.StartsWith('{')) return ProfileImporter.Parse(text);
+        if (text.StartsWith('[')) return ParseJsonProfiles(text,allowPartial);
         if (Regex.IsMatch(text, @"\A[A-Za-z0-9+/_=\-\s]+\z") && !text.Contains(':'))
         {
             try
@@ -247,20 +275,74 @@ internal static class SubscriptionImporter
         }
         var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
             .Select(line => line.Trim()).Where(line => line.Length > 0 && !line.StartsWith('#')).ToArray();
-        if (lines.Length > 0 && Regex.IsMatch(lines[0], @"\A[A-Za-z][A-Za-z0-9+.-]*://")) return ParseLinks(lines);
+        if (lines.Length > 0 && Regex.IsMatch(lines[0], @"\A[A-Za-z][A-Za-z0-9+.-]*://")) return ParseLinks(lines, allowPartial);
         return ParseYaml(text);
     }
 
-    private static ImportedProfile ParseLinks(string[] lines)
+    private static bool NeedsDesktopJson(string text)
     {
+        try
+        {
+            if(text.Length>MaxBytes || text.TrimStart().StartsWith('[') || text.TrimStart().StartsWith('{')) return false;
+            if(!text.Contains(':'))
+            {
+                var encoded=string.Concat(text.Where(ch=>!char.IsWhiteSpace(ch))).Replace('-','+').Replace('_','/');
+                text=Utf8.GetString(Convert.FromBase64String(encoded.PadRight((encoded.Length+3)/4*4,'=')));
+            }
+            return text.Split(['\r','\n'],StringSplitOptions.RemoveEmptyEntries).Any(line=>Uri.TryCreate(line.Trim(),UriKind.Absolute,out var uri)
+                && uri.Scheme is "vless" or "hysteria2" or "hy2" && SubscriptionInformation.IsSection(uri));
+        }
+        catch { return false; }
+    }
+
+    private static ImportedProfile ParseJsonProfiles(string text,bool allowPartial)
+    {
+        using var json=JsonDocument.Parse(text,new JsonDocumentOptions { MaxDepth=48 });
+        if(json.RootElement.GetArrayLength() is 0 or >MaxNodes) throw new InvalidDataException("JSON-подписка не содержит допустимого количества серверов.");
+        var nodes=new List<YamlMappingNode>(); var warnings=new List<string>(); var index=0;
+        foreach(var profile in json.RootElement.EnumerateArray())
+        {
+            index++;
+            try
+            {
+                if(XrayFullProfile.IsFull(profile))
+                {
+                    var imported=XrayFullProfile.Import(profile.GetRawText()); var root=LoadYaml(imported.Yaml);
+                    nodes.Add((YamlMappingNode)((YamlSequenceNode)root.Children[new YamlScalarNode("proxies")]).Children[0]);
+                }
+                else nodes.Add(XrayJsonConnection.Import(profile,index));
+            }
+            catch(Exception error) when(error is InvalidDataException or JsonException or InvalidOperationException or KeyNotFoundException)
+            {
+                if(!allowPartial) throw new InvalidDataException($"Запись {index}: некорректный или неподдерживаемый JSON-профиль. Подписка не применена.");
+                warnings.Add($"Запись {index}: неподдерживаемый JSON-профиль; запись не импортирована.");
+            }
+        }
+        return Finish(nodes,false) with { AllowPartialSubscription=allowPartial,CompatibilityWarnings=warnings.ToArray() };
+    }
+
+    private static ImportedProfile ParseLinks(string[] lines, bool allowPartial)
+    {
+        if (lines.Any(line => line.Contains("HWID", StringComparison.OrdinalIgnoreCase)
+            || Uri.TryCreate(line, UriKind.Absolute, out var link) && Uri.UnescapeDataString(link.Fragment).Contains("HWID", StringComparison.OrdinalIgnoreCase))
+            && lines.All(line => Uri.TryCreate(line, UriKind.Absolute, out var link) && link.IsLoopback))
+            throw new InvalidDataException("Провайдер вернул заглушку вместо серверов: требуется HWID. MorphocyteOS передаёт свой ID автоматически. Проверь свободные места устройств в подписке или обратись к провайдеру.");
         if (lines.Length > MaxNodes) throw new InvalidDataException("В подписке больше 200 серверов. Нужен меньший список.");
         var nodes = new List<YamlMappingNode>();
         var insecure = false;
-        foreach (var line in lines)
+        var warnings = new List<string>();
+        var headings=0;
+        for (var index = 0; index < lines.Length; index++)
         {
-            if (!line.StartsWith("vless://", StringComparison.OrdinalIgnoreCase))
-                throw new InvalidDataException("В списке есть не-VLESS ссылки. Для других протоколов выбери формат подписки Clash/Mihomo (YAML).");
-            var imported = ProfileImporter.Parse(line);
+            var line = lines[index];
+            if(Uri.TryCreate(line,UriKind.Absolute,out var section) && SubscriptionInformation.IsSection(section)) { headings++; continue; }
+            ImportedProfile imported;
+            try { imported = ProfileImporter.Parse(line); }
+            catch (Exception error) when (allowPartial && error is InvalidDataException or UriFormatException)
+            {
+                warnings.Add($"Запись {index + 1}: неподдерживаемый тип ссылки или параметры; запись не импортирована.");
+                continue;
+            }
             insecure |= imported.InsecureTls;
             var root = LoadYaml(imported.Yaml);
             var node = (YamlMappingNode)((YamlSequenceNode)root.Children[new YamlScalarNode("proxies")]).Children[0];
@@ -268,7 +350,9 @@ internal static class SubscriptionImporter
             node.Children[new YamlScalarNode("name")] = new YamlScalarNode(ProfileImporter.ConnectionNameFromLink(uri, $"Сервер {nodes.Count + 1}"));
             nodes.Add(node);
         }
-        return Finish(nodes, insecure) with { NeedsName = lines.Length == 1 && !ProfileImporter.HasLinkName(new Uri(lines[0])) };
+        if (nodes.Count == 0) throw new InvalidDataException("В подписке нет совместимых серверов. Текущий профиль сохранён; параметры не были упрощены.");
+        return Finish(nodes, insecure, headings) with { NeedsName = lines.Length == 1 && !ProfileImporter.HasLinkName(new Uri(lines[0])),
+            AllowPartialSubscription = allowPartial, CompatibilityWarnings = warnings.ToArray() };
     }
 
     private static ImportedProfile ParseYaml(string text)
@@ -295,8 +379,10 @@ internal static class SubscriptionImporter
         return Finish(nodes, insecure) with { NeedsName = needsName };
     }
 
-    private static ImportedProfile Finish(List<YamlMappingNode> nodes, bool insecure)
+    private static ImportedProfile Finish(List<YamlMappingNode> nodes, bool insecure, int headings=0)
     {
+        headings+=nodes.RemoveAll(SubscriptionInformation.IsSection);
+        if(nodes.Count==0) throw new InvalidDataException("В подписке найдены только служебные разделители. Нет серверов для подключения.");
         var names = new HashSet<string>(new[] { "VPN", "DIRECT", "REJECT", "GLOBAL" }, StringComparer.OrdinalIgnoreCase);
         foreach (var node in nodes)
         {
@@ -307,7 +393,8 @@ internal static class SubscriptionImporter
             for (var number = 2; !names.Add(unique); number++) unique = $"{name} ({number})";
             node.Children[new YamlScalarNode("name")] = new YamlScalarNode(unique);
         }
-        return ProfileImporter.BuildConnections(nodes, $"Подписка · серверов: {nodes.Count}", insecure);
+        return ProfileImporter.BuildConnections(nodes, $"Подписка · серверов: {nodes.Count}"+
+            (headings>0?$" · служебных разделителей: {headings}":""), insecure);
     }
 
     private static string? Scalar(YamlMappingNode node, string key)

@@ -4,7 +4,7 @@ using System.IO;
 namespace MorphocyteRouter;
 
 /// <summary>Owns the core until exit is confirmed, including failed and timed-out stops.</summary>
-public sealed class CoreProcessManager
+public sealed partial class CoreProcessManager
 {
     private readonly SemaphoreSlim _gate = new(1, 1);
     private readonly Func<Process, Task> _terminate;
@@ -20,7 +20,7 @@ public sealed class CoreProcessManager
     public event Action<string>? Output;
     public event Action? Exited;
     public event Action<string>? StartupFailed;
-    public bool HasTrackedProcess => _process is not null;
+    public bool HasTrackedProcess => _process is not null || _bridges.Length>0;
     public int? TrackedProcessId => _process?.Id;
     public bool IsRunning
     {
@@ -159,7 +159,7 @@ public sealed class CoreProcessManager
         {
             ReapExited();
             var process = _process;
-            if (process is null) return true;
+            if (process is null) return await StopBridgeAsync();
             _pendingStop ??= _terminate(process);
             try { await _pendingStop.WaitAsync(_stopTimeout); }
             catch (TimeoutException)
@@ -172,10 +172,10 @@ public sealed class CoreProcessManager
                 Output?.Invoke("Не удалось остановить ядро: " + ex.Message);
                 _pendingStop = null; // Permit a later retry while retaining process ownership.
                 ReapExited();
-                return _process is null;
+                return _process is null && await StopBridgeAsync();
             }
             ReapExited();
-            return _process is null;
+            return _process is null && await StopBridgeAsync();
         }
         finally { _gate.Release(); }
     }
@@ -317,7 +317,11 @@ public sealed class CoreProcessManager
             }
         }
     }
-    private void HandleExit(object? sender, EventArgs e) => Exited?.Invoke();
+    private void HandleExit(object? sender, EventArgs e)
+    {
+        Exited?.Invoke();
+        if (_bridges.FirstOrDefault() is { } bridge) _ = StopBridgeAfterMainExitAsync(bridge);
+    }
 
     public static async Task<(bool Success, string Message)> ValidateAsync(string executable, string configPath,
         CancellationToken cancellationToken = default, bool fullTunnel = false)
@@ -329,7 +333,12 @@ public sealed class CoreProcessManager
             {
                 using var api = new CoreDiagnostics();
                 var document = ClashConfigDocument.Load(configPath);
-                await File.WriteAllTextAsync(temporary, SingBoxConfig.Build(document, api.Port, api.Secret, fullTunnel), cancellationToken);
+                using var bridge = XrayBridgePlan.Create(document);
+                var runtime = SingBoxConfig.Build(document, api.Port, api.Secret, fullTunnel, xrayEndpoints: bridge.Endpoints);
+                if (bridge.HasConnections) bridge.ConfigureDnsFromRuntime(runtime);
+                var xrayCheck = await bridge.ValidateAsync(cancellationToken);
+                if (!xrayCheck.Success) return xrayCheck;
+                await File.WriteAllTextAsync(temporary, runtime, cancellationToken);
                 return await ValidateAsync(executable, temporary, cancellationToken);
             }
             catch (InvalidDataException error) { return (false, error.Message); }
@@ -349,6 +358,7 @@ public sealed class CoreProcessManager
         }
         var info = CreateStartInfo(executable, configPath);
         if (CoreBackend.IsSingBox(executable)) info.ArgumentList[0] = "check";
+        else if (IsXray(executable)) info.ArgumentList.Insert(1, "-test");
         else info.ArgumentList.Insert(0, "-t");
         using var process = new Process { StartInfo = info };
         process.Start();
@@ -360,6 +370,7 @@ public sealed class CoreProcessManager
         {
             await process.WaitForExitAsync(timeout.Token);
             var text = (await stdout + Environment.NewLine + await stderr).Trim();
+            if (IsXray(executable)) return (process.ExitCode == 0, process.ExitCode == 0 ? "Xray: конфигурация проверена." : "Xray не принял параметры подключения. Профиль не изменён.");
             if (CoreBackend.IsSingBox(executable)) return (process.ExitCode == 0, process.ExitCode == 0 ? "sing-box: конфигурация проверена." : "sing-box не принял конфигурацию. Проверь совместимость профиля; исходный YAML не изменён.");
             return (process.ExitCode == 0, text.Length > 4000 ? text[^4000..] : text);
         }
@@ -392,6 +403,11 @@ public sealed class CoreProcessManager
             info.ArgumentList.Add("run");
             info.ArgumentList.Add("-D"); info.ArgumentList.Add(profileDirectory);
             info.ArgumentList.Add("-c"); info.ArgumentList.Add(fullConfigPath);
+            return info;
+        }
+        if (IsXray(executable))
+        {
+            info.ArgumentList.Add("run"); info.ArgumentList.Add("-config"); info.ArgumentList.Add(fullConfigPath);
             return info;
         }
         // Mihomo's configuration file (-f) and data home (-d) are independent.

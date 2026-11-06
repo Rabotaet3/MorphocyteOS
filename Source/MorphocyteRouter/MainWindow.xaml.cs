@@ -213,7 +213,7 @@ public partial class MainWindow : Window
         if (_closing || !await _operations.WaitAsync(0)) return;
         _busy = true;
         UpdateControls();
-        try { await action(); }
+        try { await StopSubscriptionProbesAsync(); await action(); }
         catch (OperationCanceledException) when (_closing) { }
         catch (Exception ex)
         {
@@ -271,6 +271,7 @@ public partial class MainWindow : Window
         RefreshRuleHistoryControls();
         RefreshJournalRouteControls();
         RefreshConnectionCard();
+        RefreshSubscriptionServers();
         RefreshTrayState();
         RefreshTunnelControls();
     }
@@ -318,6 +319,8 @@ public partial class MainWindow : Window
             SetLog(restoreDraft ? "Восстановлен черновик этого профиля."
                 : draft is not null ? "YAML изменён извне. Старый черновик сохранён, но не загружен."
                 : $"Профиль загружен: {_rules.Count} редактируемых правил; {loaded.PreservedRuleCount} прочих сохранены в исходном порядке.");
+            RefreshSubscriptionBanner();
+            if(_desktopIntegrationEnabled) _=RefreshSubscriptionInformationAsync();
         }
         finally { _loading = false; }
     }
@@ -413,6 +416,8 @@ public partial class MainWindow : Window
 
     private async Task StartCoreAsync(bool applyDraft = true)
     {
+        // A manual PING session may still be shutting down after its dialog
+        // closes. Finish our own cleanup before looking for other VPN engines.
         var startToken = _recoveringConnection && _recoveryLifetime is not null ? _recoveryLifetime.Token : _lifetime.Token;
         if (_closing) return;
         if (_core.IsRunning) return;
@@ -445,11 +450,21 @@ public partial class MainWindow : Window
             _runtimeConfigPath = Path.Combine(runtimeDirectory, "active-" + Guid.NewGuid().ToString("N") + (CoreBackend.IsSingBox(_settings.CorePath) ? ".json" : ".yaml"));
             var selectedServer = _settings.ProfileSelections.GetValueOrDefault(_settings.ConfigPath)
                 ?? _settings.ProfileSubscriptions.GetValueOrDefault(_settings.ConfigPath)?.SelectedServer;
-            await File.WriteAllTextAsync(_runtimeConfigPath, CoreBackend.RuntimeText(_settings.CorePath, actual, _diagnostics, _settings.FullTunnel, _speedTestPort, selectedServer), new UTF8Encoding(false), startToken);
-            var runtimeCheck = await CoreProcessManager.ValidateAsync(_settings.CorePath, _runtimeConfigPath, startToken, fullTunnel: _settings.FullTunnel);
-            if (!runtimeCheck.Success) throw new InvalidDataException(runtimeCheck.Message);
-            await _core.StartAsync(CoreProcessManager.CreateStartInfo(_settings.CorePath, _runtimeConfigPath,
-                Path.GetDirectoryName(_settings.ConfigPath)), startToken);
+            var usableServer=SubscriptionInformation.ResolveSelection(actual,selectedServer);
+            var replacedHeading=usableServer!=selectedServer;
+            selectedServer=usableServer;
+            XrayBridgePlan? bridgePlan = XrayBridgePlan.Create(actual);
+            try
+            {
+                await File.WriteAllTextAsync(_runtimeConfigPath, CoreBackend.RuntimeText(_settings.CorePath, actual, _diagnostics, _settings.FullTunnel, _speedTestPort, selectedServer, bridgePlan.Endpoints,
+                    selectionCacheId:"morphocyte-selection-v1-"+_settings.ServerSelectionRevision.ToString(System.Globalization.CultureInfo.InvariantCulture)), new UTF8Encoding(false), startToken);
+                var runtimeCheck = await CoreProcessManager.ValidateAsync(_settings.CorePath, _runtimeConfigPath, startToken, fullTunnel: _settings.FullTunnel);
+                if (!runtimeCheck.Success) throw new InvalidDataException(runtimeCheck.Message);
+                var ownedPlan = bridgePlan; bridgePlan = null;
+                await _core.StartWithBridgeAsync(CoreProcessManager.CreateStartInfo(_settings.CorePath, _runtimeConfigPath,
+                    Path.GetDirectoryName(_settings.ConfigPath)), ownedPlan, startToken);
+            }
+            finally { bridgePlan?.Dispose(); }
             if (CoreBackend.IsSingBox(_settings.CorePath) || _settings.FullTunnel || !string.IsNullOrWhiteSpace(selectedServer))
             {
                 // A live process alone does not mean its TUN / API is ready.
@@ -480,6 +495,11 @@ public partial class MainWindow : Window
             SetStatus("ЯДРО РАБОТАЕТ", _settings.FullTunnel ? "TUN · весь трафик через VPN" : "Правила VPN загружены", "#73FFBF");
             LastIssueText.Text = "";
             ConnectionStateText.Text = "VPN ещё не проверен";
+            if(replacedHeading)
+            {
+                _selectedConnection=selectedServer??"";
+                SetLog("Вместо служебного разделителя подписки выбран первый настоящий сервер. Проверь подключение; сервер можно изменить в списке.");
+            }
             StartTrafficMonitor();
             _ = RefreshConnectionSnapshotAsync();
         }
@@ -1038,7 +1058,10 @@ public partial class MainWindow : Window
             {
                 _settings.PreferredRoute = "VPN";
                 if (importedProfile.SubscriptionUrl is { } url)
-                    _settings.ProfileSubscriptions[preparedPath!] = SubscriptionSource.Create(url, DateTimeOffset.UtcNow);
+                {
+                    _settings.ProfileSubscriptions[preparedPath!] = SubscriptionSource.Create(url, DateTimeOffset.UtcNow, importedProfile.SendHardwareId, importedProfile.AllowPartialSubscription);
+                    _settings.ProfileSubscriptions[preparedPath!].Metadata=importedProfile.Metadata;
+                }
                 await LoadConfigAsync(preparedPath!);
             }
             else if (profileChanged) await LoadConfigAsync(requestedProfile);
@@ -1203,6 +1226,7 @@ public partial class MainWindow : Window
         try
         {
             if (_dirty) await SaveDraftAsync();
+            await StopSubscriptionProbesAsync();
             if (!await StopCoreAsync())
                 throw new IOException("Окно оставлено открытым: ядро ещё не завершено. Повтори остановку.");
             _uptimeTimer.Stop();

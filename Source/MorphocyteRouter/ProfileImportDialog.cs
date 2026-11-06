@@ -7,6 +7,13 @@ namespace MorphocyteRouter;
 
 internal static class ProfileImportDialog
 {
+    internal static bool ConfirmCompatibility(Window owner, ImportedProfile profile) => profile.CompatibilityWarnings.Count == 0
+        || UtilityDialogs.ShowConfirm(owner, "НЕПОЛНЫЙ ИМПОРТ ПОДПИСКИ",
+            profile.Description + ". Пропущено записей: " + profile.CompatibilityWarnings.Count + ".\n\n"
+            + string.Join("\n", profile.CompatibilityWarnings)
+            + "\n\nПараметры оставшихся серверов сохранены без упрощений. Сохранить только совместимую часть?",
+            "СОХРАНИТЬ ЧАСТЬ", "ОТМЕНА");
+
     internal static ImportedProfile? Show(Window owner)
     {
         var dialog = DialogChrome.CreateWindow(owner, "ИМПОРТ ПРОФИЛЯ", 690, 600, 570, 440, ResizeMode.CanResize);
@@ -20,14 +27,14 @@ internal static class ProfileImportDialog
         body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var explanation = new TextBlock
         {
-            Text = "Вставь HTTPS-ссылку на подписку, ссылку vless:// или JSON Xray. Программа создаст отдельный YAML с TUN и списком серверов.",
+            Text = "Вставь HTTPS-ссылку на подписку, ссылку VLESS / Hysteria2 или JSON Xray. Программа создаст отдельный YAML с TUN и списком серверов.",
             FontSize = 13, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 10)
         };
         explanation.SetResourceReference(TextBlock.ForegroundProperty, "ThemeText");
         body.Children.Add(explanation);
         var note = new TextBlock
         {
-            Text = "Из подписки импортируются серверы, а не чужие правила или DNS. Поддерживаются YAML Clash/Mihomo, списки VLESS и Base64. По умолчанию трафик идёт напрямую; нужные приложения добавь в правила VPN.",
+            Text = "Из подписки импортируются серверы, а не чужие правила или DNS. Поддерживаются YAML Clash/Mihomo, списки VLESS / Hysteria2 и Base64. По умолчанию трафик идёт напрямую; нужные приложения добавь в правила VPN.",
             FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 14)
         };
         note.SetResourceReference(TextBlock.ForegroundProperty, "ThemeMuted");
@@ -41,9 +48,10 @@ internal static class ProfileImportDialog
             ToolTip = "HTTPS-ссылка отправляется серверу подписки и его перенаправлениям. При VPN Fake-IP имя сайта проверяется через DNS Cloudflare/Google без пути и ключа ссылки. Не делись ссылкой: в ней может быть ключ доступа."
         };
         Grid.SetRow(input, 2); body.Children.Add(input);
-        var status = new TextBlock { Text = "", FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 12, 0, 0) };
+        var status = new TextBlock { Text = "", FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 8, 0, 0) };
         status.SetResourceReference(TextBlock.ForegroundProperty, "ThemeMuted");
-        Grid.SetRow(status, 3); body.Children.Add(status);
+        var details = new StackPanel(); details.Children.Add(status);
+        Grid.SetRow(details, 3); body.Children.Add(details);
         var load = DialogChrome.MakeButton("Открыть JSON", false);
         load.Click += (_, _) =>
         {
@@ -70,8 +78,12 @@ internal static class ProfileImportDialog
             status.Text = text.TrimStart().StartsWith("https://", StringComparison.OrdinalIgnoreCase) ? "Загружаю подписку… Можно отменить." : "Проверяю подключение…";
             try
             {
-                var profile = await SubscriptionImporter.ImportAsync(text, lifetime.Token);
+                var profile = await SubscriptionImporter.ImportAsync(text, lifetime.Token,
+                    hardwareId: text.TrimStart().StartsWith("https://", StringComparison.OrdinalIgnoreCase)
+                        ? SubscriptionDeviceIdentity.GetOrCreate((owner as MainWindow ?? owner.Owner as MainWindow)?.SubscriptionIdentityDirectory ?? AppSettings.LocalDataDirectory) : null,
+                    allowPartial: true);
                 if (lifetime.IsCancellationRequested) return;
+                if (!ConfirmCompatibility(dialog, profile)) return;
                 if (profile.NeedsName)
                 {
                     var name = ConnectionNameDialog.Show(dialog);
@@ -122,6 +134,8 @@ internal static class ProfileStorage
         var path = Path.Combine(directory, name + ".yaml");
         try
         {
+            if (!CoreBackend.IsSingBox(corePath) && XrayBridgePlan.ContainsConnections(ClashConfigDocument.Parse(candidate, imported.Yaml)))
+                throw new InvalidDataException("Эта подписка содержит подключения Xray. Выбери основное ядро sing-box в настройках и повтори импорт.");
             await Task.Run(() => AtomicFile.Write(candidate, imported.Yaml), token);
             var check = await CoreProcessManager.ValidateAsync(corePath, candidate, token, fullTunnel: fullTunnel);
             if (!check.Success) throw new InvalidDataException("Выбранное ядро не приняло импортированный профиль. Проверь совместимость ядра и параметры ссылки. Текущий профиль не изменён.");

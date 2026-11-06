@@ -62,7 +62,8 @@ internal static class IncrementalUpdate
             executableName.IndexOfAny(Path.GetInvalidFileNameChars()) >= 0 ||
             executableName.Equals("installer.exe", StringComparison.OrdinalIgnoreCase) ||
             executableName.Equals("mihomo.exe", StringComparison.OrdinalIgnoreCase) ||
-            executableName.Equals("sing-box.exe", StringComparison.OrdinalIgnoreCase))
+            executableName.Equals("sing-box.exe", StringComparison.OrdinalIgnoreCase) ||
+            executableName.Equals("xray.exe", StringComparison.OrdinalIgnoreCase))
             throw new InvalidDataException("Неподдерживаемый файл приложения.");
         var original = UpdatePackage.ResolveFile(directory, "MorphocyteOS.exe");
         var path = Path.Combine(Path.GetDirectoryName(original)!, executableName);

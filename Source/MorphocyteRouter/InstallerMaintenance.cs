@@ -244,7 +244,8 @@ internal static class InstallerMaintenance
 
     private static bool IsBundledCore(string relative) => relative.Equals("mihomo.exe", StringComparison.OrdinalIgnoreCase) ||
         relative.Equals("sing-box.exe", StringComparison.OrdinalIgnoreCase) ||
-        relative.Equals("ThirdPartySource/Engine/sing-box.exe", StringComparison.OrdinalIgnoreCase);
+        relative.Equals("ThirdPartySource/Engine/sing-box.exe", StringComparison.OrdinalIgnoreCase) ||
+        relative.Equals("ThirdPartySource/Engine/xray.exe", StringComparison.OrdinalIgnoreCase);
 
     private static string ValidateRoot(string installDirectory, string appId, string helperExecutable)
     {
