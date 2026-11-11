@@ -46,69 +46,45 @@ internal static class SubscriptionImporter
                 throw new InvalidDataException("Для подписки нужна HTTPS-ссылка: HTTP не защищает ключи подключения.");
             return await Task.Run(() => ProfileImporter.Parse(text), token);
         }
-        var uri = ValidateUrl(text);
-        var origin = uri;
+        var origin = ValidateUrl(text);
         if (hardwareId is not null && !Guid.TryParseExact(hardwareId, "D", out _))
             throw new InvalidDataException("Некорректный HWID MorphocyteOS.");
         using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
         deadline.CancelAfter(timeout ?? TimeSpan.FromSeconds(30));
-        var happFormat=false;
-        string? originalView=null;
         try
         {
-            for (var redirects = 0; ; redirects++)
+            var http = client ?? Client;
+            var (body, metadata) = await DownloadViewAsync(http, origin, hardwareId, desktop: false, headersOnly, deadline.Token).ConfigureAwait(false);
+            if (headersOnly) return new ImportedProfile("", "", false) { Metadata = metadata };
+            var tryDesktop = NeedsDesktopJson(body, hardwareId is not null);
+            ImportedProfile? parsed = null;
+            try { parsed = await Task.Run(() => ParseContent(body, allowPartial), deadline.Token).ConfigureAwait(false); }
+            catch (InvalidDataException) when (tryDesktop) { }
+            if (tryDesktop)
             {
-                deadline.Token.ThrowIfCancellationRequested();
-                using var request = new HttpRequestMessage(HttpMethod.Get, uri);
-                request.Headers.UserAgent.ParseAdd((happFormat?"Happ/compatible (Windows) ":"")+"MorphocyteOS/" + BuildInfo.Version);
-                request.Headers.Add("x-device-os","Windows");
-                request.Headers.Accept.ParseAdd("application/yaml, application/json, text/plain, */*");
-                if (hardwareId is not null) request.Headers.Add("x-hwid", hardwareId);
-                using var response = await (client ?? Client).SendAsync(request,
-                    HttpCompletionOption.ResponseHeadersRead, deadline.Token).ConfigureAwait(false);
-                if ((int)response.StatusCode is 301 or 302 or 303 or 307 or 308)
+                try
                 {
-                    if (redirects >= 5 || response.Headers.Location is not { } location)
-                        throw new InvalidDataException("Сервер подписки возвращает слишком много или некорректные перенаправления.");
-                    uri = ValidateUrl(new Uri(uri, location).AbsoluteUri);
-                    if (hardwareId is not null && (uri.IdnHost != origin.IdnHost || uri.Port != origin.Port))
-                        throw new InvalidDataException("Подписка перенаправляет на другой сервер. HWID ему не передан; укажи конечную HTTPS-ссылку отдельно.");
-                    continue;
-                }
-                if (!response.IsSuccessStatusCode)
-                    throw new InvalidDataException($"Сервер подписки ответил HTTP {(int)response.StatusCode}. Проверь ссылку и срок действия подписки.");
-                var metadata=SubscriptionMetadata.FromResponse(response);
-                if(headersOnly) return new ImportedProfile("","",false) { Metadata=metadata };
-                if (response.Content.Headers.ContentLength is > MaxBytes)
-                    throw new InvalidDataException("Подписка слишком большая: допустимо до 1 МБ.");
-                await using var stream = await response.Content.ReadAsStreamAsync(deadline.Token).ConfigureAwait(false);
-                using var data = new MemoryStream();
-                var buffer = new byte[8192];
-                int count;
-                while ((count = await stream.ReadAsync(buffer, deadline.Token).ConfigureAwait(false)) > 0)
-                {
-                    if (data.Length + count > MaxBytes) throw new InvalidDataException("Подписка слишком большая: допустимо до 1 МБ.");
-                    data.Write(buffer, 0, count);
-                }
-                var downloaded = Utf8.GetString(data.ToArray());
-                // Section-heading placeholders indicate that this endpoint offers
-                // a simplified share-link view. Negotiate the complete desktop
-                // format once, keeping our real product name and the same ID.
-                if(!happFormat && NeedsDesktopJson(downloaded)) { originalView=downloaded; happFormat=true; continue; }
-                var parsed=await Task.Run(() => ParseContent(downloaded, allowPartial), deadline.Token).ConfigureAwait(false);
-                if(originalView is not null && parsed.Yaml.Length>0)
-                {
-                    ImportedProfile? originalProfile=null;
-                    try { originalProfile=ParseContent(originalView,allowPartial:true); }
-                    catch(InvalidDataException) { }
-                    if(originalProfile is not null)
+                    var (desktop, desktopMetadata) = await DownloadViewAsync(http, origin, hardwareId, desktop: true, headersOnly: false, deadline.Token).ConfigureAwait(false);
+                    if (parsed is null || IsJsonView(DecodeSubscriptionBody(desktop)))
                     {
-                        var merged=Finish(SubscriptionFormats.Merge(originalProfile,parsed),parsed.InsecureTls||originalProfile.InsecureTls);
-                        parsed=merged with { CompatibilityWarnings=parsed.CompatibilityWarnings.Concat(originalProfile.CompatibilityWarnings).ToArray(),AllowPartialSubscription=allowPartial };
+                        var additional = await Task.Run(() => ParseContent(desktop, allowPartial), deadline.Token).ConfigureAwait(false);
+                        parsed = parsed is null ? additional : Finish(SubscriptionFormats.Merge(parsed, additional),
+                            parsed.InsecureTls || additional.InsecureTls) with
+                        {
+                            CompatibilityWarnings = additional.CompatibilityWarnings.Concat(parsed.CompatibilityWarnings).ToArray()
+                        };
+                        metadata = desktopMetadata;
                     }
                 }
-                return parsed with { SubscriptionUrl = text, SendHardwareId = hardwareId is not null, AllowPartialSubscription = allowPartial, Metadata=metadata };
+                catch (Exception error) when (parsed is not null && !token.IsCancellationRequested &&
+                    error is InvalidDataException or HttpRequestException or IOException or JsonException or DecoderFallbackException or UriFormatException or OperationCanceledException)
+                {
+                    parsed = parsed with { CompatibilityWarnings = parsed.CompatibilityWarnings.Append(
+                        "Не удалось проверить дополнительный JSON-список провайдера. В обычном списке может быть меньше серверов.").ToArray() };
+                }
             }
+            token.ThrowIfCancellationRequested();
+            return parsed! with { SubscriptionUrl = text, SendHardwareId = hardwareId is not null, AllowPartialSubscription = allowPartial, Metadata = metadata };
         }
         catch (OperationCanceledException) when (!token.IsCancellationRequested)
         { throw new InvalidDataException("Сервер подписки не ответил за отведённое время. Попробуй ещё раз."); }
@@ -120,6 +96,47 @@ internal static class SubscriptionImporter
         { throw new InvalidDataException("Сервер вернул текст в неподдерживаемой кодировке. Нужна подписка UTF-8."); }
         catch (UriFormatException)
         { throw new InvalidDataException("Сервер подписки вернул некорректное перенаправление."); }
+    }
+
+    private static async Task<(string Body, SubscriptionMetadata Metadata)> DownloadViewAsync(HttpClient client, Uri origin,
+        string? hardwareId, bool desktop, bool headersOnly, CancellationToken token)
+    {
+        var uri = origin;
+        for (var redirects = 0; ; redirects++)
+        {
+            token.ThrowIfCancellationRequested();
+            using var request = new HttpRequestMessage(HttpMethod.Get, uri);
+            request.Headers.UserAgent.ParseAdd((desktop ? "Happ/compatible (Windows) " : "") + "MorphocyteOS/" + BuildInfo.Version);
+            request.Headers.Add("x-device-os", "Windows");
+            request.Headers.Accept.ParseAdd("application/yaml, application/json, text/plain, */*");
+            if (hardwareId is not null) request.Headers.Add("x-hwid", hardwareId);
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
+            if ((int)response.StatusCode is 301 or 302 or 303 or 307 or 308)
+            {
+                if (redirects >= 5 || response.Headers.Location is not { } location)
+                    throw new InvalidDataException("Сервер подписки возвращает слишком много или некорректные перенаправления.");
+                uri = ValidateUrl(new Uri(uri, location).AbsoluteUri);
+                if (hardwareId is not null && (uri.IdnHost != origin.IdnHost || uri.Port != origin.Port))
+                    throw new InvalidDataException("Подписка перенаправляет на другой сервер. HWID ему не передан; укажи конечную HTTPS-ссылку отдельно.");
+                continue;
+            }
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidDataException($"Сервер подписки ответил HTTP {(int)response.StatusCode}. Проверь ссылку и срок действия подписки.");
+            var metadata = SubscriptionMetadata.FromResponse(response);
+            if (headersOnly) return ("", metadata);
+            if (response.Content.Headers.ContentLength is > MaxBytes)
+                throw new InvalidDataException("Подписка слишком большая: допустимо до 1 МБ.");
+            await using var stream = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
+            using var data = new MemoryStream();
+            var buffer = new byte[8192];
+            int count;
+            while ((count = await stream.ReadAsync(buffer, token).ConfigureAwait(false)) > 0)
+            {
+                if (data.Length + count > MaxBytes) throw new InvalidDataException("Подписка слишком большая: допустимо до 1 МБ.");
+                data.Write(buffer, 0, count);
+            }
+            return (Utf8.GetString(data.ToArray()), metadata);
+        }
     }
 
     internal static Uri ValidateUrl(string text)
@@ -260,37 +277,49 @@ internal static class SubscriptionImporter
         if (text.Length == 0) throw new InvalidDataException("Сервер вернул пустую подписку.");
         if (text.Length > MaxBytes || text.Length > ProfileImporter.MaxInputLength && !text.StartsWith('[')) throw new InvalidDataException("В подписке слишком много текста.");
         if (text.StartsWith('<')) throw new InvalidDataException("Ссылка ведёт на веб-страницу, а не на подписку. Нужна прямая ссылка на конфигурацию.");
+        text = DecodeSubscriptionBody(text);
         if (text.StartsWith('{')) return ProfileImporter.Parse(text);
-        if (text.StartsWith('[')) return ParseJsonProfiles(text,allowPartial);
-        if (Regex.IsMatch(text, @"\A[A-Za-z0-9+/_=\-\s]+\z") && !text.Contains(':'))
-        {
-            try
-            {
-                var encoded = string.Concat(text.Where(ch => !char.IsWhiteSpace(ch))).Replace('-', '+').Replace('_', '/');
-                encoded = encoded.PadRight((encoded.Length + 3) / 4 * 4, '=');
-                text = Utf8.GetString(Convert.FromBase64String(encoded)).Trim();
-            }
-            catch (Exception ex) when (ex is FormatException or DecoderFallbackException)
-            { throw new InvalidDataException("Не удалось прочитать Base64-подписку."); }
-        }
+        if (text.StartsWith('[')) return ParseJsonProfiles(text, allowPartial);
         var lines = text.Split(new[] { '\r', '\n' }, StringSplitOptions.RemoveEmptyEntries)
             .Select(line => line.Trim()).Where(line => line.Length > 0 && !line.StartsWith('#')).ToArray();
         if (lines.Length > 0 && Regex.IsMatch(lines[0], @"\A[A-Za-z][A-Za-z0-9+.-]*://")) return ParseLinks(lines, allowPartial);
         return ParseYaml(text);
     }
 
-    private static bool NeedsDesktopJson(string text)
+    private static string DecodeSubscriptionBody(string text)
+    {
+        var body = text.Trim().TrimStart('\uFEFF').Trim();
+        if (!Regex.IsMatch(body, @"\A[A-Za-z0-9+/_=\-\s]+\z")) return body;
+        try
+        {
+            var encoded = string.Concat(body.Where(ch => !char.IsWhiteSpace(ch))).Replace('-', '+').Replace('_', '/');
+            encoded = encoded.PadRight((encoded.Length + 3) / 4 * 4, '=');
+            return Utf8.GetString(Convert.FromBase64String(encoded)).Trim().TrimStart('\uFEFF').Trim();
+        }
+        catch (Exception error) when (error is FormatException or DecoderFallbackException)
+        { throw new InvalidDataException("Не удалось прочитать Base64-подписку."); }
+    }
+
+    private static bool IsJsonView(string text)
+    {
+        var body = text.TrimStart().TrimStart('\uFEFF').TrimStart();
+        return body.StartsWith('[') || body.StartsWith('{');
+    }
+
+    private static bool NeedsDesktopJson(string text, bool probeLinkList)
     {
         try
         {
-            if(text.Length>MaxBytes || text.TrimStart().StartsWith('[') || text.TrimStart().StartsWith('{')) return false;
-            if(!text.Contains(':'))
+            if (text.Length > MaxBytes) return false;
+            text = DecodeSubscriptionBody(text);
+            if (IsJsonView(text)) return false;
+            var links = 0;
+            foreach (var line in text.Split(['\r', '\n'], StringSplitOptions.RemoveEmptyEntries))
             {
-                var encoded=string.Concat(text.Where(ch=>!char.IsWhiteSpace(ch))).Replace('-','+').Replace('_','/');
-                text=Utf8.GetString(Convert.FromBase64String(encoded.PadRight((encoded.Length+3)/4*4,'=')));
+                if (!Uri.TryCreate(line.Trim(), UriKind.Absolute, out var uri) || uri.Scheme is not ("vless" or "hysteria2" or "hy2")) continue;
+                if (SubscriptionInformation.IsSection(uri) || probeLinkList && ++links >= 2) return true;
             }
-            return text.Split(['\r','\n'],StringSplitOptions.RemoveEmptyEntries).Any(line=>Uri.TryCreate(line.Trim(),UriKind.Absolute,out var uri)
-                && uri.Scheme is "vless" or "hysteria2" or "hy2" && SubscriptionInformation.IsSection(uri));
+            return false;
         }
         catch { return false; }
     }
@@ -332,6 +361,7 @@ internal static class SubscriptionImporter
         var insecure = false;
         var warnings = new List<string>();
         var headings=0;
+        var needsName = false;
         for (var index = 0; index < lines.Length; index++)
         {
             var line = lines[index];
@@ -346,12 +376,13 @@ internal static class SubscriptionImporter
             insecure |= imported.InsecureTls;
             var root = LoadYaml(imported.Yaml);
             var node = (YamlMappingNode)((YamlSequenceNode)root.Children[new YamlScalarNode("proxies")]).Children[0];
-            var uri = new Uri(line);
-            node.Children[new YamlScalarNode("name")] = new YamlScalarNode(ProfileImporter.ConnectionNameFromLink(uri, $"Сервер {nodes.Count + 1}"));
+            needsName = imported.NeedsName;
+            if (needsName)
+                node.Children[new YamlScalarNode("name")] = new YamlScalarNode($"Сервер {nodes.Count + 1}");
             nodes.Add(node);
         }
         if (nodes.Count == 0) throw new InvalidDataException("В подписке нет совместимых серверов. Текущий профиль сохранён; параметры не были упрощены.");
-        return Finish(nodes, insecure, headings) with { NeedsName = lines.Length == 1 && !ProfileImporter.HasLinkName(new Uri(lines[0])),
+        return Finish(nodes, insecure, headings) with { NeedsName = lines.Length == 1 && needsName,
             AllowPartialSubscription = allowPartial, CompatibilityWarnings = warnings.ToArray() };
     }
 

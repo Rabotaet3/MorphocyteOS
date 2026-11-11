@@ -26,15 +26,9 @@ internal static class SubscriptionFormats
         }
         var known=nodes.Select(Key).ToHashSet(StringComparer.Ordinal);
         foreach(var node in originals)
-        {
-            if(!known.Add(Key(node))) continue;
-            if(TryOutbound(node,out var outbound))
-            {
-                using var json=JsonDocument.Parse(new JsonObject { ["remarks"]=Text(node,"name"),["outbounds"]=new JsonArray(outbound) }.ToJsonString());
-                nodes.Add(XrayJsonConnection.Import(json.RootElement,nodes.Count+1));
-            }
-            else nodes.Add(node);
-        }
+            // The canonical outbound is only a comparison key. Keep the
+            // original engine and transport for nodes unique to the link view.
+            if(known.Add(Key(node))) nodes.Add(node);
         return nodes;
     }
 

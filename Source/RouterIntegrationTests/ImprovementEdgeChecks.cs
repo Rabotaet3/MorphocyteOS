@@ -69,8 +69,13 @@ internal partial class Program
             var savedBefore = File.ReadAllText(path); var draftBefore = settings.GetDraft(path)!.Rules[0].Route;
             await Call("StartCoreAsync", false);
             using var good = new HttpClient(new DiagnosticHandler(_ => new(HttpStatusCode.OK) { Content = new StringContent(fresh, Encoding.UTF8) }));
-            Check(await window.RefreshSubscriptionAsync(default, good) && core.IsRunning,
-                "refreshing an active subscription restarts the owned core after validation");
+            var refreshConfirmation = CloseDialog("ИЗМЕНИЛСЯ СПИСОК СЕРВЕРОВ", "ОБНОВИТЬ");
+            try
+            {
+                Check(await window.RefreshSubscriptionAsync(default, good) && core.IsRunning,
+                    "refreshing an active subscription restarts the owned core after validation and confirmation");
+            }
+            finally { refreshConfirmation.Stop(); }
             Check(settings.GetDraft(path)!.Rules[0].Route == draftBefore && Rules()[0].Route == draftBefore
                 && File.ReadAllText(path).Contains("keep.example,REJECT"),
                 "active subscription refresh does not apply pending routing edits");

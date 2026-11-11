@@ -346,6 +346,20 @@ YamlMappingNode Root(string text) { var yaml = new YamlStream(); yaml.Load(new S
 YamlSequenceNode Nodes(ImportedProfile profile) => (YamlSequenceNode)Root(profile.Yaml).Children[new YamlScalarNode("proxies")];
 string Name(YamlNode node) => ((YamlScalarNode)((YamlMappingNode)node).Children[new YamlScalarNode("name")]).Value!;
 var two = SubscriptionImporter.ParseContent(first + "\r\n" + second);
+string EncodeLink(string value) => Convert.ToBase64String(Encoding.UTF8.GetBytes(value)).TrimEnd('=').Replace('+', '-').Replace('/', '_');
+var vmess = "vmess://" + EncodeLink("""{"v":"2","ps":"VMess Europe","add":"vmess.example","port":443,"id":"12345678-1234-4234-8234-123456789abc","aid":0,"net":"ws","host":"vmess.example","path":"/ws","tls":"tls"}""");
+const string trojan = "trojan://p%3Aword@trojan.example:443?security=tls&sni=trojan.example&type=grpc&serviceName=fixture&mode=gun#Trojan";
+var shadowsocks = "ss://" + EncodeLink("aes-256-gcm:p:word") + "@ss.example:8388#Shadowsocks";
+var socks = "socks://" + EncodeLink("username:p:word@socks.example:1080") + "#SOCKS";
+var mixedLinks = SubscriptionImporter.ParseContent(EncodeLink(string.Join('\n', first, vmess, trojan, shadowsocks, socks)), allowPartial: true);
+Check(mixedLinks.CompatibilityWarnings.Count == 0
+    && Nodes(mixedLinks).Children.Select(Name).SequenceEqual(new[] { "Europe", "VMess Europe", "Trojan", "Shadowsocks", "SOCKS" }),
+    "a Base64 subscription imports all supported mixed link protocols and keeps VMess names");
+Check(!SubscriptionImporter.ParseContent(vmess).NeedsName, "a standalone VMess record uses its embedded name");
+Check(Nodes(SubscriptionImporter.ParseContent(EncodeLink("[" + FullProfileChecks.Fixture() + "]"))).Children.Count == 1,
+    "Base64-wrapped Xray JSON subscriptions retain the automatic profile");
+Check(SubscriptionImporter.ParseContent(first + "\n" + shadowsocks.Replace("#Shadowsocks", "?plugin=unsupported#Shadowsocks"), allowPartial: true).CompatibilityWarnings.Count == 1,
+    "a Shadowsocks link with unsupported plugin is reported instead of silently losing the plugin");
 const string hy2Link = "hy2://user%3Afixture-password@hy.example:8443/?sni=hy.example&obfs=salamander&obfs-password=fixture-obfs#Hysteria";
 var hy2 = ProfileImporter.Parse(hy2Link);
 var hy2Node = (YamlMappingNode)Nodes(hy2).Children[0];
@@ -542,15 +556,15 @@ Directory.CreateDirectory(scratch);
 try
 {
     var corePath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../Packaging/Engine/mihomo.exe"));
-    foreach (var profile in new[] { two, yamlImport, hy2, compatiblePart })
+    foreach (var profile in new[] { two, yamlImport, hy2, compatiblePart, mixedLinks })
     {
         var file = Path.Combine(scratch, Guid.NewGuid().ToString("N") + ".yaml");
         File.WriteAllText(file, profile.Yaml);
         var validation = await CoreProcessManager.ValidateAsync(corePath, file, default);
         Check(validation.Success, "actual Mihomo validates imported subscription without starting VPN");
         var singBoxPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../Packaging/Engine/sing-box.exe"));
-        if (ReferenceEquals(profile, hy2) || ReferenceEquals(profile, compatiblePart))
-            Check((await CoreProcessManager.ValidateAsync(singBoxPath, file, default)).Success, "actual sing-box validates Hysteria2 and mixed compatible profiles without starting TUN");
+        if (ReferenceEquals(profile, hy2) || ReferenceEquals(profile, compatiblePart) || ReferenceEquals(profile, mixedLinks))
+            Check((await CoreProcessManager.ValidateAsync(singBoxPath, file, default)).Success, "actual sing-box validates mixed subscriptions without starting TUN");
     }
 }
 finally { Directory.Delete(scratch, recursive: true); }

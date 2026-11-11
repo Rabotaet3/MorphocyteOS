@@ -41,7 +41,21 @@ internal partial class Program
             Check(tun.GetProperty("mtu").GetInt32() == 1500 && tun.GetProperty("stack").GetString() == stack, "explicit TUN MTU and stack survive translation: " + stack);
             await nativeCheck(text, "real sing-box validates explicit TUN settings: " + stack);
         }
-        foreach (var option in new[] { "mtu: 0", "mtu: 1279", "mtu: 65536", "mtu: abc", "stack: unknown" })
+        var bypass = Doc("tun:\n route-exclude-address: [192.0.2.42/32]\n inet4-route-exclude-address: [192.0.2.42/32, 198.51.100.0/24]\n"
+            + " inet6-route-exclude-address: ['2001:db8::42/128']\nrules:\n - MATCH,DIRECT\n");
+        foreach (var full in new[] { false, true })
+        {
+            var text = SingBoxConfig.Build(bypass, api.Port, api.Secret, full);
+            using var json = JsonDocument.Parse(text);
+            var tun = json.RootElement.GetProperty("inbounds").EnumerateArray().Single(item => item.GetProperty("type").GetString() == "tun");
+            Check(full ? !tun.TryGetProperty("route_exclude_address", out _)
+                : tun.GetProperty("route_exclude_address").EnumerateArray().Select(address => address.GetString())
+                    .Order().SequenceEqual(new[] { "192.0.2.42/32", "198.51.100.0/24", "2001:db8::42/128" }),
+                "address exclusions merge IPv4 and IPv6 without duplicates in rules mode only, full TUN=" + full);
+            await nativeCheck(text, "real sing-box accepts generated TUN exclusion configuration, full TUN=" + full);
+        }
+        foreach (var option in new[] { "mtu: 0", "mtu: 1279", "mtu: 65536", "mtu: abc", "stack: unknown",
+            "route-exclude-address: '192.0.2.42/32'", "route-exclude-address: [fixture.invalid]" })
         {
             try { SingBoxConfig.Build(Doc("tun: {" + option + "}\nrules:\n - MATCH,DIRECT\n"), api.Port, api.Secret, false); throw new Exception("Invalid TUN accepted"); }
             catch (InvalidDataException) { Check(true, "invalid TUN setting fails closed: " + option); }

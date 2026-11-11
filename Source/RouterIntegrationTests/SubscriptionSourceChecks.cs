@@ -65,6 +65,34 @@ internal partial class Program
                 && settings.ProfileSubscriptions[profilePath].SendHardwareId,"new source and both automatic subscription defaults persist together");
             Check(File.ReadAllText(profilePath).Contains("keep.example,VPN") && ((TextBlock)Field("EndpointText")).Text=="Beta","source replacement preserves routing and refreshes the selected connection card");
             var stable=File.ReadAllText(profilePath);
+            async Task CheckDeclinedRefresh(string response, string expectedPrompt, string description)
+            {
+                using var client = new HttpClient(new SourceCheckHandler((_, _) =>
+                    Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(response) })));
+                var sawPrompt = false;
+                var promptTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
+                promptTimer.Tick += (_, _) =>
+                {
+                    var dialog = Application.Current.Windows.Cast<Window>()
+                        .FirstOrDefault(window => window.Title == "ИЗМЕНИЛСЯ СПИСОК СЕРВЕРОВ");
+                    if (dialog is null) return;
+                    sawPrompt = Descendants<TextBlock>(dialog).Any(block => block.Text.Contains(expectedPrompt));
+                    Descendants<Button>(dialog).Single(button => Equals(button.Content, "ОТМЕНА"))
+                        .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+                };
+                promptTimer.Start();
+                try
+                {
+                    using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(15));
+                    var refreshed = await window.RefreshSubscriptionAsync(deadline.Token, client);
+                    Check(sawPrompt && !refreshed && File.ReadAllText(profilePath) == stable, description);
+                }
+                finally { promptTimer.Stop(); }
+            }
+            await CheckDeclinedRefresh(original, "Количество серверов уменьшится с 2 до 1.",
+                "declining a smaller subscription response keeps the previous server list");
+            await CheckDeclinedRefresh(fresh.Replace("Gamma", "Delta"), "Добавится серверов — 1. Исчезнет — 1.",
+                "removing a server requires confirmation even when another server keeps the total unchanged");
             using var nativeBad=new HttpClient(new SourceCheckHandler((_,_)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content=new StringContent(fresh.Replace("new.example","INVALID.example")) })));
             var bad=await Change(uiUrl,default,nativeBad);
             Check(!bad.Applied && settings.ProfileSubscriptions[profilePath].ReadUrl()==newUrl && File.ReadAllText(profilePath)==stable,"native validation failure cannot replace the remembered source or servers");
@@ -147,6 +175,36 @@ internal partial class Program
                     && File.ReadAllText(profilePath)==beforeCancel,"settings write failure restores both the previous servers and their original source association");
             }
             finally { typeof(AppSettings).GetField("_storagePath",BindingFlags.Instance|BindingFlags.NonPublic)!.SetValue(settings,settingsPath); }
+
+            var flags = BindingFlags.Instance | BindingFlags.NonPublic;
+            var current = ClashConfigDocument.Load(profilePath);
+            var savedRules = current.Rules.Select(rule => rule.Copy()).ToList();
+            savedRules[0].Folder = "Исключения";
+            savedRules.Add(new DomainRule { Kind = "DOMAIN", Value = "disabled.example", Route = "DIRECT", Folder = "Исключения", Enabled = false });
+            settings.PutFolderOrder(profilePath, new[] { "Исключения" });
+            settings.PutRuleState(profilePath, current.SourceHash, savedRules);
+            await (Task)typeof(MainWindow).GetMethod("LoadConfigAsync", flags)!.Invoke(window, new object[] { profilePath })!;
+            var editorRules = (System.Collections.ObjectModel.ObservableCollection<DomainRule>)Field("_rules");
+            await window.ChangeRuleRouteAsync(editorRules[0], "DIRECT");
+            Check((await Change(newUrl, default, finalClient)).Applied
+                && editorRules.Any(rule => rule.Value == "keep.example" && rule.Route == "DIRECT")
+                && editorRules.Any(rule => rule.Value == "disabled.example" && !rule.Enabled)
+                && File.ReadAllText(profilePath).Contains("keep.example,VPN"), "replacing a URL in place preserves both applied rules and the separate draft");
+            var retainedYaml = File.ReadAllText(profilePath);
+            var downloaded = SubscriptionImporter.ParseContent(fresh.Replace("new.example", "third.example")) with { SubscriptionUrl = uiUrl };
+            var choice = new SettingsDialogSelection(profilePath, fakeExe, settings.Theme, settings.InterfaceScale, false, Imported: downloaded);
+            await (Task<SettingsDialogSelection>)typeof(MainWindow).GetMethod("ApplySettingsSelectionCoreAsync", flags)!
+                .Invoke(window, new object[] { choice })!;
+            var newPath = settings.ConfigPath;
+            var persisted = AppSettings.Load(settingsPath);
+            Check(newPath != profilePath && File.ReadAllText(profilePath) == retainedYaml
+                && File.ReadAllText(newPath).Contains("keep.example,VPN") && File.ReadAllText(newPath).Contains("third.example")
+                && persisted.ProfileSubscriptions[newPath].ReadUrl() == uiUrl,
+                "importing a replacement subscription through settings carries applied YAML rules into the new profile");
+            Check(persisted.GetFolderOrder(newPath).SequenceEqual(new[] { "Исключения" })
+                && persisted.GetRuleState(newPath)!.Rules.Any(rule => rule.Value == "disabled.example" && !rule.Enabled)
+                && persisted.GetDraft(newPath)!.Rules.Any(rule => rule.Value == "keep.example" && rule.Route == "DIRECT"),
+                "the new subscription retains folders and disabled rules while keeping pending edits unapplied");
         }
         finally
         {

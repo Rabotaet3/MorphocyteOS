@@ -178,7 +178,7 @@ internal static class TaskbarIconIntegration
             Set(store, 5, id); Marshal.ThrowExceptionForHR(store.Commit());
             // Only this exact matching shortcut is saved; target, arguments,
             // working directory, elevation and other flags are left intact.
-            var temporary = path + ".morphocyte-" + Guid.NewGuid().ToString("N") + ".tmp";
+            var temporary = Path.Combine(Path.GetDirectoryName(Path.GetFullPath(path))!, Path.GetRandomFileName());
             try
             {
                 ((IPersistFile)link).Save(temporary, false);

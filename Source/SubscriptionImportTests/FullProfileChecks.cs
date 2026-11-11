@@ -63,6 +63,24 @@ internal static class FullProfileChecks
                 try { ProfileImporter.Parse(changed.ToJsonString()); throw new Exception("Unsafe full profile accepted"); }
                 catch(InvalidDataException) { check(true,"unsupported code, local file dependencies and administrative settings fail before startup"); }
             }
+            var mixedAuto = source.DeepClone();
+            mixedAuto["remarks"] = "VLESS and Hysteria2 Auto";
+            var hysteria = XrayProfile.Parse("hysteria2://fixture@127.0.0.1:10?sni=fixture.example").Outbound;
+            hysteria["tag"] = "t2";
+            mixedAuto["outbounds"]![1] = hysteria;
+            var mixedSubscription = SubscriptionImporter.ParseContent(new JsonArray(mixedAuto).ToJsonString(), allowPartial: true);
+            var mixedAutoDocument = ClashConfigDocument.Parse(Path.Combine(home, "mixed-auto.yaml"), mixedSubscription.Yaml);
+            using (var mixedAutoPlan = XrayBridgePlan.Create(mixedAutoDocument))
+            {
+                check(mixedSubscription.CompatibilityWarnings.Count == 0 && mixedAutoDocument.ConnectionCount == 1,
+                    "an automatic subscription profile can combine VLESS and Hysteria2");
+                var runtime = JsonNode.Parse(mixedAutoPlan.ProcessPlans.Single().Configuration)!;
+                check(runtime["outbounds"]![1]!["protocol"]!.ToString() == "hysteria"
+                    && JsonNode.DeepEquals(runtime["routing"]!["balancers"], mixedAuto["routing"]!["balancers"])
+                    && JsonNode.DeepEquals(runtime["burstObservatory"], mixedAuto["burstObservatory"]),
+                    "mixed automatic profiles retain Hysteria2, balancing and observations");
+                check((await mixedAutoPlan.ValidateAsync(default)).Success, "bundled Xray validates mixed automatic profiles");
+            }
             var simple=(JsonObject)source.DeepClone(); simple["remarks"]="Ordinary JSON"; simple.Remove("burstObservatory"); simple["routing"]!.AsObject().Remove("balancers");
             simple["outbounds"]!.AsArray().RemoveAt(1);
             simple["outbounds"]![0]!["mux"]=new JsonObject { ["enabled"]=true,["concurrency"]=-1,["xudpConcurrency"]=16,["xudpProxyUDP443"]="reject" };
@@ -144,6 +162,42 @@ internal static class FullProfileChecks
             var refreshed=await SubscriptionImporter.ImportAsync("https://subscription.example/account",default,client,hardwareId:id);
             check(requests==2 && refreshed.SubscriptionUrl=="https://subscription.example/account"
                 && ClashConfigDocument.Parse("negotiated.yaml",refreshed.Yaml).ConnectionCount==3,"the user's original URL loads complete automatic profiles without saving an alternate URL");
+
+            var plainList = string.Join('\n', Enumerable.Range(1, 28).Select(index =>
+                $"vless://12345678-1234-4234-8234-123456789abc@standard{index}.example:443?security=none#Standard{index}"));
+            var desktopList = new JsonArray(Enumerable.Range(1, 35).Select(index =>
+            {
+                var item = equivalent.DeepClone();
+                item["remarks"] = $"Desktop{index}";
+                return item;
+            }).ToArray());
+            var requestedFormats = new List<bool>();
+            using var split = new HttpClient(new FakeHandler((request, _) =>
+            {
+                var desktop = request.Headers.UserAgent.ToString().Contains("Happ/compatible");
+                requestedFormats.Add(desktop);
+                return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {
+                    Content = new StringContent(Convert.ToBase64String(Encoding.UTF8.GetBytes(desktop ? desktopList.ToJsonString() : plainList)))
+                });
+            }));
+            var combined = await SubscriptionImporter.ImportAsync("https://subscription.example/account", default, split, hardwareId: id);
+            var combinedDocument = ClashConfigDocument.Parse("combined.yaml", combined.Yaml);
+            check(requestedFormats.SequenceEqual(new[] { false, true }) && combinedDocument.ConnectionCount == 63,
+                "separate Base64 link and JSON lists of 28 and 35 nodes are combined even without section headings");
+            check(combinedDocument.ProxyNodes.Count(node => node.Children[new YamlDotNet.RepresentationModel.YamlScalarNode("type")].ToString() == "vless") == 28,
+                "link-only servers keep their native transport instead of moving to the Xray bridge");
+            var combinedPath = Path.Combine(home, "combined.yaml");
+            File.WriteAllText(combinedPath, combined.Yaml);
+            var singBoxPath = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "../../../../Packaging/Engine/sing-box.exe"));
+            check((await CoreProcessManager.ValidateAsync(singBoxPath, combinedPath, default)).Success,
+                "both engines validate a merged subscription containing native public VLESS links and Xray JSON servers");
+            using var unavailable = new HttpClient(new FakeHandler((request, _) => Task.FromResult(
+                request.Headers.UserAgent.ToString().Contains("Happ/compatible")
+                    ? new HttpResponseMessage(HttpStatusCode.ServiceUnavailable)
+                    : new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(plainList) })));
+            var basic = await SubscriptionImporter.ImportAsync("https://subscription.example/account", default, unavailable, hardwareId: id);
+            check(ClashConfigDocument.Parse("basic.yaml", basic.Yaml).ConnectionCount == 28 && basic.CompatibilityWarnings.Count == 1,
+                "a failed supplemental request requires confirmation before applying the basic list");
         }
         finally { await core.StopAsync(); Directory.Delete(home,true); }
     }

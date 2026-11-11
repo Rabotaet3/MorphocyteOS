@@ -311,7 +311,7 @@ public partial class MainWindow : Window
             _draftSaved = restoreDraft;
             SetDirty(restoreDraft || loaded.HadMarkdownFence);
             ResetRuleHistory();
-            if (state is null || state.SourceHash == loaded.SourceHash)
+            if (!restoreDraft && (state is null || state.SourceHash == loaded.SourceHash))
                 _settings.PutRuleState(path, loaded.SourceHash, _rules);
             await SaveSettingsAsync();
             SetStatus(loaded.HasVpnConnection ? "VPN ВЫКЛЮЧЕН" : "НУЖЕН ПРОФИЛЬ",
@@ -363,8 +363,9 @@ public partial class MainWindow : Window
         var candidate = await Task.Run(() => document.BuildText(snapshot));
         var temp = Path.Combine(Path.GetDirectoryName(document.Path)!, ".morphocyte-check-" + Guid.NewGuid().ToString("N") + ".yaml");
         var wasRunning = _core.IsRunning;
+        var previousRuleState = _settings.GetRuleState(document.Path);
         string? backup = null;
-        var committed = false;
+        var restartDeclined = false;
         try
         {
             await File.WriteAllTextAsync(temp, candidate, new UTF8Encoding(false), _lifetime.Token);
@@ -374,8 +375,18 @@ public partial class MainWindow : Window
             if (!await StopCoreAsync()) throw new IOException("Конфиг не изменён: остановка ядра не подтверждена.");
             _lifetime.Token.ThrowIfCancellationRequested();
             backup = await Task.Run(() => document.CommitText(candidate));
-            committed = true;
             _document = await Task.Run(() => ClashConfigDocument.Load(document.Path));
+            if (wasRunning && restart)
+            {
+                await StartCoreAsync(applyDraft: false);
+                _lifetime.Token.ThrowIfCancellationRequested();
+                if (!_core.IsRunning)
+                {
+                    restartDeclined = true;
+                    CancelConnectionIntent();
+                    throw new IOException("Запуск ядра отменён. Изменения правил остались в черновике.");
+                }
+            }
             var merged = MergeRuleUiState(_document.Rules, snapshot);
             CaptureFolderExpansionStates();
             ReplaceRules(merged);
@@ -384,13 +395,12 @@ public partial class MainWindow : Window
             _settings.RemoveDraft(document.Path);
             await SaveSettingsAsync();
             SetLog("Правила проверены и сохранены. Резервная копия: " + Path.GetFileName(backup));
-            if (wasRunning && restart && !_closing) await StartCoreAsync();
             ResetRuleHistory();
         }
         catch
         {
             // If the candidate cannot start, restore the prior config only after confirming stop.
-            if (committed && backup is not null && !_closing && await StopCoreAsync())
+            if (backup is not null && await StopCoreAsync())
             {
                 await Task.Run(() =>
                 {
@@ -399,12 +409,14 @@ public partial class MainWindow : Window
                     AtomicFile.Write(document.Path, File.ReadAllText(backup));
                 });
                 _document = await Task.Run(() => ClashConfigDocument.Load(document.Path));
+                if (previousRuleState is null) _settings.ProfileRuleStates.Remove(document.Path);
+                else _settings.ProfileRuleStates[document.Path] = previousRuleState;
                 ReplaceRules(snapshot);
                 SetDirty(true);
                 await SaveDraftAsync();
                 SetLog("Восстановлен предыдущий YAML; изменения остались в черновике.");
             }
-            if (wasRunning && !_closing && !_core.IsRunning)
+            if (wasRunning && !restartDeclined && !_closing && !_core.IsRunning)
             {
                 try { await StartCoreAsync(applyDraft: false); }
                 catch (Exception recoveryError) { SetLog("Не удалось восстановить запуск: " + recoveryError.Message); }
@@ -1029,11 +1041,20 @@ public partial class MainWindow : Window
             if (coreChanged && !File.Exists(requestedCore)) throw new FileNotFoundException("Выбранный файл ядра не найден.");
 
             string? preparedPath = null;
+            SubscriptionRefreshResult? inheritedSubscription = null;
             if (choice.Transfer is { } transfer)
                 preparedPath = await ConfigurationTransfer.CreateProfileAsync(transfer, requestedCore, _settings.StorageDirectory, _lifetime.Token, fullTunnel: transfer.Options.FullTunnel ?? _settings.FullTunnel);
             else if (choice.Imported is { } imported)
             {
                 if (!File.Exists(requestedCore)) requestedCore = await BundledResources.EnsureCoreAsync(_lifetime.Token);
+                if (imported.SubscriptionUrl is not null && document is not null)
+                {
+                    var oldText = await File.ReadAllTextAsync(document.Path, _lifetime.Token);
+                    if (ClashConfigDocument.Hash(oldText) != document.SourceHash)
+                        throw new InvalidDataException("Профиль изменён на диске. Открой его заново перед заменой подписки, чтобы сохранить актуальные правила.");
+                    inheritedSubscription = SubscriptionRefresh.Merge(document.Path, oldText, imported, RememberedVpnServer());
+                    imported = imported with { Yaml = inheritedSubscription.Yaml };
+                }
                 preparedPath = await ProfileStorage.CreateAsync(imported, requestedCore, _settings.StorageDirectory, _lifetime.Token, fullTunnel: _settings.FullTunnel);
             }
             var requestedProfile = preparedPath ?? (string.IsNullOrWhiteSpace(choice.ConfigPath) ? _settings.ConfigPath : Path.GetFullPath(choice.ConfigPath));
@@ -1059,8 +1080,18 @@ public partial class MainWindow : Window
                 _settings.PreferredRoute = "VPN";
                 if (importedProfile.SubscriptionUrl is { } url)
                 {
-                    _settings.ProfileSubscriptions[preparedPath!] = SubscriptionSource.Create(url, DateTimeOffset.UtcNow, importedProfile.SendHardwareId, importedProfile.AllowPartialSubscription);
-                    _settings.ProfileSubscriptions[preparedPath!].Metadata=importedProfile.Metadata;
+                    var subscription = SubscriptionSource.Create(url, DateTimeOffset.UtcNow, importedProfile.SendHardwareId, importedProfile.AllowPartialSubscription);
+                    subscription.Metadata = importedProfile.Metadata;
+                    _settings.ProfileSubscriptions[preparedPath!] = subscription;
+                    if (inheritedSubscription is not null && document is not null)
+                    {
+                        var hash = ClashConfigDocument.Hash(inheritedSubscription.Yaml);
+                        var state = _settings.GetRuleState(document.Path);
+                        _settings.PutFolderOrder(preparedPath!, editor.Folders);
+                        _settings.PutRuleState(preparedPath!, hash, state?.SourceHash == document.SourceHash ? state.Rules : document.Rules);
+                        if (editor.Dirty) _settings.PutDraft(preparedPath!, hash, editor.Rules);
+                        subscription.SelectedServer = inheritedSubscription.SelectedServer;
+                    }
                 }
                 await LoadConfigAsync(preparedPath!);
             }

@@ -1,3 +1,4 @@
+using System.Text.RegularExpressions;
 using System.Windows;
 using System.Windows.Media.Animation;
 using YamlDotNet.RepresentationModel;
@@ -10,6 +11,7 @@ public partial class MainWindow
     private ClashConfigDocument? _subscriptionServersDocument;
     private ServerPingSession? _subscriptionPing;
     private CancellationToken _subscriptionServersToken;
+    private bool _subscriptionServersInProviderOrder;
     private bool _subscriptionDetailsExpanded;
     private int _subscriptionDetailsVersion;
 
@@ -51,16 +53,29 @@ public partial class MainWindow
     {
         if(SubscriptionServersHost is null) return;
         var selected=_selectedConnection.Length>0?_selectedConnection:RememberedVpnServer();
-        if(ReferenceEquals(_subscriptionServersDocument,_document) && _subscriptionServers is not null && _subscriptionServersToken==_lifetime.Token)
+        var providerOrder = _document is { } current && _settings.ProfileSubscriptions.ContainsKey(current.Path);
+        if(ReferenceEquals(_subscriptionServersDocument,_document) && _subscriptionServers is not null
+            && _subscriptionServersToken==_lifetime.Token && _subscriptionServersInProviderOrder==providerOrder)
         { _subscriptionServers.SetCurrent(selected); return; }
         _subscriptionServers?.Dispose();
         _subscriptionServersDocument=_document;
         _subscriptionServersToken=_lifetime.Token;
+        _subscriptionServersInProviderOrder = providerOrder;
         if(_document is not { } document) { SubscriptionServersHost.Content=null; return; }
-        var servers=VpnServerCatalog.Choices(document,subscriptionOrder:_settings.ProfileSubscriptions.ContainsKey(document.Path));
+        var servers=VpnServerCatalog.Choices(document,subscriptionOrder:providerOrder);
         var presentations=document.ProxyNodes.Concat(document.ProxyGroups)
             .GroupBy(node=>node.Children.TryGetValue(new YamlScalarNode("name"),out var name)?name.ToString():"",StringComparer.Ordinal)
             .ToDictionary(group=>group.Key,group=>VpnServerPresentation.Describe(group.Key,group.First()),StringComparer.Ordinal);
+        if (providerOrder)
+        {
+            var number = 0;
+            foreach (var name in servers)
+            {
+                var presentation = presentations[name];
+                var title = Regex.Replace(presentation.Title, @"^№\s*[0-9]+", _ => $"№{++number}");
+                presentations[name] = presentation with { Title = title };
+            }
+        }
         _subscriptionServers=new VpnServerListView(servers,selected,async(name,token)=> {
             if(!ReferenceEquals(document,_document) || _closing) throw new OperationCanceledException(token);
             if(_core.IsRunning && _diagnostics is { } diagnostics) return await diagnostics.CheckProxyAsync(name,token);

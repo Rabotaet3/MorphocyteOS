@@ -24,7 +24,7 @@ internal static class PhysicalUplink
     [DllImport("iphlpapi.dll")] private static extern uint GetIfEntry2(IntPtr row);
     [DllImport("iphlpapi.dll")] private static extern uint GetBestInterface(uint destination,out uint index);
 
-    private static bool IsHardware(int index)
+    internal static bool IsHardware(int index)
     {
         var row=Marshal.AllocHGlobal(2048);
         try

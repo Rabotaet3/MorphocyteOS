@@ -11,7 +11,7 @@ internal partial class Program
     {
         var count=0;
         void Check(bool ok,string text) { if(!ok) throw new Exception("FAIL: "+text); count++; Console.WriteLine("PASS: "+text); }
-        var primary=new[]{"№1 EU Авто-сервер + LTE","№2 EU Авто-сервер + LTE (Routing)","№10 Франция Bridge","№3 Германия Bridge","№4 Финляндия Bridge"};
+        var primary=new[]{"№1 EU Авто-сервер + LTE","№2 EU Авто-сервер + LTE (Routing)","Франция Bridge","№41 Германия Bridge","№42 Финляндия Bridge"};
         var names=primary.Concat(new[]{"№1 Германия Bridge","№2 Финляндия Bridge"}).ToArray();
         var labels=names.ToDictionary(name=>name,name=>new VpnServerPresentation(name,"VLESS / TCP / REALITY / JSON",name.Contains("Авто")?"AUTO":name.Contains("Финляндия")?"FI":"DE"));
         var requests=0; var canceled=0;
@@ -124,6 +124,16 @@ internal partial class Program
             Check(Field<Grid>("SubscriptionPage").IsVisible&&!Field<Grid>("RoutesPage").IsVisible&&!Field<Border>("JournalPage").IsVisible,"subscription is a third independent workspace page");
             var view=Field<ContentControl>("SubscriptionServersHost").Content;
             Check(view is VpnServerListView&&Field<Border>("SubscriptionBanner").IsVisible,"subscription information and server choice share the subscription page");
+            string[] ServerTitles() => Descendants<TextBlock>((DependencyObject)view!).Where(item => item.Name == "VpnServerTitle").Select(item => item.Text).ToArray();
+            var titles = ServerTitles();
+            Check(titles.SequenceEqual(new[] { primary[0], primary[1], primary[2], "№3 Германия Bridge", "№4 Финляндия Bridge", "№5 Германия Bridge", "№6 Финляндия Bridge" }),
+                "subscription page numbers titled servers continuously across both formats and leaves unnumbered titles intact");
+            var serverSearch = Descendants<TextBox>((DependencyObject)view!).Single();
+            serverSearch.Text = "№6";
+            window.UpdateLayout();
+            Check(ServerTitles().SequenceEqual(new[] { titles[^1] }), "filtering by the displayed number keeps the same server number");
+            serverSearch.Clear();
+            window.UpdateLayout();
             var serverViewport=Descendants<Border>((DependencyObject)view!).Single(item=>item.Name=="VpnServerViewport");
             var compactHeight=serverViewport.ActualHeight;
             Check(Field<Border>("SubscriptionDetailsClip").Visibility==Visibility.Collapsed&&Field<Border>("SubscriptionBanner").ActualHeight<85,"subscription starts as a compact header with its details collapsed");

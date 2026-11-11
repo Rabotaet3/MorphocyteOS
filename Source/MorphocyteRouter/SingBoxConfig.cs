@@ -228,9 +228,12 @@ internal static class SingBoxConfig
             if (stack is not ("system" or "gvisor")) throw Unsupported("стек TUN");
             var mtu = Get(tun, "mtu") is null ? 1280 : Number(tun, "mtu");
             if (mtu is < 1280 or > 65535) throw Unsupported("MTU TUN (1280–65535)");
-            inbounds.Add(Obj(("type", "tun"), ("tag", tunTag), ("interface_name", "MorphocyteTUN"),
+            var tunInbound = Obj(("type", "tun"), ("tag", tunTag), ("interface_name", "MorphocyteTUN"),
                 ("address", new[] { "172.19.0.1/30", "fdfe:dcba:9876::1/126" }), ("mtu", mtu), ("stack", stack),
-                ("auto_route", true), ("strict_route", true), ("dns_mode", "hijack")));
+                ("auto_route", true), ("strict_route", true), ("dns_mode", "hijack"));
+            if (!fullTunnel && ReadTunExclusions(tun) is { Length: > 0 } exclusions)
+                tunInbound["route_exclude_address"] = exclusions;
+            inbounds.Add(tunInbound);
         }
         inbounds.Add(Obj(("type", "direct"), ("tag", Internal("bootstrap-in")), ("listen", "127.0.0.1"), ("listen_port", bootstrapPort)));
         inbounds.Add(Obj(("type", "direct"), ("tag", Internal("direct-dns-in")), ("listen", "127.0.0.1"), ("listen_port", directPort)));
@@ -264,6 +267,25 @@ internal static class SingBoxConfig
             ((Dictionary<string,object>)experimental["cache_file"])["cache_id"]=selectionCacheId;
         }
         return JsonSerializer.Serialize(config, new JsonSerializerOptions { WriteIndented = true });
+    }
+
+    private static string[] ReadTunExclusions(YamlMappingNode tun)
+    {
+        var exclusions = new HashSet<IPNetwork>();
+        foreach (var key in new[] { "route-exclude-address", "inet4-route-exclude-address", "inet6-route-exclude-address" })
+        {
+            var node = Get(tun, key);
+            if (node is null) continue;
+            if (node is not YamlSequenceNode addresses)
+                throw new InvalidDataException($"TUN: «{key}» должен содержать список IP-подсетей в формате CIDR.");
+            foreach (var address in addresses.Children)
+            {
+                if (address is not YamlScalarNode { Value: { } value } || !IPNetwork.TryParse(value.Trim(), out var network))
+                    throw new InvalidDataException($"TUN: неверная IP-подсеть в «{key}». Укажи адрес сети и длину префикса.");
+                exclusions.Add(network);
+            }
+        }
+        return exclusions.Select(network => network.ToString()).ToArray();
     }
 
     private static Dictionary<string, object> YouTubeTcpFallback(Dictionary<string, object>? route = null)

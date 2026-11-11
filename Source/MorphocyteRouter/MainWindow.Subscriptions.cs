@@ -144,6 +144,7 @@ public partial class MainWindow
         var folders = _folderOrder.ToArray();
         var dirty = _dirty;
         var ruleState = _settings.GetRuleState(original.Path);
+        var appliedRules = _appliedRules;
         var previousUpdatedAt = source.UpdatedAt; var previousSelection = source.SelectedServer;
         var previousMetadata=source.Metadata;
         var previousPartialImport = source.AllowPartialImport;
@@ -167,15 +168,27 @@ public partial class MainWindow
                 if (!check.Success) throw new InvalidDataException("Обновлённые серверы несовместимы с черновиком правил. Текущий профиль сохранён.");
             }
             token.ThrowIfCancellationRequested();
-            if (merged.SelectionRemoved && !UtilityDialogs.ShowConfirm(promptOwner, "СЕРВЕР УДАЛЁН ИЗ ПОДПИСКИ",
-                "Выбранного сервера больше нет. После обновления будет использован доступный сервер из той же группы.", "ОБНОВИТЬ", "ОТМЕНА")) return false;
+            var currentCount = VpnServerCatalog.Choices(original).Count;
+            var updatedCount = VpnServerCatalog.Choices(candidate).Count;
+            if (merged.Removed > 0 || updatedCount < currentCount || merged.SelectionRemoved)
+            {
+                var details = new List<string>();
+                if (updatedCount < currentCount)
+                    details.Add($"Количество серверов уменьшится с {currentCount} до {updatedCount}.");
+                if (merged.Removed > 0)
+                    details.Add($"Добавится серверов — {merged.Added}. Исчезнет — {merged.Removed}.");
+                if (merged.SelectionRemoved)
+                    details.Add("Выбранного сервера больше нет. После обновления будет использован доступный сервер из той же группы.");
+                if (!UtilityDialogs.ShowConfirm(promptOwner, "ИЗМЕНИЛСЯ СПИСОК СЕРВЕРОВ", string.Join("\n\n", details), "ОБНОВИТЬ", "ОТМЕНА")) return false;
+            }
             if (!await StopCoreAsync()) throw new IOException("Подписка не изменена: остановка ядра не подтверждена.");
             token.ThrowIfCancellationRequested();
             backup = original.CommitText(merged.Yaml);
             _document = candidate;
             if (dirty) _settings.PutDraft(original.Path, candidate.SourceHash, rules);
             else _settings.RemoveDraft(original.Path);
-            if (ruleState is not null) _settings.PutRuleState(original.Path, candidate.SourceHash, ruleState.Rules);
+            if (ruleState?.SourceHash == original.SourceHash)
+                _settings.PutRuleState(original.Path, candidate.SourceHash, ruleState.Rules);
             await LoadConfigAsync(original.Path);
             if (merged.SelectedServer.Length > 0) _settings.ProfileSelections[original.Path] = merged.SelectedServer;
             _undoRules.AddRange(undo); _redoRules.AddRange(redo); _historyState = CaptureRuleEditState(_dirty);
@@ -224,7 +237,10 @@ public partial class MainWindow
                 if (previousProfileSelection is null) _settings.ProfileSelections.Remove(original.Path);
                 else _settings.ProfileSelections[original.Path] = previousProfileSelection;
                 _undoRules.Clear(); _undoRules.AddRange(undo); _redoRules.Clear(); _redoRules.AddRange(redo);
+                _appliedRules = appliedRules;
                 _historyState = CaptureRuleEditState(dirty);
+                RefreshRuleHistoryControls();
+                RefreshSubscriptionBanner();
                 try { await SaveSettingsAsync(); }
                 catch { SetLog("Прежний профиль восстановлен, но настройки не удалось записать. Проверь доступ к файлу настроек."); }
                 SetLog("Предыдущая подписка восстановлена. Правила и черновик сохранены.");

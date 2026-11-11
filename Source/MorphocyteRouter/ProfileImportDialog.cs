@@ -27,14 +27,14 @@ internal static class ProfileImportDialog
         body.RowDefinitions.Add(new RowDefinition { Height = GridLength.Auto });
         var explanation = new TextBlock
         {
-            Text = "Вставь HTTPS-ссылку на подписку, ссылку VLESS / Hysteria2 или JSON Xray. Программа создаст отдельный YAML с TUN и списком серверов.",
+            Text = "Вставь HTTPS-ссылку на подписку, ссылку подключения или JSON Xray. Программа создаст отдельный YAML с TUN и списком серверов.",
             FontSize = 13, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 10)
         };
         explanation.SetResourceReference(TextBlock.ForegroundProperty, "ThemeText");
         body.Children.Add(explanation);
         var note = new TextBlock
         {
-            Text = "Из подписки импортируются серверы, а не чужие правила или DNS. Поддерживаются YAML Clash/Mihomo, списки VLESS / Hysteria2 и Base64. По умолчанию трафик идёт напрямую; нужные приложения добавь в правила VPN.",
+            Text = "Поддерживаются YAML Clash/Mihomo, списки ссылок и Base64. Для ссылок доступны VLESS, VMess, Trojan, Shadowsocks, SOCKS5 и Hysteria2. Маршруты приложений задаются в Морфоците.",
             FontSize = 12, TextWrapping = TextWrapping.Wrap, Margin = new Thickness(0, 0, 0, 14)
         };
         note.SetResourceReference(TextBlock.ForegroundProperty, "ThemeMuted");

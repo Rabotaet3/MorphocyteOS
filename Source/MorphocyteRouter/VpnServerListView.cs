@@ -109,8 +109,12 @@ internal sealed class VpnServerListView : Grid, IDisposable
             latencyLabels.Clear();
             hint.Visibility=search.Text.Length==0?Visibility.Visible:Visibility.Collapsed;
             var query=search.Text.Trim();
-            var matches=ordered.Where(name=>name.Contains(query,StringComparison.OrdinalIgnoreCase)
-                || (query.Length>0 && presentations?.GetValueOrDefault(name)?.CountryCode?.Equals(query,StringComparison.OrdinalIgnoreCase)==true)).ToArray();
+            var matches = ordered.Where(name =>
+            {
+                var presentation = presentations?.GetValueOrDefault(name);
+                return (presentation?.Title ?? name).Contains(query, StringComparison.OrdinalIgnoreCase)
+                    || presentation?.CountryCode?.Equals(query, StringComparison.OrdinalIgnoreCase) == true;
+            }).ToArray();
             matchCount=matches.Length; UpdateCount();
             if(matches.Length==0)
             {

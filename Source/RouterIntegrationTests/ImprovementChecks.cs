@@ -79,7 +79,24 @@ internal partial class Program
             Check(((ICollection)Field("_redoRules")).Count == 0, "editing after undo discards the obsolete redo branch");
             var undoCount = ((ICollection)Field("_undoRules")).Count;
             using var client = new HttpClient(new DiagnosticHandler(_ => new(HttpStatusCode.OK) { Content = new StringContent(fresh, Encoding.UTF8) }));
-            Check(await window.RefreshSubscriptionAsync(default, client), "actual subscription update validates and commits an injected download without external requests");
+            var confirmReplacement = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(60) };
+            var confirmed = false;
+            confirmReplacement.Tick += (_, _) =>
+            {
+                var dialog = Application.Current.Windows.OfType<Window>()
+                    .FirstOrDefault(item => item.Title == "ИЗМЕНИЛСЯ СПИСОК СЕРВЕРОВ");
+                if (dialog is null) return;
+                confirmed = true;
+                Descendants<Button>(dialog).Single(button => Equals(button.Content, "ОБНОВИТЬ"))
+                    .RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            };
+            confirmReplacement.Start();
+            try
+            {
+                Check(await window.RefreshSubscriptionAsync(default, client) && confirmed,
+                    "confirming an equal-size subscription replacement validates and commits the new server list");
+            }
+            finally { confirmReplacement.Stop(); }
             Check(settings.GetDraft(path) is { } draft && draft.SourceHash == ClashConfigDocument.Load(path).SourceHash && draft.Rules[0].Route == "DIRECT"
                 && Rules()[0].Route == "DIRECT" && File.ReadAllText(path).Contains("first.example,VPN"),
                 "subscription refresh rebinds draft hash while preserving unapplied routing and saved YAML rules");

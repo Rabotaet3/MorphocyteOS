@@ -35,6 +35,7 @@ internal static partial class ProfileImporter
         }
         if (text.StartsWith("vless://", StringComparison.OrdinalIgnoreCase)) return FromLink(text);
         if (text.StartsWith("hysteria2://", StringComparison.OrdinalIgnoreCase) || text.StartsWith("hy2://", StringComparison.OrdinalIgnoreCase)) return FromHysteriaLink(text);
+        if (TryImportAdditionalLink(text) is { } additional) return additional;
         if (text.StartsWith('{'))
         {
             try
@@ -44,7 +45,7 @@ internal static partial class ProfileImporter
             }
             catch(JsonException) { throw new InvalidDataException("Некорректный JSON-профиль. Проверь формат исходной конфигурации."); }
         }
-        throw new InvalidDataException("Поддерживаются vless://, hysteria2://, hy2:// и JSON Xray с одним VLESS-подключением. HTTPS-ссылку вставь в окно импорта профиля; готовый YAML можно выбрать в настройках.");
+        throw new InvalidDataException("Поддерживаются ссылки VLESS, VMess, Trojan, Shadowsocks, SOCKS5, Hysteria2 и JSON Xray. Для загрузки подписки нужна обычная HTTPS-ссылка провайдера.");
     }
 
     private static ImportedProfile FromLink(string text)

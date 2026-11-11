@@ -16,18 +16,20 @@ internal static class XrayFullProfile
     private static readonly string[] PrivateNetworks=["0.0.0.0/8","10.0.0.0/8","100.64.0.0/10","127.0.0.0/8","169.254.0.0/16","172.16.0.0/12",
         "192.0.0.0/24","192.0.2.0/24","192.88.99.0/24","192.168.0.0/16","198.18.0.0/15","198.51.100.0/24","203.0.113.0/24","224.0.0.0/3","::/127","fc00::/7","fe80::/10","ff00::/8"];
     private static InvalidDataException Invalid()=>new("Полный JSON-профиль Xray содержит неподдерживаемые параметры. Профиль не упрощён.");
+    private static bool IsProxyProtocol(string? protocol) => protocol is "vless" or "hysteria";
 
     internal static bool IsFull(JsonElement root) => root.ValueKind==JsonValueKind.Object && (
         root.TryGetProperty("burstObservatory",out _) || root.TryGetProperty("observatory",out _)
         || root.TryGetProperty("routing",out var routing) && routing.ValueKind==JsonValueKind.Object && routing.TryGetProperty("balancers",out _)
         || root.TryGetProperty("outbounds",out var outbounds) && outbounds.ValueKind==JsonValueKind.Array
-            && outbounds.EnumerateArray().Count(item=>item.TryGetProperty("protocol",out var protocol)&&protocol.GetString()=="vless")>1);
+            && outbounds.EnumerateArray().Count(item => item.ValueKind == JsonValueKind.Object
+                && item.TryGetProperty("protocol", out var protocol) && protocol.ValueKind == JsonValueKind.String
+                && IsProxyProtocol(protocol.GetString())) > 1);
 
     internal static ImportedProfile Import(string text)
     {
         var root=Parse(text);
-        var first=root["outbounds"]!.AsArray().First(item=>item?["protocol"]?.ToString()=="vless")!;
-        var peer=first["settings"]!["vnext"]![0]!;
+        var peer = ReadProxyPeer(ProxyOutbounds(root).First());
         var name=ProfileImporter.ValidateConnectionName(root["remarks"]?.ToString() is { Length:>0 } title?title:"Авто · Xray",renameReserved:true);
         var node=new YamlMappingNode {
             {"name",name},{"type",NodeType},{"server",peer["address"]!.ToString()},{"port",peer["port"]!.ToString()},
@@ -41,7 +43,7 @@ internal static class XrayFullProfile
         string Text(string key)=>node.Children.TryGetValue(new YamlScalarNode(key),out var value)&&value is YamlScalarNode scalar?scalar.Value??"":"";
         if(node.Children.Keys.Any(key=>key.ToString() is not ("name" or "type" or "server" or "port" or "xray-json"))) throw Invalid();
         var result=Parse(Text("xray-json"));
-        var first=result["outbounds"]!.AsArray().First(item=>item?["protocol"]?.ToString()=="vless")!["settings"]!["vnext"]![0]!;
+        var first = ReadProxyPeer(ProxyOutbounds(result).First());
         if(Text("type")!=NodeType || Text("server")!=first["address"]!.ToString() || Text("port")!=first["port"]!.ToString()) throw Invalid();
         return result;
     }
@@ -61,11 +63,11 @@ internal static class XrayFullProfile
             foreach(var outbound in outbounds)
             {
                 if(outbound is not JsonObject item || item["tag"]?.ToString() is not { Length:>0 and <=128 } tag || !tags.Add(tag)) throw Invalid();
-                if(item["protocol"]?.ToString() is not ("vless" or "freedom" or "blackhole")) throw Invalid();
-                if(item["protocol"]!.ToString()=="vless" && (item["settings"]?["vnext"] is not JsonArray peers || peers.Count!=1
-                    || peers[0]?["address"]?.ToString() is not { Length:>0 } || !int.TryParse(peers[0]?["port"]?.ToString(),out var port) || port is <1 or >65535)) throw Invalid();
+                var protocol = item["protocol"]?.ToString();
+                if (IsProxyProtocol(protocol)) _ = ReadProxyPeer(item);
+                else if (protocol is not ("freedom" or "blackhole")) throw Invalid();
             }
-            if(!outbounds.Any(item=>item?["protocol"]?.ToString()=="vless")) throw Invalid();
+            if (!ProxyOutbounds(root).Any()) throw Invalid();
             if(root["inbounds"] is JsonArray inbounds)
                 foreach(var inbound in inbounds)
                     if(inbound?["protocol"]?.ToString() is not ("socks" or "http")) throw Invalid();
@@ -73,6 +75,27 @@ internal static class XrayFullProfile
         }
         catch(InvalidDataException) { throw; }
         catch { throw Invalid(); }
+    }
+
+    private static IEnumerable<JsonObject> ProxyOutbounds(JsonObject profile) =>
+        profile["outbounds"]!.AsArray().OfType<JsonObject>()
+            .Where(outbound => IsProxyProtocol(outbound["protocol"]?.ToString()));
+
+    private static JsonObject ReadProxyPeer(JsonObject outbound)
+    {
+        if (outbound["settings"] is not JsonObject settings) throw Invalid();
+        JsonObject peer;
+        if (outbound["protocol"]?.ToString() == "vless")
+        {
+            if (settings["vnext"] is not JsonArray { Count: 1 } peers || peers[0] is not JsonObject vlessPeer)
+                throw Invalid();
+            peer = vlessPeer;
+        }
+        else peer = settings;
+        if (peer["address"]?.ToString() is not { Length: > 0 }
+            || !int.TryParse(peer["port"]?.ToString(), out var port) || port is < 1 or > 65535)
+            throw Invalid();
+        return peer;
     }
 
     internal static void ValidateTree(JsonElement value)
@@ -124,9 +147,9 @@ internal static class XrayFullProfile
                     rule["inboundTag"]=new JsonArray("morphocyte-profile-in");
                 }
             }
-        foreach(var outbound in result["outbounds"]!.AsArray().Where(item=>item?["protocol"]?.ToString()=="vless"))
+        foreach (var outbound in ProxyOutbounds(result))
         {
-            var stream=outbound!["streamSettings"] as JsonObject;
+            var stream=outbound["streamSettings"] as JsonObject;
             if(stream is null) { stream=new JsonObject(); outbound["streamSettings"]=stream; }
             var socket=stream["sockopt"] as JsonObject;
             if(socket is null) { socket=new JsonObject(); stream["sockopt"]=socket; }

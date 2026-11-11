@@ -21,6 +21,7 @@
     <Compile Include="../MorphocyteRouter/XrayJsonConnection.cs" Link="XrayJsonConnection.cs" />
     <Compile Include="../MorphocyteRouter/ProfileImporter.cs" Link="ProfileImporter.cs" />
     <Compile Include="../MorphocyteRouter/ProfileImporter.Hysteria.cs" Link="ProfileImporter.Hysteria.cs" />
+    <Compile Include="../MorphocyteRouter/ProfileImporter.ShareLinks.cs" Link="ProfileImporter.ShareLinks.cs" />
     <Compile Include="../MorphocyteRouter/PhysicalUplink.cs" Link="PhysicalUplink.cs" />
     <Compile Include="../MorphocyteRouter/SubscriptionMetadata.cs" Link="SubscriptionMetadata.cs" />
     <Compile Include="../MorphocyteRouter/SubscriptionInformation.cs" Link="SubscriptionInformation.cs" />

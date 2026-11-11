@@ -54,18 +54,22 @@ public partial class MainWindow
     {
         try
         {
-            return string.Join("|", NetworkInterface.GetAllNetworkInterfaces()
+            var adapters = NetworkInterface.GetAllNetworkInterfaces()
                 .Where(adapter => adapter.OperationalStatus == OperationalStatus.Up
                     && adapter.NetworkInterfaceType is not (NetworkInterfaceType.Loopback or NetworkInterfaceType.Tunnel)
                     && !adapter.Description.Contains("Wintun", StringComparison.OrdinalIgnoreCase)
                     && !adapter.Name.Contains("MorphocyteTUN", StringComparison.OrdinalIgnoreCase)
                     && !adapter.Name.Contains("mihomo", StringComparison.OrdinalIgnoreCase))
-                .Select(adapter => {
-                    var info = adapter.GetIPProperties();
-                    return adapter.Id + ":" + string.Join(",", info.UnicastAddresses.Select(item => item.Address.ToString()).Order())
-                        + ":" + string.Join(",", info.GatewayAddresses.Select(item => item.Address.ToString()).Order())
-                        + ":" + string.Join(",", info.DnsAddresses.Select(item => item.ToString()).Order());
-                }).Order());
+                .Select(adapter => (Adapter: adapter, Info: adapter.GetIPProperties()))
+                .Where(item => item.Info.GatewayAddresses.Count > 0)
+                .ToArray();
+            var physical = adapters.Where(item =>
+                (item.Info.GetIPv4Properties()?.Index ?? item.Info.GetIPv6Properties()?.Index) is { } index
+                && PhysicalUplink.IsHardware(index)).ToArray();
+            // Windows can expose the actual gateway on a virtual switch or PPP adapter.
+            return string.Join("|", (physical.Length > 0 ? physical : adapters).Select(item =>
+                item.Adapter.Id + ":" + string.Join(",", item.Info.UnicastAddresses.Select(address => address.Address.ToString()).Order())
+                + ":" + string.Join(",", item.Info.GatewayAddresses.Select(gateway => gateway.Address.ToString()).Order())).Order());
         }
         catch (NetworkInformationException) { return "unavailable"; }
     }
@@ -166,21 +170,32 @@ public partial class MainWindow
         if (_busy || _dialogBackdropVisible) return RecoveryAttemptResult.Retry;
         if (_core.IsRunning && _diagnostics is { } diagnostics && _document?.VpnRoute is { } route)
         {
-            try
+            // A transient failure at a probe endpoint should not close active DIRECT sessions.
+            for (var probe = 0; probe < 2; probe++)
             {
-                using var probeDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
-                probeDeadline.CancelAfter(TimeSpan.FromSeconds(25));
-                var selected = await diagnostics.ReadSelectionAsync(route, probeDeadline.Token);
-                if (selected is "DIRECT" or "REJECT")
-                { SetLog("Восстановление остановлено: в группе VPN выбран прямой маршрут или блокировка."); return RecoveryAttemptResult.Stop; }
-                var delay = await diagnostics.CheckProxyAsync(route, probeDeadline.Token);
-                if (_settings.FullTunnel) await _recoverySystemProbe(probeDeadline.Token);
                 if (!CanReconnect) return RecoveryAttemptResult.Stop;
-                _health.Record(delay); RefreshHealthReadout();
-                SetLog("VPN отвечает после восстановления сети.");
-                return RecoveryAttemptResult.Connected;
+                if (_busy || _dialogBackdropVisible || !ReferenceEquals(_diagnostics, diagnostics)) return RecoveryAttemptResult.Retry;
+                try
+                {
+                    using var probeDeadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+                    probeDeadline.CancelAfter(TimeSpan.FromSeconds(25));
+                    var selected = await diagnostics.ReadSelectionAsync(route, probeDeadline.Token);
+                    if (selected is "DIRECT" or "REJECT")
+                    { SetLog("Восстановление остановлено: в группе VPN выбран прямой маршрут или блокировка."); return RecoveryAttemptResult.Stop; }
+                    var delay = await diagnostics.CheckProxyAsync(route, probeDeadline.Token);
+                    if (_settings.FullTunnel) await _recoverySystemProbe(probeDeadline.Token);
+                    if (!CanReconnect) return RecoveryAttemptResult.Stop;
+                    if (!ReferenceEquals(_diagnostics, diagnostics)) return RecoveryAttemptResult.Retry;
+                    _health.Record(delay); RefreshHealthReadout();
+                    SetLog("VPN отвечает после восстановления сети.");
+                    return RecoveryAttemptResult.Connected;
+                }
+                catch (Exception) when (!token.IsCancellationRequested)
+                {
+                    if (probe == 0) await Task.Delay(1500, token);
+                }
             }
-            catch (Exception) when (!token.IsCancellationRequested) { }
+            if (!ReferenceEquals(_diagnostics, diagnostics)) return RecoveryAttemptResult.Retry;
         }
         token.ThrowIfCancellationRequested();
         if (!CanReconnect || !await _operations.WaitAsync(0, token)) return RecoveryAttemptResult.Retry;
