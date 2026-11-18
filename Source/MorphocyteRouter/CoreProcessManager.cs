@@ -1,3 +1,4 @@
+using System.ComponentModel;
 using System.Diagnostics;
 using System.IO;
 
@@ -70,14 +71,14 @@ public sealed partial class CoreProcessManager
                 _lateFailureQueued = false;
             }
             var privateConsole = OperatingSystem.IsWindows() && CoreBackend.IsSingBox(info.FileName);
-            var console = privateConsole ? WindowsConsoleProcess.Start(info) : null;
+            var console = privateConsole ? await StartProcessWithRetryAsync(() => WindowsConsoleProcess.Start(info), cancellationToken) : null;
             var process = console?.Process ?? new Process { StartInfo = info };
             process.OutputDataReceived += HandleOutput;
             process.ErrorDataReceived += HandleOutput;
             process.Exited += HandleExit;
             try
             {
-                if (console is null && !process.Start()) throw new IOException("Не удалось запустить ядро.");
+                if (console is null && !await StartProcessWithRetryAsync(process.Start, cancellationToken)) throw new IOException("Не удалось запустить ядро.");
             }
             catch { process.Dispose(); throw; }
             _process = process;
@@ -361,7 +362,7 @@ public sealed partial class CoreProcessManager
         else if (IsXray(executable)) info.ArgumentList.Insert(1, "-test");
         else info.ArgumentList.Insert(0, "-t");
         using var process = new Process { StartInfo = info };
-        process.Start();
+        await StartProcessWithRetryAsync(process.Start, cancellationToken);
         var stdout = process.StandardOutput.ReadToEndAsync();
         var stderr = process.StandardError.ReadToEndAsync();
         using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
@@ -418,5 +419,16 @@ public sealed partial class CoreProcessManager
         info.ArgumentList.Add("-f");
         info.ArgumentList.Add(fullConfigPath);
         return info;
+    }
+
+    internal static async Task<T> StartProcessWithRetryAsync<T>(Func<T> start, CancellationToken token)
+    {
+        for (var attempt = 0; ; attempt++)
+        {
+            token.ThrowIfCancellationRequested();
+            try { return start(); }
+            catch (Win32Exception error) when ((error.NativeErrorCode is 32 or 33) && attempt < 5)
+            { await Task.Delay(200, token); }
+        }
     }
 }

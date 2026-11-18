@@ -15,8 +15,8 @@ internal sealed record XrayBridgeEndpoint(int Port, string Username, string Pass
 // connection. Only sing-box handles user rules, DNS policy and the system tunnel.
 internal sealed class XrayBridgePlan : IDisposable
 {
-    internal const string Version = "26.10.31";
-    internal const string Hash = "D5B558191CCCB1E92A5772B68B8CAB67717B26F634B0F15153215F65AE982A7E";
+    internal const string Version = "26.11.9";
+    internal const string Hash = "1CA7A2CF61BA2C5D20B21A80D405B57933939751081CB289F07BD8DDF7CC3185";
     internal static string EnginePath => Path.Combine(AppContext.BaseDirectory, "ThirdPartySource", "Engine", "xray.exe");
     internal Dictionary<string, XrayBridgeEndpoint> Endpoints { get; } = new(StringComparer.Ordinal);
     private readonly List<IDisposable> _reservations = [];
@@ -103,13 +103,13 @@ internal sealed class XrayBridgePlan : IDisposable
     {
         get
         {
-            if(_fullProfile is not null) return _fullProfile.ToJsonString();
+            if(_fullProfile is not null) return _fullProfile.ToJsonString(ProfileImporter.JsonWriteOptions);
             var result = new JsonObject { ["log"] = new JsonObject { ["loglevel"] = "none" },
                 ["inbounds"] = _inbounds.DeepClone(), ["outbounds"] = _outbounds.DeepClone(),
                 ["routing"] = new JsonObject { ["domainStrategy"] = "AsIs", ["rules"] = _rules.DeepClone() } };
             if (_bootstrapPort != 0)
                 result["dns"] = new JsonObject { ["servers"] = new JsonArray($"tcp+local://127.0.0.1:{_bootstrapPort}"), ["queryStrategy"] = "UseIP" };
-            return result.ToJsonString();
+            return result.ToJsonString(ProfileImporter.JsonWriteOptions);
         }
     }
 

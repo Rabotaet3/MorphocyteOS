@@ -163,7 +163,11 @@ internal static class XrayProfile
     {
         try
         {
-            using var parsed = JsonDocument.Parse(text, new JsonDocumentOptions { MaxDepth = 24 });
+            // Reserve space for streamSettings, outbound and subscription
+            // wrappers so a valid link also survives JSON storage and reload.
+            var options = new JsonDocumentOptions { MaxDepth = ProfileImporter.MaxJsonDepth - 8 };
+            using var parsed = JsonDocument.Parse(text, options);
+            XrayFullProfile.ValidateTree(parsed.RootElement);
             void Validate(JsonElement element)
             {
                 if (element.ValueKind == JsonValueKind.Object)
@@ -171,14 +175,16 @@ internal static class XrayProfile
                     var keys = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
                     foreach (var field in element.EnumerateObject())
                     {
-                        if (!keys.Add(field.Name) || field.Name.ToLowerInvariant() is "certificatefile" or "keyfile" or "certificates" or "masterkeylog" or "sockopt" or "dialerproxy" or "proxysettings") throw Invalid();
+                        // Inline CA certificates are connection data. Local
+                        // certificate/key files remain unsupported.
+                        if (!keys.Add(field.Name) || field.Name.ToLowerInvariant() is "certificatefile" or "keyfile" or "masterkeylog" or "sockopt" or "dialerproxy" or "proxysettings") throw Invalid();
                         Validate(field.Value);
                     }
                 }
                 else if (element.ValueKind == JsonValueKind.Array) foreach (var value in element.EnumerateArray()) Validate(value);
             }
             Validate(parsed.RootElement);
-            return JsonNode.Parse(text, documentOptions: new JsonDocumentOptions { MaxDepth = 24 }) as JsonObject ?? throw Invalid();
+            return JsonNode.Parse(text, documentOptions: options) as JsonObject ?? throw Invalid();
         }
         catch (JsonException) { throw Invalid(); }
     }

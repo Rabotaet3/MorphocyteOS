@@ -275,7 +275,7 @@ internal static class SubscriptionImporter
     {
         text = text.Trim().TrimStart('\uFEFF').Trim();
         if (text.Length == 0) throw new InvalidDataException("Сервер вернул пустую подписку.");
-        if (text.Length > MaxBytes || text.Length > ProfileImporter.MaxInputLength && !text.StartsWith('[')) throw new InvalidDataException("В подписке слишком много текста.");
+        if (text.Length > MaxBytes) throw new InvalidDataException("В подписке слишком много текста.");
         if (text.StartsWith('<')) throw new InvalidDataException("Ссылка ведёт на веб-страницу, а не на подписку. Нужна прямая ссылка на конфигурацию.");
         text = DecodeSubscriptionBody(text);
         if (text.StartsWith('{')) return ProfileImporter.Parse(text);
@@ -326,7 +326,10 @@ internal static class SubscriptionImporter
 
     private static ImportedProfile ParseJsonProfiles(string text,bool allowPartial)
     {
-        using var json=JsonDocument.Parse(text,new JsonDocumentOptions { MaxDepth=48 });
+        JsonDocument document;
+        try { document=JsonDocument.Parse(text,ProfileImporter.JsonOptions); }
+        catch(JsonException) { throw new InvalidDataException("Не удалось прочитать JSON-список подписки. Проверь формат и вложенность параметров; текущий профиль не изменён."); }
+        using var json=document;
         if(json.RootElement.GetArrayLength() is 0 or >MaxNodes) throw new InvalidDataException("JSON-подписка не содержит допустимого количества серверов.");
         var nodes=new List<YamlMappingNode>(); var warnings=new List<string>(); var index=0;
         foreach(var profile in json.RootElement.EnumerateArray())

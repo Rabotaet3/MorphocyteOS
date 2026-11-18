@@ -1,36 +1,55 @@
 # Сторонние компоненты MorphocyteOS
 
-Лицензионные файлы входят в каталог `Licenses`. Эти уведомления описывают комплект и не заменяют тексты соответствующих лицензий.
+## sing-box 1.14.4
 
-## Mihomo 1.19.31
+Поставляется неизменённый официальный Windows amd64 бинарник sing-box.exe из sing-box-1.14.4-windows-amd64.zip. Он работает отдельным процессом. Версия Go официального бинарника — 1.26.10.
 
-`mihomo.exe` — отдельный процесс, собранный из исходников MetaCubeX/mihomo commit `ab405bad5beeeac8b003bb01f60f134f6df54471` с Go 1.26.8 и тегом `with_gvisor`. Полное дерево commit, закреплённые исходники Go-зависимостей и инструкция пересборки находятся в `ThirdPartySource/mihomo-v1.19.31-corresponding-source.tar.gz`. Неизменённый upstream snapshot приложен отдельно как `mihomo-v1.19.31.tar.gz`.
+- Upstream commit — c005f35300ce76427dc285481ec5695f5b179cd2.
+- SHA-256 EXE — 8f30682ee198855440d2a7fe070d5d3653793b2d01bb8c85eea88f93bbe7c8b9.
+- SHA-256 официального ZIP — 99185d75d314a07dbba4a130c8ad986cbeb629a07927975636b341ca61f991df.
+- Исходный snapshot — sing-box-v1.14.4.tar.gz.
+- SHA-256 snapshot — 1c4d2b3bf261a8d98e1b026be0bbcddbcb3f53bbca77eb15e8f25f7d4e602e59.
+- Лицензия ядра — Licenses/SingBox-LICENSE.txt.
 
-Лицензия ядра: GNU GPL version 3 (`Licenses/Mihomo-GPL-3.0.txt`). Лицензии зависимостей и сохранённые уведомления: `Licenses/Mihomo-Go/`; они также остаются в vendored исходниках. Отдельные прямые уведомления: `Licenses/Mihomo-kcptun-MIT.txt`, `Licenses/Mihomo-faketcp-MIT.txt`, `Licenses/Mihomo-faketcp-Attribution.txt` и `Licenses/Mihomo-chacha-MIT.txt`.
+Официальный релиз — https://github.com/SagerNet/sing-box/releases/tag/v1.14.4.
 
-SHA-256 поставляемого `mihomo.exe`:
+Соответствующие исходники для пересборки Windows с закреплёнными Go-зависимостями включены в sing-box-v1.14.4-corresponding-source.tar.gz. SHA-256 архива — c0315f9bd59d62b570bd0ad19ade21c4f4f541be3fe5660a73ebfdcece787368.
+Модули проверены командой go mod verify. Их уведомления находятся в vendor и Licenses/SingBox-Go.
+Для пересборки используй Build-SingBox.ps1 и официальный Go 1.26.10. Скрипт использует vendor. Результат пересборки зависит от toolchain и параметров сборки.
 
-`4a2275f385fc11106f7d819c16b510fcca5e4996b5e902d295bfc78ac29c5530`
+Из vendored-дерева удалены готовые статические и динамические библиотеки Cronet для других ОС. Исходный код и уведомления сохранены. В программе отсутствует поддержка Naive outbound, libcronet.dll отдельно не поставляется.
 
-## sing-box 1.14.2
+## Xray 26.11.9
 
-`sing-box.exe` — неизменённое официальное Windows amd64 ядро из релиза SagerNet/sing-box v1.14.2. Оно запускается отдельным процессом, как альтернативный движок; MorphocyteOS не является продуктом SagerNet и не заявляет связи с upstream.
+Поставляется неизменённый официальный Windows amd64 бинарник xray.exe из Xray-windows-64.zip. Он работает отдельным процессом. Версия Go официального бинарника — 1.27.3.
 
-SHA-256 исполняемого файла: `7bbef1dea9189ee12799ae834ea4b4658355da25c47a21ad8804904c0ccd9410`.
-SHA-256 официального ZIP: `c2d8bfff918755808781dfdeeb8581b6c91eb3a243d9a7b55483cfc0c0684d32`.
+- Upstream commit — 676eaf66f8f05d4d558ee7a74b4736623d3feeb9.
+- SHA-256 EXE — 1ca7a2cf61ba2c5d20b21a80d405b57933939751081cb289f07bd8ddf7cc3185.
+- SHA-256 официального ZIP — 1262522266337b824f07beb8e1375786b437683b3890105469088f8e17e0a69d.
+- Исходный snapshot — xray-v26.11.9.tar.gz.
+- SHA-256 snapshot — adccbbb35f9efccae0884bfd46b9d439daee60aa543efa19e775799c74589bab.
+- Лицензия ядра — Licenses/Xray-MPL-2.0.txt.
 
-Лицензия: GPL-3.0-or-later с дополнительным условием upstream об имени и ассоциации. Уведомление находится в `Licenses/SingBox-LICENSE.txt`, полный GPL — в `Licenses/SingBox-GPL-3.0.txt`. Неизменённый snapshot исходников: `ThirdPartySource/sing-box-v1.14.2.tar.gz` (SHA-256 `67dd8f8c37ecaaadcfcafad1f0827eed4b034c963b86fd3aa5c0d7a36876845d`). Соответствующие исходники с закреплёнными Go-зависимостями для Windows находятся в `ThirdPartySource/sing-box-v1.14.2-corresponding-source.tar.gz` (SHA-256 `c2b3d9ae082a364aa082e120931b1df44e68e63aa27c7ca51201b4ae19660d75`), уведомления зависимостей — в `Licenses/SingBox-Go`. Контрольные суммы модулей проверены Go; из vendored-дерева исключены неиспользуемые готовые нативные библиотеки других платформ. Инструкция Windows-пересборки: `ThirdPartySource/Build-SingBox.ps1`; побитное совпадение с официальным бинарником не обещается.
+Официальный релиз — https://github.com/XTLS/Xray-core/releases/tag/v26.11.9.
 
-Официальные ссылки: https://github.com/SagerNet/sing-box/releases/tag/v1.14.2 и https://github.com/SagerNet/sing-box/tree/v1.14.2.
+Xray использует локальные SOCKS-входы и подключения к VPN-серверам. Геоданные, Wintun и запускающие скрипты из upstream ZIP в комплект MorphocyteOS не входят.
 
-`libcronet.dll` из upstream ZIP не входит в комплект: Naive outbound в этом адаптере не поддерживается.
+## Mihomo 1.19.34
 
-## Xray 26.10.31
+Поставляется неизменённый официальный Windows amd64 бинарник mihomo.exe из mihomo-windows-amd64-v1-v1.19.34.zip. Он работает отдельным процессом. Версия Go официального бинарника — 1.26.11.
 
-`ThirdPartySource/Engine/xray.exe` — неизменённый официальный Windows x64 бинарник XTLS/Xray-core v26.10.31 (commit `a4a3dff`). SHA-256: `d5b558191cccb1e92a5772b68b8cab67717b26f634b0f15153215f65ae982a7e`.
-Он запускается отдельным вспомогательным процессом только для подключений с расширениями Xray; собственный TUN Xray не используется. Геоданные, Wintun и запускающие скрипты из upstream ZIP не включены.
+- Upstream commit — 0455d0d28c4526937380505153e65a843d8612e8.
+- SHA-256 EXE — 513ec525d782e29e00dd92b25f25623b3811a9b2fc5c51d95e1190bcc7fa0d3c.
+- SHA-256 официального ZIP — 703e325bfeee582f874b06d054eaae55ab7c194645d1835411685aafa85da5ea.
+- Исходный snapshot — mihomo-v1.19.34.tar.gz.
+- SHA-256 snapshot — db0cc4145fe4024e9c2386bd4768bf23a69c8789610d56d7243819e2f77c0cfe.
+- Лицензия ядра — Licenses/Mihomo-GPL-3.0.txt.
 
-Лицензия MPL 2.0: `Licenses/Xray-MPL-2.0.txt`. Исходники этой версии: `ThirdPartySource/xray-v26.10.31.tar.gz` (SHA-256 `be44f95d497ad4ba6e9d1dcfbbd71e8e51f812aff077d4c15c9947eff5e3046a`). Исходники и метаданные Go-зависимостей доступны в https://github.com/XTLS/Xray-core/tree/v26.10.31 ; оригинальный бинарный пакет — https://github.com/XTLS/Xray-core/releases/tag/v26.10.31 .
+Официальный релиз — https://github.com/MetaCubeX/mihomo/releases/tag/v1.19.34.
+
+Соответствующие исходники для пересборки Windows с закреплёнными Go-зависимостями включены в mihomo-v1.19.34-corresponding-source.tar.gz. SHA-256 архива — 02d9c3fbcd456677c35129df1aeef2c429d09dc9d14cfb2332af6ae204354c57.
+Модули проверены командой go mod verify. Их уведомления находятся в vendor и Licenses/Mihomo-Go.
+Для пересборки используй Build-Mihomo.ps1 и официальный Go 1.26.11. Скрипт использует vendor. Результат пересборки зависит от toolchain и параметров сборки.
 
 ## YamlDotNet 18.1.0
 

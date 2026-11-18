@@ -27,7 +27,13 @@ internal partial class Program
         {
             try
             {
-                if (args.Contains("--subscription-page-only"))
+                if (args.Contains("--diagnostics-audit-only"))
+                {
+                    var scratch = Path.Combine(AppContext.BaseDirectory, "audit-" + Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(scratch);
+                    Console.WriteLine($"TOTAL: {await RunDiagnosticsAuditChecks(scratch, args[0])} diagnostic load checks passed.");
+                }
+                else if (args.Contains("--subscription-page-only"))
                 {
                     var scratch = Path.Combine(AppContext.BaseDirectory, "integration-" + Guid.NewGuid().ToString("N"));
                     Directory.CreateDirectory(scratch);
@@ -157,6 +163,7 @@ internal partial class Program
             passed += await RunDesktopFeatureChecks(scratch, fakeExe);
             passed += await RunRealDiagnosticsChecks(scratch);
             passed += await RunTelemetryChecks();
+            passed += await RunDiagnosticsAuditChecks(scratch, fakeExe);
             passed += await RunTunnelAndSpeedChecks(scratch, fakeExe);
             passed += await RunRecoveryReliabilityChecks(scratch, fakeExe);
             passed += await RunUiReliabilityChecks(scratch, fakeExe);

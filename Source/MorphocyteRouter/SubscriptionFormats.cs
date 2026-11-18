@@ -59,7 +59,7 @@ internal static class SubscriptionFormats
                 if(stream[key] is JsonObject tls)
                     foreach(var flag in new[]{"allowInsecure","show"}) if(tls[flag]?.ToJsonString()=="false") tls.Remove(flag);
         }
-        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Sort(outbound)!.ToJsonString())));
+        return Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(Sort(outbound)!.ToJsonString(ProfileImporter.JsonWriteOptions))));
     }
 
     private static JsonNode? Sort(JsonNode? value) => value switch {

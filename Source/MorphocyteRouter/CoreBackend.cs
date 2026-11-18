@@ -5,9 +5,9 @@ namespace MorphocyteRouter;
 
 internal static class CoreBackend
 {
-    internal const string SingBoxVersion = "1.14.2";
+    internal const string SingBoxVersion = "1.14.4";
     internal const string SingBoxFileName = "sing-box.exe";
-    internal const string SingBoxHash = "7BBEF1DEA9189EE12799AE834EA4B4658355DA25C47A21AD8804904C0CCD9410";
+    internal const string SingBoxHash = "8F30682EE198855440D2A7FE070D5D3653793B2D01BB8C85EEA88F93BBE7C8B9";
     // Stable releases before 1.2.7 allow managed files in ThirdPartySource but
     // reject a new root executable. Keep the bundled engine update-compatible;
     // root fallback also supports existing test/custom installations.

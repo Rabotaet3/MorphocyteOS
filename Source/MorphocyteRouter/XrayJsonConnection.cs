@@ -20,7 +20,7 @@ internal static class XrayJsonConnection
         var name=profile.TryGetProperty("remarks",out var label)&&label.ValueKind==JsonValueKind.String?label.GetString():null;
         name=ProfileImporter.ValidateConnectionName(string.IsNullOrWhiteSpace(name)?$"Сервер {index}":name,renameReserved:true);
         return new YamlMappingNode { {"name",name},{"type",XrayProfile.NodeType},{"server",peer["address"]!.ToString()},
-            {"port",peer["port"]!.ToString()},{"xray-outbound",outbound.ToJsonString()} };
+            {"port",peer["port"]!.ToString()},{"xray-outbound",outbound.ToJsonString(ProfileImporter.JsonWriteOptions)} };
     }
 
     internal static JsonObject FromNode(YamlMappingNode node)
@@ -40,8 +40,8 @@ internal static class XrayJsonConnection
         try
         {
             if(text.Length>ProfileImporter.MaxInputLength) throw Invalid();
-            using var document=JsonDocument.Parse(text,new JsonDocumentOptions { MaxDepth=48 }); XrayFullProfile.ValidateTree(document.RootElement);
-            var outbound=JsonNode.Parse(text)!.AsObject();
+            using var document=JsonDocument.Parse(text,ProfileImporter.JsonOptions); XrayFullProfile.ValidateTree(document.RootElement);
+            var outbound=JsonNode.Parse(text,documentOptions:ProfileImporter.JsonOptions)!.AsObject();
             if(outbound.Any(item=>item.Key is not ("tag" or "protocol" or "settings" or "streamSettings" or "mux" or "sendThrough" or "targetStrategy"))) throw Invalid();
             if(outbound["protocol"]?.ToString() is not ("vless" or "hysteria")) throw Invalid();
             if(outbound["streamSettings"]?["sockopt"]?["dialerProxy"] is not null) throw Invalid();

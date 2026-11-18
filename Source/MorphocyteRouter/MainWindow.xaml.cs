@@ -30,6 +30,9 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer _logRefreshTimer;
     private readonly Queue<string> _logLines = new();
     private readonly ConcurrentQueue<string> _pendingCoreOutput = new();
+    private long _discardedCoreOutput;
+    private const int MaxPendingCoreLines = 5000;
+    private const int MaxCoreLineLength = 8192;
     private const int MaxDisplayedLogLines = 2500;
     private const int MaxCoreLinesPerRefresh = 1000;
     private readonly string _logPath;
@@ -94,7 +97,7 @@ public partial class MainWindow : Window
         InitializeConnectionRecovery();
         LogText.Loaded += LogText_Loaded;
 
-        _core.Output += message => _pendingCoreOutput.Enqueue(message);
+        _core.Output += QueueCoreOutput;
         _core.Exited += () =>
         {
             // Capture the stop intent on the event thread: its UI callback may run
@@ -628,11 +631,31 @@ public partial class MainWindow : Window
 
     private static string FormatLogEntry(string message) => $"[{DateTime.Now:yyyy-MM-dd HH:mm:ss}] {message.Replace('\r', ' ').Replace('\n', ' ').Trim()}";
 
+    private void QueueCoreOutput(string message)
+    {
+        if (message.Length > MaxCoreLineLength) message = message[..(MaxCoreLineLength - 1)] + "…";
+        lock (_pendingCoreOutput)
+        {
+            if (_pendingCoreOutput.Count >= MaxPendingCoreLines && _pendingCoreOutput.TryDequeue(out _))
+                _discardedCoreOutput++;
+            _pendingCoreOutput.Enqueue(message);
+        }
+    }
+
     private void FlushCoreOutput()
     {
-        var batch = new List<string>();
-        while (batch.Count < MaxCoreLinesPerRefresh && _pendingCoreOutput.TryDequeue(out var message))
-            batch.Add(FormatLogEntry(message));
+        var messages = new List<string>();
+        long discarded;
+        lock (_pendingCoreOutput)
+        {
+            discarded = _discardedCoreOutput;
+            _discardedCoreOutput = 0;
+            while (messages.Count < MaxCoreLinesPerRefresh && _pendingCoreOutput.TryDequeue(out var message))
+                messages.Add(message);
+        }
+        var batch = messages.Select(FormatLogEntry).ToList();
+        if (discarded > 0)
+            batch.Insert(0, FormatLogEntry($"Журнал перегружен: пропущено строк — {discarded}. Сохраняются последние сообщения ядра."));
         if (batch.Count == 0) return;
 
         AppendLogEntries(batch);

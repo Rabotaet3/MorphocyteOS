@@ -13,8 +13,8 @@ if (Test-Path -LiteralPath $OutputPath) {
 }
 Set-Location -LiteralPath $PSScriptRoot
 $coreSource = Join-Path $PSScriptRoot 'Packaging/Engine/mihomo.exe'
-if (-not (Test-Path -LiteralPath $coreSource) -or (Get-FileHash -LiteralPath $coreSource -Algorithm SHA256).Hash -ne '4A2275F385FC11106F7D819C16B510FCCA5E4996B5E902D295BFC78AC29C5530') {
-    throw 'Missing or modified source-built Mihomo executable in Packaging/Engine/mihomo.exe.'
+if (-not (Test-Path -LiteralPath $coreSource) -or (Get-FileHash -LiteralPath $coreSource -Algorithm SHA256).Hash -ne '513EC525D782E29E00DD92B25F25623B3811A9B2FC5C51D95E1190BCC7FA0D3C') {
+    throw 'Missing or modified official Mihomo executable in Packaging/Engine/mihomo.exe.'
 }
 
 function Run-Dotnet {
@@ -48,8 +48,8 @@ if (-not $SkipTests) {
 Run-Dotnet -Arguments @('publish', 'MorphocyteRouter/MorphocyteRouter.csproj', '-c', 'Release', '-r', 'win-x64', '--self-contained', 'true', '-p:PublishSingleFile=true', '-p:DebugType=None', '-o', $OutputPath)
 Copy-Item -LiteralPath $coreSource -Destination (Join-Path $OutputPath 'mihomo.exe') -Force
 $singBoxSource = Join-Path $PSScriptRoot 'Packaging/Engine/sing-box.exe'
-if (-not (Test-Path -LiteralPath $singBoxSource) -or (Get-FileHash -LiteralPath $singBoxSource -Algorithm SHA256).Hash -ne '7BBEF1DEA9189EE12799AE834EA4B4658355DA25C47A21AD8804904C0CCD9410') {
-    throw 'Missing or modified official sing-box 1.14.2 executable.'
+if (-not (Test-Path -LiteralPath $singBoxSource) -or (Get-FileHash -LiteralPath $singBoxSource -Algorithm SHA256).Hash -ne '8F30682EE198855440D2A7FE070D5D3653793B2D01BB8C85EEA88F93BBE7C8B9') {
+    throw 'Missing or modified official sing-box 1.14.4 executable.'
 }
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot 'release-source.json') -Destination (Join-Path $OutputPath 'release-source.json')
 foreach ($name in @('README.md')) {
@@ -66,8 +66,8 @@ $engineDestination = Join-Path $OutputPath 'ThirdPartySource/Engine'
 New-Item -ItemType Directory -Path $engineDestination -Force | Out-Null
 Copy-Item -LiteralPath $singBoxSource -Destination (Join-Path $engineDestination 'sing-box.exe')
 $xraySource = Join-Path $PSScriptRoot 'Packaging/Engine/xray.exe'
-if (-not (Test-Path -LiteralPath $xraySource) -or (Get-FileHash -LiteralPath $xraySource -Algorithm SHA256).Hash -ne 'D5B558191CCCB1E92A5772B68B8CAB67717B26F634B0F15153215F65AE982A7E') {
-    throw 'Missing or modified official Xray 26.10.31 executable.'
+if (-not (Test-Path -LiteralPath $xraySource) -or (Get-FileHash -LiteralPath $xraySource -Algorithm SHA256).Hash -ne '1CA7A2CF61BA2C5D20B21A80D405B57933939751081CB289F07BD8DDF7CC3185') {
+    throw 'Missing or modified official Xray 26.11.9 executable.'
 }
 Copy-Item -LiteralPath $xraySource -Destination (Join-Path $engineDestination 'xray.exe')
 [xml]$project = Get-Content -LiteralPath (Join-Path $PSScriptRoot 'MorphocyteRouter/MorphocyteRouter.csproj') -Raw

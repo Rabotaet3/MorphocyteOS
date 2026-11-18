@@ -70,7 +70,10 @@ internal partial class Program
             Check(border.CornerRadius.TopLeft == 15 && Equals(border.Background, ThemeManager.GetBrush("ThemeTrayBackground")), "tray popup has a rounded themed gradient surface");
             Check(border.Background is LinearGradientBrush, "tray background uses the full main-theme gradient rather than a near-black popup color");
             CaptureInteraction(menu, Path.Combine(root, "tray-amethyst.png")); menu.IsOpen = false;
-            window.HideToTray(); menu.IsOpen = true;
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            window.HideToTray();
+            await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            menu.IsOpen = true;
             await Task.Delay(130);
             Check(!window.IsVisible && menu.IsVisible, "tray menu opens while the main window is hidden");
             menu.IsOpen = false;

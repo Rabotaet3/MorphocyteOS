@@ -5,6 +5,38 @@ using System.Text;
 using MorphocyteRouter;
 using YamlDotNet.RepresentationModel;
 
+if(args.Length==1&&args[0]=="--inspect-private-views")
+{
+    // Offline reproduction of format negotiation. Only paths arrive on stdin;
+    // payloads, connection names and engine error details are never printed.
+    using var deadline=new CancellationTokenSource(TimeSpan.FromSeconds(60));
+    try
+    {
+        var native=await File.ReadAllTextAsync(Console.ReadLine()!,deadline.Token);
+        var desktop=await File.ReadAllTextAsync(Console.ReadLine()!,deadline.Token);
+        using var client=new HttpClient(new FakeHandler((message,_)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {
+            Content=new StringContent(message.Headers.UserAgent.ToString().Contains("Happ/compatible")?desktop:native) })));
+        var merged=await SubscriptionImporter.ImportAsync("https://subscription.example/offline",deadline.Token,client,
+            hardwareId:"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",allowPartial:true);
+        var home=Path.Combine(Path.GetTempPath(),"MorphocyteOS-private-views-"+Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(home);
+        try
+        {
+            var path=Path.Combine(home,"profile.yaml");
+            await File.WriteAllTextAsync(path,merged.Yaml,deadline.Token);
+            var offlineDocument=ClashConfigDocument.Load(path);
+            Console.WriteLine("Merged servers="+offlineDocument.ConnectionCount+"; skipped="+merged.CompatibilityWarnings.Count);
+            var engine=Path.GetFullPath(Path.Combine(AppContext.BaseDirectory,"../../../../Packaging/Engine/sing-box.exe"));
+            var validation=await CoreProcessManager.ValidateAsync(engine,path,deadline.Token);
+            Console.WriteLine("Both engines accepted="+validation.Success+"; no live VPN started.");
+            if(!validation.Success) Environment.ExitCode=1;
+        }
+        finally { Directory.Delete(home,true); }
+    }
+    catch(Exception error) { Console.WriteLine("Offline inspection failed: "+error.GetType().Name); Environment.ExitCode=1; }
+    return;
+}
+
 if(args.Length==1&&args[0]=="--probe-private-refreshed")
 {
     var settingsPath=Console.ReadLine()!; var number=Console.ReadLine()!;

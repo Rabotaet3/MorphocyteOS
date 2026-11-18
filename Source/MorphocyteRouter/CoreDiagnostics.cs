@@ -53,16 +53,16 @@ internal sealed class CoreDiagnostics : IDisposable
     }
     internal async Task<CoreSnapshot> ReadAsync(string? group, CancellationToken token)
     {
-        using var version = await ReadJsonAsync("version", token);
-        var connections = await ReadConnectionsAsync(token);
-        var selection = string.IsNullOrWhiteSpace(group) ? "" : await ReadSelectionAsync(group, token);
-        return new CoreSnapshot(Text(version.RootElement, "version"), connections.Take(500).ToArray(), selection);
+        using var version = await ReadJsonAsync("version", token).ConfigureAwait(false);
+        var connections = await ReadConnectionsAsync(token, maxConnections: 500).ConfigureAwait(false);
+        var selection = string.IsNullOrWhiteSpace(group) ? "" : await ReadSelectionAsync(group, token).ConfigureAwait(false);
+        return new CoreSnapshot(Text(version.RootElement, "version"), connections, selection);
     }
 
-    internal async Task<IReadOnlyList<ConnectionActivity>> ReadConnectionsAsync(CancellationToken token)
+    internal async Task<IReadOnlyList<ConnectionActivity>> ReadConnectionsAsync(CancellationToken token, int maxConnections = 10000)
     {
-        using var json = await ReadJsonAsync("connections", token, maxBytes: 8_388_608);
-        return ParseConnections(json.RootElement);
+        using var json = await ReadJsonAsync("connections", token, maxBytes: 8_388_608).ConfigureAwait(false);
+        return ParseConnections(json.RootElement, maxConnections);
     }
 
     internal async Task<string> ReadSelectionAsync(string route, CancellationToken token)
@@ -196,22 +196,25 @@ internal sealed class CoreDiagnostics : IDisposable
 
     private async Task<JsonDocument> ReadJsonAsync(string path, CancellationToken token, bool allowDnsDisabled = false, int maxBytes = 2_097_152)
     {
-        using var response = await _client.GetAsync(path, HttpCompletionOption.ResponseHeadersRead, token);
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(_client.Timeout);
+        token = deadline.Token;
+        using var response = await _client.GetAsync(path, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false);
         if (!(allowDnsDisabled && response.StatusCode == HttpStatusCode.InternalServerError)) response.EnsureSuccessStatusCode();
         if (response.Content.Headers.ContentLength > maxBytes) throw new IOException("Слишком большой ответ ядра.");
         using var memory = new MemoryStream();
-        await using var stream = await response.Content.ReadAsStreamAsync(token);
+        await using var stream = await response.Content.ReadAsStreamAsync(token).ConfigureAwait(false);
         var buffer = new byte[8192];
         int count;
-        while ((count = await stream.ReadAsync(buffer, token)) > 0)
+        while ((count = await stream.ReadAsync(buffer, token).ConfigureAwait(false)) > 0)
         {
             if (memory.Length + count > maxBytes) throw new IOException("Слишком большой ответ ядра.");
             memory.Write(buffer, 0, count);
         }
-        return JsonDocument.Parse(memory.ToArray(), new JsonDocumentOptions { MaxDepth = 32 });
+        return JsonDocument.Parse(memory.GetBuffer().AsMemory(0, (int)memory.Length), new JsonDocumentOptions { MaxDepth = 32 });
     }
 
-    internal static IReadOnlyList<ConnectionActivity> ParseConnections(JsonElement root)
+    internal static IReadOnlyList<ConnectionActivity> ParseConnections(JsonElement root, int maxConnections = 10000)
     {
         if (!root.TryGetProperty("connections", out var array))
             throw new InvalidDataException("Ядро не вернуло список соединений.");
@@ -221,6 +224,7 @@ internal sealed class CoreDiagnostics : IDisposable
         var output = new List<ConnectionActivity>();
         foreach (var connection in array.EnumerateArray().Take(10000))
         {
+            if (output.Count >= maxConnections) break;
             if (!connection.TryGetProperty("metadata", out var metadata)) continue;
             var destination = Text(metadata, "host");
             if (destination.Length == 0) destination = Text(metadata, "destinationIP");

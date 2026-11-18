@@ -33,7 +33,7 @@ internal static class XrayFullProfile
         var name=ProfileImporter.ValidateConnectionName(root["remarks"]?.ToString() is { Length:>0 } title?title:"Авто · Xray",renameReserved:true);
         var node=new YamlMappingNode {
             {"name",name},{"type",NodeType},{"server",peer["address"]!.ToString()},{"port",peer["port"]!.ToString()},
-            {"xray-json",root.ToJsonString()}
+            {"xray-json",root.ToJsonString(ProfileImporter.JsonWriteOptions)}
         };
         return ProfileImporter.BuildConnections([node],"Xray JSON · DNS и маршрутизация провайдера · Автовыбор",false);
     }
@@ -53,9 +53,9 @@ internal static class XrayFullProfile
         try
         {
             if(text.Length>ProfileImporter.MaxInputLength) throw Invalid();
-            using var document=JsonDocument.Parse(text,new JsonDocumentOptions { MaxDepth=48 });
+            using var document=JsonDocument.Parse(text,ProfileImporter.JsonOptions);
             ValidateTree(document.RootElement);
-            var root=JsonNode.Parse(text)!.AsObject();
+            var root=JsonNode.Parse(text,documentOptions:ProfileImporter.JsonOptions)!.AsObject();
             if(root.Any(item=>item.Key is not ("dns" or "routing" or "inbounds" or "outbounds" or "policy" or "burstObservatory" or "observatory" or "remarks" or "meta" or "log" or "stats"))) throw Invalid();
             if(root["routing"]?["script"] is not null) throw Invalid();
             if(root["outbounds"] is not JsonArray outbounds || outbounds.Count is 0 or >64) throw Invalid();

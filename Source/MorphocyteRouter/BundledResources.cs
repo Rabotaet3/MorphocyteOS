@@ -5,8 +5,8 @@ namespace MorphocyteRouter;
 
 internal static class BundledResources
 {
-    internal const string CoreVersion = "1.19.31";
-    internal const string CoreHash = "4A2275F385FC11106F7D819C16B510FCCA5E4996B5E902D295BFC78AC29C5530";
+    internal const string CoreVersion = "1.19.34";
+    internal const string CoreHash = "513EC525D782E29E00DD92B25F25623B3811A9B2FC5C51D95E1190BCC7FA0D3C";
     internal const string CoreFileName = "mihomo.exe";
     internal static Stream Open(string name) => typeof(BundledResources).Assembly.GetManifestResourceStream("MorphocyteOS." + name)
         ?? throw new IOException("В сборке отсутствует ресурс: " + name);

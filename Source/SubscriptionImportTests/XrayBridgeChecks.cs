@@ -1,9 +1,13 @@
 using System.Diagnostics;
 using System.IO;
 using System.Net;
+using System.Net.Http;
 using System.Net.Sockets;
 using System.Text;
+using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Security.Cryptography;
+using System.Security.Cryptography.X509Certificates;
 using MorphocyteRouter;
 using YamlDotNet.RepresentationModel;
 
@@ -53,9 +57,64 @@ internal static class XrayBridgeChecks
             Reject(() => CoreBackend.RuntimeText("mihomo.exe",document,api,false,0), "Mihomo cannot silently discard Xray extension nodes");
             foreach (var suffix in new[] { "fm=null", "fm=%7B%22tcp%22%3A%5B%5D%2C%22tcp%22%3A%5B%5D%7D", "fm=%7B%22unknown%22%3Atrue%7D", "pcs=bad", "pcs="+new string('a',64)+"&insecure=1", "fm=%7B%22tcp%22%3A%5B%7B%22certificateFile%22%3A%22secret.pem%22%7D%5D%7D" })
                 Reject(() => ProfileImporter.Parse($"vless://{Id}@vpn.example:443?security=tls&type=tcp&{suffix}#Invalid"), "invalid or unsafe Xray settings rejected: "+suffix.Split('=')[0]);
+            await DeepMasks(home,check);
             await LocalChain(home,singBox,check);
         }
         finally { Directory.Delete(home,true); }
+    }
+
+    private static async Task DeepMasks(string home, Action<bool,string> check)
+    {
+        // Nested transforms exceed the JSON defaults of 24/48/64. Generate all
+        // data locally; no provider URLs, IDs or certificates enter fixtures.
+        JsonObject expression=new() { ["op"]="add", ["args"]=new JsonArray(new JsonObject { ["u64"]=1 },new JsonObject { ["u64"]=2 }) };
+        for(var i=0;i<22;i++) expression=new JsonObject { ["op"]="add",["args"]=new JsonArray(new JsonObject { ["transform"]=expression },new JsonObject { ["u64"]=1 }) };
+        expression=new JsonObject { ["op"]="be16",["args"]=new JsonArray(new JsonObject { ["transform"]=expression }) };
+        using var key=RSA.Create(2048);
+        var request=new CertificateRequest("CN=fixture.example",key,HashAlgorithmName.SHA256,RSASignaturePadding.Pkcs1);
+        using var certificate=request.CreateSelfSigned(DateTimeOffset.UtcNow.AddDays(-1),DateTimeOffset.UtcNow.AddDays(1));
+        var tls=new JsonObject { ["allowInsecure"]=false,["disableSystemRoot"]=true,["certificates"]=new JsonArray(new JsonObject {
+            ["usage"]="verify",["certificate"]=new JsonArray(certificate.ExportCertificatePem().Split('\n').Select(line=>(JsonNode?)JsonValue.Create(line)).ToArray()) }) };
+        var mask=new JsonObject { ["udp"]=new JsonArray(
+            new JsonObject { ["type"]="realm",["settings"]=new JsonObject { ["url"]="realm://fixture@127.0.0.1/channel",["stunServers"]=new JsonArray("127.0.0.1:3478"),["tlsConfig"]=tls } },
+            new JsonObject { ["type"]="header-custom",["settings"]=new JsonObject { ["mode"]="prefix",["client"]=new JsonArray(new JsonObject { ["transform"]=expression }) } }) };
+        string Serialize(JsonNode value)=>value.ToJsonString(ProfileImporter.JsonWriteOptions);
+        string Link(JsonNode value)=>"hy2://fixture@127.0.0.1:8443?sni=fixture.example&fm="+Uri.EscapeDataString(Serialize(value))+"#Deep";
+        var link=Link(mask);
+        var outbound=XrayProfile.Parse(link).Outbound;
+        outbound["tag"]="t1";
+        var ordinary=new JsonObject { ["remarks"]="Deep",["outbounds"]=new JsonArray(outbound.DeepClone()) };
+        var full=JsonNode.Parse(FullProfileChecks.Fixture("Deep auto"))!;
+        full["outbounds"]![0]=outbound.DeepClone();
+        var list=Serialize(new JsonArray(full.DeepClone(),ordinary));
+        check(ProfileImporter.Parse(Serialize(full)).CompatibilityWarnings.Count==0,"deep automatic profiles import directly without losing FinalMask");
+        using var client=new HttpClient(new FakeHandler((request,_)=>Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) {
+            Content=new StringContent(request.Headers.UserAgent.ToString().Contains("Happ/compatible")?list:link+"\nvless://"+Id+"@127.0.0.1:9?security=none#Native") })));
+        var imported=await SubscriptionImporter.ImportAsync("https://subscription.example/deep",default,client,hardwareId:"aaaaaaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee",allowPartial:true);
+        var document=ClashConfigDocument.Parse(Path.Combine(home,"deep.yaml"),imported.Yaml);
+        check(imported.CompatibilityWarnings.Count==0&&document.ConnectionCount==3,"deep native and desktop views merge and deduplicate without skipped servers");
+        var nodes=document.ProxyNodes.ToArray();
+        check(JsonNode.DeepEquals(XrayJsonConnection.FromNode(nodes[1])["streamSettings"]!["finalmask"],mask),"deep transforms and inline CA certificates survive YAML storage and reload");
+        using var plan=XrayBridgePlan.Create(document);
+        foreach(var process in plan.ProcessPlans)
+        {
+            var runtime=JsonNode.Parse(process.Configuration,documentOptions:ProfileImporter.JsonOptions)!;
+            check(JsonNode.DeepEquals(runtime["outbounds"]![0]!["streamSettings"]!["finalmask"],mask),"ordinary and full runtime writers preserve every nested mask parameter");
+        }
+        check((await plan.ValidateAsync(default)).Success,"bundled Xray validates deep transforms and embedded CA certificates in both runtime forms");
+        var unsafeMask=mask.DeepClone();
+        unsafeMask["udp"]![0]!["settings"]!["tlsConfig"]!["certificateFile"]="C:/private.pem";
+        try { ProfileImporter.Parse(Link(unsafeMask)); throw new Exception("Unsafe nested mask accepted"); }
+        catch(InvalidDataException) { check(true,"nested local certificate dependencies remain rejected"); }
+        var insecure=mask.DeepClone(); insecure["udp"]![0]!["settings"]!["tlsConfig"]!["allowInsecure"]=true;
+        try { ProfileImporter.Parse(Link(insecure)); throw new Exception("Insecure nested TLS accepted"); }
+        catch(InvalidDataException) { check(true,"nested masks cannot silently disable TLS verification"); }
+        var excessive=new string('[',ProfileImporter.MaxJsonDepth+1)+"0"+new string(']',ProfileImporter.MaxJsonDepth+1);
+        try { SubscriptionImporter.ParseContent(excessive,allowPartial:true); throw new Exception("Unbounded depth accepted"); }
+        catch(InvalidDataException) { check(true,"excessive JSON nesting produces a controlled import error"); }
+        var tooDeep=new JsonObject { ["udp"]=JsonNode.Parse(excessive,documentOptions:new JsonDocumentOptions {MaxDepth=256}) };
+        try { ProfileImporter.Parse(Link(tooDeep)); throw new Exception("Unbounded mask accepted"); }
+        catch(InvalidDataException) { check(true,"excessive share-link nesting remains bounded before runtime generation"); }
     }
 
     private static int Port() { using var tcp=new TcpListener(IPAddress.Loopback,0); tcp.Start(); return ((IPEndPoint)tcp.LocalEndpoint).Port; }

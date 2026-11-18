@@ -78,6 +78,45 @@ Directory.CreateDirectory(scratch);
 var passed = 0;
 void Check(bool value, string name) { if (!value) throw new Exception("FAIL: " + name); Console.WriteLine("PASS: " + name); passed++; }
 void Reject(Action action, string name) { try { action(); } catch { Check(true, name); return; } throw new Exception("FAIL: accepted " + name); }
+var launchAttempts = 0;
+var started = await CoreProcessManager.StartProcessWithRetryAsync(() =>
+{
+    if (++launchAttempts < 3) throw new System.ComponentModel.Win32Exception(32);
+    return "started";
+}, default);
+Check(started == "started" && launchAttempts == 3, "a temporary executable sharing violation is retried before starting the core");
+launchAttempts = 0;
+try
+{
+    await CoreProcessManager.StartProcessWithRetryAsync<int>(() => { launchAttempts++; throw new System.ComponentModel.Win32Exception(33); }, default);
+    throw new Exception("Persistent executable lock accepted");
+}
+catch (System.ComponentModel.Win32Exception error) when (error.NativeErrorCode == 33)
+{ Check(launchAttempts == 6, "a persistent executable lock remains a bounded startup failure"); }
+launchAttempts = 0;
+try
+{
+    await CoreProcessManager.StartProcessWithRetryAsync<int>(() => { launchAttempts++; throw new System.ComponentModel.Win32Exception(5); }, default);
+    throw new Exception("Access denied accepted");
+}
+catch (System.ComponentModel.Win32Exception error) when (error.NativeErrorCode == 5)
+{ Check(launchAttempts == 1, "access denial is returned immediately without retrying unrelated startup errors"); }
+using (var cancelLaunch = new CancellationTokenSource())
+{
+    launchAttempts = 0;
+    try
+    {
+        await CoreProcessManager.StartProcessWithRetryAsync<int>(() =>
+        {
+            launchAttempts++;
+            cancelLaunch.Cancel();
+            throw new System.ComponentModel.Win32Exception(32);
+        }, cancelLaunch.Token);
+        throw new Exception("Canceled launch retried");
+    }
+    catch (OperationCanceledException)
+    { Check(launchAttempts == 1, "canceling startup interrupts the retry delay before another launch"); }
+}
 var configText = """
 # keep header
 mixed-port: 7890

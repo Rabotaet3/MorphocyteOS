@@ -20,6 +20,11 @@ internal sealed record ImportedProfile(string Yaml, string Description, bool Ins
 internal static partial class ProfileImporter
 {
     internal const int MaxInputLength = 262144;
+    // FinalMask transforms can be deeply nested. Use the same bounded reader
+    // throughout import and reload; runtime envelopes need extra writer room.
+    internal const int MaxJsonDepth = 128;
+    internal static readonly JsonDocumentOptions JsonOptions = new() { MaxDepth = MaxJsonDepth };
+    internal static readonly JsonSerializerOptions JsonWriteOptions = new() { MaxDepth = MaxJsonDepth + 16 };
     private const string NodeName = "Подключение";
 
     internal static ImportedProfile Parse(string input)
@@ -40,7 +45,7 @@ internal static partial class ProfileImporter
         {
             try
             {
-            using var document=JsonDocument.Parse(text);
+            using var document=JsonDocument.Parse(text, JsonOptions);
             return XrayFullProfile.IsFull(document.RootElement)?XrayFullProfile.Import(text):FromJson(text);
             }
             catch(JsonException) { throw new InvalidDataException("Некорректный JSON-профиль. Проверь формат исходной конфигурации."); }
@@ -129,7 +134,7 @@ internal static partial class ProfileImporter
     private static ImportedProfile FromJson(string text)
     {
         JsonDocument json;
-        try { json = JsonDocument.Parse(text, new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip, MaxDepth = 64 }); }
+        try { json = JsonDocument.Parse(text, new JsonDocumentOptions { AllowTrailingCommas = true, CommentHandling = JsonCommentHandling.Skip, MaxDepth = MaxJsonDepth }); }
         catch (JsonException) { throw new InvalidDataException("Не удалось прочитать JSON. Проверь скобки, кавычки и формат Xray."); }
         using (json)
         {

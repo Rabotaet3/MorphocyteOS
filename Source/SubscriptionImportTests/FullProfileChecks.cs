@@ -86,6 +86,18 @@ internal static class FullProfileChecks
             simple["outbounds"]![0]!["mux"]=new JsonObject { ["enabled"]=true,["concurrency"]=-1,["xudpConcurrency"]=16,["xudpProxyUDP443"]="reject" };
             var array=new JsonArray(source.DeepClone(),JsonNode.Parse(Fixture("Second Auto")),simple.DeepClone());
             var mixed=SubscriptionImporter.ParseContent(array.ToJsonString());
+            var largeList = new JsonArray(Enumerable.Range(1, 180).Select(index =>
+            {
+                var profile = simple.DeepClone();
+                profile["remarks"] = $"Server {index} " + new string('x', 70);
+                return profile;
+            }).ToArray()).ToJsonString(new JsonSerializerOptions { WriteIndented = true });
+            var encodedList = Convert.ToBase64String(Encoding.UTF8.GetBytes(largeList));
+            check(encodedList.Length > ProfileImporter.MaxInputLength && encodedList.Length < 1_048_576,
+                "large subscription fixture fits the subscription limit and exceeds the single-profile limit");
+            var largeImported = SubscriptionImporter.ParseContent(encodedList);
+            check(ClashConfigDocument.Parse("large-list.yaml", largeImported.Yaml).ConnectionCount == 180,
+                "a Base64 JSON subscription can contain 180 servers without hitting the single-profile size limit");
             var legacy=ProfileImporter.Parse("vless://12345678-1234-4234-8234-123456789abc@127.0.0.1:9?security=none#Original");
             check(SubscriptionFormats.Merge(legacy,mixed).Count==4,"an original server variant is retained when JSON adds different mux settings");
             var equivalent=simple.DeepClone(); equivalent["outbounds"]![0]!.AsObject().Remove("mux");

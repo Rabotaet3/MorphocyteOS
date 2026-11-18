@@ -1,53 +1,52 @@
-# Mihomo: исходный код, сборка и происхождение
+# Ядра MorphocyteOS — исходники и происхождение
 
-## Xray 26.10.31
+## sing-box 1.14.4
 
-Комплектный `Engine/xray.exe` взят без изменений из официального `Xray-windows-64.zip` версии v26.10.31 (commit `a4a3dff`, Go 1.27.3). SHA-256 ZIP: `2e04a9995a6f2ad1b28c0bb25c708ecb2695e43a1c9c7889c4b6ac2b48cf7a6a`; SHA-256 EXE: `d5b558191cccb1e92a5772b68b8cab67717b26f634b0f15153215f65ae982a7e`.
+Поставляется неизменённый официальный Windows amd64 бинарник sing-box.exe из sing-box-1.14.4-windows-amd64.zip. Он работает отдельным процессом. Версия Go официального бинарника — 1.26.10.
 
-Официальный релиз: https://github.com/XTLS/Xray-core/releases/tag/v26.10.31 . Неизменённый snapshot исходников — `xray-v26.10.31.tar.gz`, SHA-256 `be44f95d497ad4ba6e9d1dcfbbd71e8e51f812aff077d4c15c9947eff5e3046a`. Зависимости закреплены в `go.mod` и `go.sum` этого snapshot. Лицензия MPL 2.0 приложена как `Licenses/Xray-MPL-2.0.txt`. Геоданные и Wintun из upstream ZIP не поставляются, поскольку вспомогательный процесс использует только локальные SOCKS-входы и подключения к VPN-серверам.
+- Upstream commit — c005f35300ce76427dc285481ec5695f5b179cd2.
+- SHA-256 EXE — 8f30682ee198855440d2a7fe070d5d3653793b2d01bb8c85eea88f93bbe7c8b9.
+- SHA-256 официального ZIP — 99185d75d314a07dbba4a130c8ad986cbeb629a07927975636b341ca61f991df.
+- Исходный snapshot — sing-box-v1.14.4.tar.gz.
+- SHA-256 snapshot — 1c4d2b3bf261a8d98e1b026be0bbcddbcb3f53bbca77eb15e8f25f7d4e602e59.
+- Лицензия ядра — Licenses/SingBox-LICENSE.txt.
 
-## sing-box 1.14.2
+Официальный релиз — https://github.com/SagerNet/sing-box/releases/tag/v1.14.4.
 
-Дополнительно поставляется неизменённое официальное Windows amd64 ядро sing-box (`af6e64c3b69e6132ebaee0e1a3d24e93903f6709`, Go 1.26.8, CGO отключён). Исходный snapshot — `sing-box-v1.14.2.tar.gz`; архив с vendored Go-зависимостями для Windows — `sing-box-v1.14.2-corresponding-source.tar.gz`, SHA-256 `c2b3d9ae082a364aa082e120931b1df44e68e63aa27c7ca51201b4ae19660d75`. Версии закреплены upstream в go.mod/go.sum и проверены `go mod verify`. Лицензионные уведомления сохранены в vendor и отдельно в `Licenses/SingBox-Go`.
+Соответствующие исходники для пересборки Windows с закреплёнными Go-зависимостями включены в sing-box-v1.14.4-corresponding-source.tar.gz. SHA-256 архива — c0315f9bd59d62b570bd0ad19ade21c4f4f541be3fe5660a73ebfdcece787368.
+Модули проверены командой go mod verify. Их уведомления находятся в vendor и Licenses/SingBox-Go.
+Для пересборки используй Build-SingBox.ps1 и официальный Go 1.26.10. Скрипт использует vendor. Результат пересборки зависит от toolchain и параметров сборки.
 
-Из дерева зависимостей исключены готовые нативные бинарные библиотеки других платформ; код Windows и уведомления сохранены. Комплект не поставляет libcronet.dll и не поддерживает Naive outbound. Для сборки Windows-ядра из приложенных исходников с Go 1.26.8 запусти `Build-SingBox.ps1 -GoExe C:\path\to\go.exe -OutputPath C:\path\to\sing-box-rebuilt.exe`. Модули берутся из vendor, сеть для их скачивания не требуется. Это инструкция пересборки, не обещание побитного совпадения с официальным архивом. Официальные исходники: <https://github.com/SagerNet/sing-box/tree/v1.14.2>.
+Из vendored-дерева удалены готовые статические и динамические библиотеки Cronet для других ОС. Исходный код и уведомления сохранены. В программе отсутствует поддержка Naive outbound, libcronet.dll отдельно не поставляется.
 
-## Mihomo
+## Xray 26.11.9
 
-MorphocyteOS поставляет Mihomo отдельным исполняемым файлом. Это не официальный upstream-бинарник: приложенный `mihomo.exe` собран нами из указанного ниже исходного commit без изменения исходников Mihomo. Файл запускается отдельным процессом; оболочка проверяет его SHA-256.
+Поставляется неизменённый официальный Windows amd64 бинарник xray.exe из Xray-windows-64.zip. Он работает отдельным процессом. Версия Go официального бинарника — 1.27.3.
 
-## Зафиксированный исходник
+- Upstream commit — 676eaf66f8f05d4d558ee7a74b4736623d3feeb9.
+- SHA-256 EXE — 1ca7a2cf61ba2c5d20b21a80d405b57933939751081cb289f07bd8ddf7cc3185.
+- SHA-256 официального ZIP — 1262522266337b824f07beb8e1375786b437683b3890105469088f8e17e0a69d.
+- Исходный snapshot — xray-v26.11.9.tar.gz.
+- SHA-256 snapshot — adccbbb35f9efccae0884bfd46b9d439daee60aa543efa19e775799c74589bab.
+- Лицензия ядра — Licenses/Xray-MPL-2.0.txt.
 
-- Проект: <https://github.com/MetaCubeX/mihomo>
-- Версия/tag: `v1.19.31`
-- Commit: `ab405bad5beeeac8b003bb01f60f134f6df54471`
-- Неизменённый архив upstream: `mihomo-v1.19.31.tar.gz`
-- Архив соответствующих исходников с Go-зависимостями: `mihomo-v1.19.31-corresponding-source.tar.gz`
-- SHA-256 архива соответствующих исходников: `f52777efc150719141ecc8f30071cd5dfdaaa770e9e4ad19a6a4ec3cbd583d2b`
+Официальный релиз — https://github.com/XTLS/Xray-core/releases/tag/v26.11.9.
 
-Второй архив содержит всё дерево указанного commit и каталог `vendor/`, созданный из его `go.mod` и `go.sum`. Оригинальный архив сохранён без изменений для проверки происхождения. В vendored-дереве присутствуют версии зависимостей и исходные лицензионные файлы; их копии также помещены в `Licenses/Mihomo-Go/`. Для `github.com/metacubex/chacha` у upstream-зависимости отсутствовал отдельный файл лицензии, хотя исходники отсылают к `LICENSE`; в комплект добавлено соответствующее MIT-уведомление исходного проекта `github.com/aead/chacha20`.
+Xray использует локальные SOCKS-входы и подключения к VPN-серверам. Геоданные, Wintun и запускающие скрипты из upstream ZIP в комплект MorphocyteOS не входят.
 
-## Как собран поставляемый бинарник
+## Mihomo 1.19.34
 
-- Go `1.26.8`, официальный Windows x64 toolchain.
-- `GOOS=windows`, `GOARCH=amd64`, `GOAMD64=v1`, `CGO_ENABLED=0`.
-- Build tag: `with_gvisor`; flags: `-trimpath`, `-w`, `-s`, пустой build ID.
-- Снимок CA оставлен тем, который содержится в зафиксированном исходном дереве. Официальный workflow заменяет его системным снимком CA; эта замена здесь не применялась.
-- Это пересборка из исходников, а не попытка побитно воспроизвести официальный release asset.
-- SHA-256 поставляемого `mihomo.exe`: `4a2275f385fc11106f7d819c16b510fcca5e4996b5e902d295bfc78ac29c5530`.
+Поставляется неизменённый официальный Windows amd64 бинарник mihomo.exe из mihomo-windows-amd64-v1-v1.19.34.zip. Он работает отдельным процессом. Версия Go официального бинарника — 1.26.11.
 
-Повторить сборку можно из каталога `ThirdPartySource` командой:
+- Upstream commit — 0455d0d28c4526937380505153e65a843d8612e8.
+- SHA-256 EXE — 513ec525d782e29e00dd92b25f25623b3811a9b2fc5c51d95e1190bcc7fa0d3c.
+- SHA-256 официального ZIP — 703e325bfeee582f874b06d054eaae55ab7c194645d1835411685aafa85da5ea.
+- Исходный snapshot — mihomo-v1.19.34.tar.gz.
+- SHA-256 snapshot — db0cc4145fe4024e9c2386bd4768bf23a69c8789610d56d7243819e2f77c0cfe.
+- Лицензия ядра — Licenses/Mihomo-GPL-3.0.txt.
 
-```powershell
-./Build-Mihomo.ps1 -GoExe C:\path\to\go.exe -OutputPath C:\path\to\mihomo.exe
-```
+Официальный релиз — https://github.com/MetaCubeX/mihomo/releases/tag/v1.19.34.
 
-Скрипт распаковывает архив в отдельную временную папку, скачивает только зафиксированные в `go.mod`/`go.sum` Go-модули и собирает Mihomo описанными выше флагами. Требуется сетевой доступ к Go module proxy. Используется обычный официальный Go; специальный патченный toolchain upstream не нужен для заявленной цели Windows 10/11.
-
-## Лицензия и распространение
-
-Ядро распространяется по GNU GPL версии 3. Полный текст находится в `Licenses/Mihomo-GPL-3.0.txt`; уведомления зависимостей — в `Licenses/Mihomo-Go/` и в vendored-исходниках. При публикации бинарного ZIP укажи рядом ссылку на этот соответствующий исходный архив либо приложи архив отдельным asset той же версии релиза. Не удаляй исходники и лицензионные уведомления из публичной копии.
-
-README upstream также содержит условие об именах сторонних downstream-проектов. Название этого приложения — `MorphocyteOS` и слова `mihomo` в названии проекта нет.
-
-Архивы и контрольные суммы фиксируют provenance и содержимое, но сами по себе не являются аудитом безопасности или юридическим заключением.
+Соответствующие исходники для пересборки Windows с закреплёнными Go-зависимостями включены в mihomo-v1.19.34-corresponding-source.tar.gz. SHA-256 архива — 02d9c3fbcd456677c35129df1aeef2c429d09dc9d14cfb2332af6ae204354c57.
+Модули проверены командой go mod verify. Их уведомления находятся в vendor и Licenses/Mihomo-Go.
+Для пересборки используй Build-Mihomo.ps1 и официальный Go 1.26.11. Скрипт использует vendor. Результат пересборки зависит от toolchain и параметров сборки.

@@ -1,12 +1,11 @@
 param(
     [string]$GoExe = 'go',
-    [string]$OutputPath = (Join-Path $PSScriptRoot '..\Engine\mihomo.exe')
+    [string]$OutputPath = (Join-Path $PSScriptRoot 'mihomo-rebuilt.exe')
 )
 
 $ErrorActionPreference = 'Stop'
-$archivePath = Join-Path $PSScriptRoot 'mihomo-v1.19.31-corresponding-source.tar.gz'
-$expectedArchiveHash = 'F52777EFC150719141ECC8F30071CD5DFDAAA770E9E4AD19A6A4EC3CBD583D2B'
-$expectedBinaryHash = '4A2275F385FC11106F7D819C16B510FCCA5E4996B5E902D295BFC78AC29C5530'
+$archivePath = Join-Path $PSScriptRoot 'mihomo-v1.19.34-corresponding-source.tar.gz'
+$expectedArchiveHash = '02D9C3FBCD456677C35129DF1AEEF2C429D09DC9D14CFB2332AF6AE204354C57'
 
 if (-not (Test-Path -LiteralPath $archivePath)) { throw "Missing source archive: $archivePath" }
 if ((Get-FileHash -LiteralPath $archivePath -Algorithm SHA256).Hash -ne $expectedArchiveHash) {
@@ -20,7 +19,7 @@ New-Item -ItemType Directory -Path $workspace | Out-Null
 tar -xzf $archivePath -C $workspace
 if ($LASTEXITCODE -ne 0) { throw 'Could not unpack the corresponding-source archive.' }
 
-$sourcePath = Join-Path $workspace 'mihomo-ab405bad5beeeac8b003bb01f60f134f6df54471'
+$sourcePath = Join-Path $workspace 'mihomo-0455d0d28c4526937380505153e65a843d8612e8'
 if (-not (Test-Path -LiteralPath (Join-Path $sourcePath 'go.mod'))) { throw 'The source archive layout is unexpected.' }
 $temporaryBinary = Join-Path $workspace 'mihomo.exe'
 $environmentNames = @('GOOS', 'GOARCH', 'GOAMD64', 'CGO_ENABLED', 'GOTOOLCHAIN')
@@ -35,11 +34,8 @@ try {
     $env:GOTOOLCHAIN = 'local'
     Push-Location $sourcePath
     try {
-        & $GoExe mod download
-        if ($LASTEXITCODE -ne 0) { throw "go mod download failed ($LASTEXITCODE)." }
-
-        $ldflags = '-X github.com/metacubex/mihomo/constant.Version=v1.19.31 -X github.com/metacubex/mihomo/constant.BuildTime=2026-10-01T00:00:00Z -w -s -buildid='
-        & $GoExe build -mod=mod -buildvcs=false -tags with_gvisor -trimpath -ldflags $ldflags -o $temporaryBinary .
+        $ldflags = '-X github.com/metacubex/mihomo/constant.Version=v1.19.34 -X github.com/metacubex/mihomo/constant.BuildTime=2026-11-11T06:48:41Z -w -s -buildid='
+        & $GoExe build -mod=vendor -buildvcs=false -tags with_gvisor -trimpath -ldflags $ldflags -o $temporaryBinary .
         if ($LASTEXITCODE -ne 0) { throw "go build failed ($LASTEXITCODE)." }
     }
     finally { Pop-Location }
@@ -49,13 +45,11 @@ finally {
 }
 
 $actualBinaryHash = (Get-FileHash -LiteralPath $temporaryBinary -Algorithm SHA256).Hash
-if ($actualBinaryHash -ne $expectedBinaryHash) {
-    throw "Build completed but binary hash differs. Expected $expectedBinaryHash, got $actualBinaryHash. The toolchain or build inputs may differ."
-}
 
 $destination = [System.IO.Path]::GetFullPath($OutputPath)
 $destinationDirectory = Split-Path -Parent $destination
 New-Item -ItemType Directory -Force -Path $destinationDirectory | Out-Null
 Copy-Item -LiteralPath $temporaryBinary -Destination $destination -Force
-Write-Output "Built and verified Mihomo v1.19.31: $destination"
+Write-Output "Windows rebuild completed for Mihomo v1.19.34: $destination"
 Write-Output "SHA-256: $actualBinaryHash"
+Write-Output 'The official release binary is supplied separately. Rebuild hashes depend on the Go toolchain.'
