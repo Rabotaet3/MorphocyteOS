@@ -8,6 +8,7 @@ public sealed class ProfileDraft
 {
     public string SourceHash { get; set; } = "";
     public List<DomainRule> Rules { get; set; } = new();
+    public DateTimeOffset? ArchivedAt { get; set; }
 }
 
 public sealed class ProfileRuleState
@@ -40,8 +41,20 @@ public sealed class AppSettings
     public bool ShowCoreLog { get; set; }
     public bool LaunchAtSignIn { get; set; }
     public bool AutoConnectOnStartup { get; set; } = true;
+    public bool AutoConnectOnOpen { get; set; }
     public bool AutoReconnect { get; set; } = true;
     public bool FullTunnel { get; set; }
+    public bool ProxyOnly { get; set; }
+    [JsonIgnore]
+    public ConnectionMode Mode
+    {
+        get => ProxyOnly ? ConnectionMode.LocalProxy : FullTunnel ? ConnectionMode.FullTunnel : ConnectionMode.Rules;
+        set
+        {
+            FullTunnel = value == ConnectionMode.FullTunnel;
+            ProxyOnly = value == ConnectionMode.LocalProxy;
+        }
+    }
     public Dictionary<string, SubscriptionSource> ProfileSubscriptions { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, string> ProfileSelections { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public long ServerSelectionRevision { get; set; }
@@ -50,6 +63,7 @@ public sealed class AppSettings
     public string DraftConfigPath { get; set; } = "";
     public List<DomainRule> DraftRules { get; set; } = new();
     public Dictionary<string, ProfileDraft> ProfileDrafts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
+    public Dictionary<string, List<ProfileDraft>> ArchivedDrafts { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, ProfileRuleState> ProfileRuleStates { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     public Dictionary<string, List<string>> ProfileFolderOrders { get; set; } = new(StringComparer.OrdinalIgnoreCase);
     [JsonIgnore] public string? RecoveryMessage { get; private set; }
@@ -96,10 +110,17 @@ public sealed class AppSettings
         settings.PreferredRoute = settings.PreferredRoute?.Trim() ?? "";
         settings.Theme = string.IsNullOrWhiteSpace(settings.Theme) ? "Тёмная морфоцитная" : settings.Theme.Trim();
         settings.InterfaceScale = NormalizeScale(settings.InterfaceScale);
-        settings.ProfileDrafts = NormalizeProfiles(settings.ProfileDrafts, draft =>
+        if (settings.ProxyOnly) settings.FullTunnel = false;
+        static void NormalizeDraft(ProfileDraft draft)
         {
             draft.SourceHash ??= "";
             draft.Rules = NormalizeRules(draft.Rules);
+        }
+        settings.ProfileDrafts = NormalizeProfiles(settings.ProfileDrafts, NormalizeDraft);
+        settings.ArchivedDrafts = NormalizeProfiles(settings.ArchivedDrafts, drafts =>
+        {
+            drafts.RemoveAll(draft => draft is null);
+            foreach (var draft in drafts) NormalizeDraft(draft);
         });
         settings.ProfileRuleStates = NormalizeProfiles(settings.ProfileRuleStates, state =>
         {
@@ -171,8 +192,23 @@ public sealed class AppSettings
     }
 
     public ProfileDraft? GetDraft(string path) => ProfileDrafts.GetValueOrDefault(Path.GetFullPath(path));
-    public void PutDraft(string path, string hash, IEnumerable<DomainRule> rules) =>
+    public void PutDraft(string path, string hash, IEnumerable<DomainRule> rules, bool archiveConflict = true)
+    {
+        if (archiveConflict) ArchiveConflictingDraft(path, hash);
         ProfileDrafts[Path.GetFullPath(path)] = new ProfileDraft { SourceHash = hash, Rules = rules.Select(rule => rule.Copy()).ToList() };
+    }
+
+    internal void ArchiveConflictingDraft(string path, string currentHash)
+    {
+        var key = Path.GetFullPath(path);
+        if (!ProfileDrafts.TryGetValue(key, out var draft) || draft.SourceHash.Length == 0 || draft.SourceHash == currentHash) return;
+        if (!ArchivedDrafts.TryGetValue(key, out var versions)) ArchivedDrafts[key] = versions = new();
+        versions.Insert(0, new ProfileDraft { SourceHash = draft.SourceHash, Rules = draft.Rules, ArchivedAt = DateTimeOffset.Now });
+        ProfileDrafts.Remove(key);
+    }
+
+    internal IReadOnlyList<ProfileDraft> GetArchivedDrafts(string path)
+        => ArchivedDrafts.TryGetValue(Path.GetFullPath(path), out var versions) ? versions : Array.Empty<ProfileDraft>();
     public void RemoveDraft(string path) => ProfileDrafts.Remove(Path.GetFullPath(path));
     public ProfileRuleState? GetRuleState(string path) => ProfileRuleStates.GetValueOrDefault(Path.GetFullPath(path));
     public void PutRuleState(string path, string hash, IEnumerable<DomainRule> rules) =>

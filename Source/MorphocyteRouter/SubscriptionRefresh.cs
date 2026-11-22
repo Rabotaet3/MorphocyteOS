@@ -20,9 +20,13 @@ internal static class SubscriptionRefresh
             ((YamlScalarNode)node.Children[new YamlScalarNode("name")]).Value!).ToList();
         if (newNodes.Count == 0) throw new InvalidDataException("Подписка не содержит доступных серверов. Профиль сохранён.");
         if (oldNodes.Count == 0) selected = newOrder[0];
-        var replacements = new Dictionary<string, YamlNode> { ["proxies"] = Sequence(next, "proxies") };
+        var replacements = new Dictionary<string, YamlNode>();
+        var nextProxies = Sequence(next, "proxies");
+        if (!Sequence(prior, "proxies").Equals(nextProxies))
+            replacements["proxies"] = nextProxies;
         if (prior.Children.TryGetValue(new YamlScalarNode("proxy-groups"), out var groupsNode) && groupsNode is YamlSequenceNode groups)
         {
+            var groupsChanged = false;
             foreach (var group in groups.Children.OfType<YamlMappingNode>())
             {
                 if (!group.Children.TryGetValue(new YamlScalarNode("proxies"), out var membersNode) || membersNode is not YamlSequenceNode members) continue;
@@ -45,10 +49,13 @@ internal static class SubscriptionRefresh
                     if (fallback is null) throw new InvalidDataException("В группе выбранного сервера не осталось VPN-подключений. Измени состав группы; текущий профиль сохранён.");
                     newMembers.Remove(fallback); newMembers.Insert(0, fallback);
                 }
+                if (names.SequenceEqual(newMembers, StringComparer.Ordinal)) continue;
                 group.Children[new YamlScalarNode("proxies")] = new YamlSequenceNode(newMembers.Select(name => new YamlScalarNode(name)));
+                groupsChanged = true;
             }
-            replacements["proxy-groups"] = groups;
+            if (groupsChanged) replacements["proxy-groups"] = groups;
         }
+        if (replacements.Count == 0) return new(original, 0, 0, false, selected);
         var updated = original;
         foreach (var section in replacements.OrderByDescending(pair => prior.Children.First(entry =>
             entry.Key is YamlScalarNode scalar && scalar.Value == pair.Key).Key.Start.Index))

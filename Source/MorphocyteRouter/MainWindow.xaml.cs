@@ -11,7 +11,6 @@ using System.Windows.Data;
 using System.Windows.Input;
 using System.Windows.Media;
 using System.Windows.Media.Animation;
-using System.Windows.Media.Effects;
 using System.Windows.Threading;
 
 namespace MorphocyteRouter;
@@ -53,6 +52,8 @@ public partial class MainWindow : Window
 
     internal bool LaunchAtSignIn => _settings.LaunchAtSignIn;
     internal bool AutoConnectOnStartup => _settings.AutoConnectOnStartup;
+    internal bool AutoConnectOnOpen => _settings.AutoConnectOnOpen;
+    private bool _autoStartingCore;
 
     public MainWindow(AppSettings? settings, string? logPath = null)
     {
@@ -123,8 +124,14 @@ public partial class MainWindow : Window
                 await BundledResources.PrepareDefaultsAsync(_settings, _lifetime.Token);
                 if (File.Exists(_settings.ConfigPath)) await LoadConfigAsync(_settings.ConfigPath);
                 else SetLog("Выбранный YAML не найден. Выбери профиль в настройках или импортируй подключение.");
-                if (_startupMode && _settings.LaunchAtSignIn && _settings.AutoConnectOnStartup)
-                    await StartCoreAsync(applyDraft: false);
+                if (_document is { HasVpnConnection: true } && (_startupMode
+                    ? _settings.LaunchAtSignIn && _settings.AutoConnectOnStartup
+                    : _settings.AutoConnectOnOpen))
+                {
+                    _autoStartingCore = true;
+                    try { await StartCoreAsync(applyDraft: false); }
+                    finally { _autoStartingCore = false; }
+                }
             });
             if (_settings.RecoveryMessage is { } message) SetLog(message);
             UpdateControls();
@@ -163,38 +170,34 @@ public partial class MainWindow : Window
     {
         var version = ++_dialogBackdropVersion;
         var easing = new CubicEase { EasingMode = EasingMode.EaseOut };
-        var duration = TimeSpan.FromMilliseconds(180);
+        var previousOpacity = DialogShade.IsVisible ? DialogShade.Opacity : 0;
         if (visible)
         {
             _dialogBackdropVisible = true;
-            // Blur the entire visual layer (including the title bar and decorative texture),
-            // while the rounded clip prevents the effect leaking outside the window silhouette.
-            // Keep the blur kernel fixed: animating its radius rerenders the entire
-            // main window while the transparent dialog is also being animated.
-            var blur = new BlurEffect { Radius = 5.5, RenderingBias = RenderingBias.Performance };
-            WindowContent.CacheMode = new BitmapCache { SnapsToDevicePixels = true };
-            WindowContent.Effect = blur;
             DialogShade.Visibility = Visibility.Visible;
-            // Do not animate a second large layered HWND behind the entering dialog.
-            // Compose the static backdrop once; only the dialog fades in.
             DialogShade.BeginAnimation(UIElement.OpacityProperty, null);
             DialogShade.Opacity = 0.75;
+            if (SystemParameters.ClientAreaAnimation)
+                DialogShade.BeginAnimation(UIElement.OpacityProperty, new DoubleAnimation(previousOpacity, 0.75, TimeSpan.FromMilliseconds(130))
+                { EasingFunction = easing, FillBehavior = FillBehavior.Stop });
+            return;
         }
-        else
+
+        void ClearShade()
         {
-            var shadeFade = new DoubleAnimation(DialogShade.Opacity, 0, duration) { EasingFunction = easing };
-            shadeFade.Completed += (_, _) =>
-            {
-                if (version != _dialogBackdropVersion) return;
-                DialogShade.Visibility = Visibility.Collapsed;
-                WindowContent.Effect = null;
-                WindowContent.CacheMode = null;
-                _dialogBackdropVisible = false;
-                UpdateUptime();
-                RefreshDeferredLog();
-            };
-            DialogShade.BeginAnimation(UIElement.OpacityProperty, shadeFade);
+            if (version != _dialogBackdropVersion) return;
+            DialogShade.Visibility = Visibility.Collapsed;
+            DialogShade.BeginAnimation(UIElement.OpacityProperty, null);
+            DialogShade.Opacity = 0;
+            _dialogBackdropVisible = false;
+            UpdateUptime();
+            RefreshDeferredLog();
         }
+        if (!SystemParameters.ClientAreaAnimation) { ClearShade(); return; }
+
+        var shadeFade = new DoubleAnimation(previousOpacity, 0, TimeSpan.FromMilliseconds(180)) { EasingFunction = easing };
+        shadeFade.Completed += (_, _) => ClearShade();
+        DialogShade.BeginAnimation(UIElement.OpacityProperty, shadeFade);
     }
 
     private void FrameContent_SizeChanged(object sender, SizeChangedEventArgs e) => UpdateFrameClip();
@@ -203,9 +206,7 @@ public partial class MainWindow : Window
     {
         var bounds = new Rect(0, 0, FrameContent.ActualWidth, FrameContent.ActualHeight);
         if (bounds.Width <= 0 || bounds.Height <= 0) return;
-        // Clip the composed frame after child effects are rendered. In particular,
-        // BlurEffect expands its pixels beyond the child's own clip; this parent
-        // clip keeps both the blurred content and modal shade inside the rounded frame.
+        // Keep the content and the modal shade inside the inner outline.
         const double frameRadius = 19.5;
         FrameContent.Clip = new RectangleGeometry(bounds, frameRadius, frameRadius);
     }
@@ -260,12 +261,13 @@ public partial class MainWindow : Window
         Workspace.IsEnabled = !_closing;
         Workspace.IsHitTestVisible = !_busy && !_closing;
         var ready = _document is { HasVpnConnection: true } && File.Exists(_settings.ConfigPath) && File.Exists(_settings.CorePath);
-        PowerButton.IsEnabled = !_busy && !_closing && (ready || _core.HasTrackedProcess);
-        AddRuleButton.IsEnabled = _document is not null && !_busy && !_closing;
+        SetWorkspaceControlAvailability(PowerButton, ready || _core.HasTrackedProcess);
+        SetWorkspaceControlAvailability(AddRuleButton, _document is not null);
         InstallUpdateButton.IsEnabled = !_busy && !_closing;
         RefreshUpdateOffer();
         EmptyRulesMessage.Opacity = 1;
-        CheckConnectionButton.IsEnabled = _core.IsRunning && !_busy && !_closing && !_checkingConnection;
+        SetWorkspaceControlAvailability(CheckConnectionButton, _core.IsRunning && _diagnostics is not null,
+            temporarilyLocked: _checkingConnection);
         RefreshConnectionsButton.IsEnabled = _core.IsRunning && !_closing;
         PowerButton.Content = _core.HasTrackedProcess ? "ОСТАНОВИТЬ VPN"
             : _recoveryLifetime is not null ? "ОТМЕНИТЬ ВОССТАНОВЛЕНИЕ" : "ЗАПУСТИТЬ VPN";
@@ -274,9 +276,20 @@ public partial class MainWindow : Window
         RefreshRuleHistoryControls();
         RefreshJournalRouteControls();
         RefreshConnectionCard();
+        RefreshSubscriptionRefreshButton();
         RefreshSubscriptionServers();
         RefreshTrayState();
         RefreshTunnelControls();
+    }
+
+    private void SetWorkspaceControlAvailability(Control control, bool available, bool temporarilyLocked = false)
+    {
+        // Short operations lock input without flashing controls that will be
+        // usable again as soon as the operation finishes.
+        var availableWhenIdle = available && !_closing;
+        var locked = _busy || temporarilyLocked;
+        WorkspaceControlAppearance.SetKeepEnabledAppearance(control, availableWhenIdle && locked);
+        control.IsEnabled = availableWhenIdle && !locked;
     }
 
     private async Task LoadConfigAsync(string path)
@@ -301,6 +314,7 @@ public partial class MainWindow : Window
             _settings.ConfigPath = Path.GetFullPath(path);
             var draft = _settings.GetDraft(path);
             var restoreDraft = draft is not null && (string.IsNullOrEmpty(draft.SourceHash) || draft.SourceHash == loaded.SourceHash);
+            if (draft is not null && !restoreDraft) _settings.ArchiveConflictingDraft(path, loaded.SourceHash);
             var state = _settings.GetRuleState(path);
             _folderOrder.Clear();
             _folderOrder.AddRange(_settings.GetFolderOrder(path));
@@ -320,7 +334,7 @@ public partial class MainWindow : Window
             SetStatus(loaded.HasVpnConnection ? "VPN ВЫКЛЮЧЕН" : "НУЖЕН ПРОФИЛЬ",
                 loaded.HasVpnConnection ? "Профиль загружен" : "Импорт профиля или YAML в настройках", "#667A74");
             SetLog(restoreDraft ? "Восстановлен черновик этого профиля."
-                : draft is not null ? "YAML изменён извне. Старый черновик сохранён, но не загружен."
+                : draft is not null ? "YAML изменён извне. Старый черновик доступен через «Сравнить черновик» в маршрутах."
                 : $"Профиль загружен: {_rules.Count} редактируемых правил; {loaded.PreservedRuleCount} прочих сохранены в исходном порядке.");
             RefreshSubscriptionBanner();
             if(_desktopIntegrationEnabled) _=RefreshSubscriptionInformationAsync();
@@ -372,7 +386,8 @@ public partial class MainWindow : Window
         try
         {
             await File.WriteAllTextAsync(temp, candidate, new UTF8Encoding(false), _lifetime.Token);
-            var check = await CoreProcessManager.ValidateAsync(_settings.CorePath, temp, _lifetime.Token, fullTunnel: _settings.FullTunnel);
+            var check = await CoreProcessManager.ValidateAsync(_settings.CorePath, temp, _lifetime.Token,
+                fullTunnel: _settings.FullTunnel, proxyOnly: _settings.ProxyOnly);
             if (!check.Success) throw new InvalidDataException("Конфиг не применён. Проверка ядра: " + check.Message);
             _lifetime.Token.ThrowIfCancellationRequested();
             if (!await StopCoreAsync()) throw new IOException("Конфиг не изменён: остановка ядра не подтверждена.");
@@ -438,76 +453,89 @@ public partial class MainWindow : Window
         if (_core.IsRunning) return;
         if (!File.Exists(_settings.CorePath)) throw new FileNotFoundException("Выбери ядро в настройках.");
         if (!File.Exists(_settings.ConfigPath)) throw new FileNotFoundException("Выбери YAML-конфигурацию.");
-        if (_dirty && applyDraft) await ApplyChangesAsync(restart: false);
+        var startupTime = System.Diagnostics.Stopwatch.StartNew();
         startToken.ThrowIfCancellationRequested();
-        var actual = await Task.Run(() => ClashConfigDocument.Load(_settings.ConfigPath));
+        var actual = await Task.Run(() => ClashConfigDocument.Load(_settings.ConfigPath), startToken);
         if (_document?.SourceHash != actual.SourceHash)
+        {
             await LoadConfigAsync(_settings.ConfigPath);
-        var routingErrors = _settings.FullTunnel ? actual.Validate() : actual.ValidateForRouting();
+            actual = _document!;
+        }
+        if (_dirty && applyDraft)
+        {
+            await ApplyChangesAsync(restart: false);
+            actual = _document!;
+        }
+        var mode = _settings.Mode;
+        var routingErrors = mode == ConnectionMode.Rules ? actual.ValidateForRouting() : actual.Validate();
         if (routingErrors.Count > 0) throw new InvalidDataException(string.Join("\n", routingErrors));
 
         SetStatus("ПРОВЕРКА…", "Проверяю конфигурацию", "#FFD166");
-        var check = await CoreProcessManager.ValidateAsync(_settings.CorePath, _settings.ConfigPath, startToken, fullTunnel: _settings.FullTunnel);
-        if (!check.Success)
-        {
-            SetStatus("ОШИБКА YAML", "Ядро не запущено", "#FF6B8A");
-            throw new InvalidDataException(check.Message);
-        }
-        startToken.ThrowIfCancellationRequested();
-        if (!await ConfirmAndStopOtherMihomoAsync()) return;
         try
         {
             _ignoreRecoveryNetworkUntil = DateTime.UtcNow.AddSeconds(15);
-            _diagnostics = new CoreDiagnostics();
-            _speedTestPort = FreeLoopbackPort(_diagnostics.Port);
+            var executable = _settings.CorePath;
+            var singBox = CoreBackend.IsSingBox(executable);
+            var diagnostics = new CoreDiagnostics();
+            _diagnostics = diagnostics;
+            var speedPort = _speedTestPort = FreeLoopbackPort(diagnostics.Port);
             var runtimeDirectory = Path.Combine(_settings.StorageDirectory, ".runtime");
             Directory.CreateDirectory(runtimeDirectory);
-            _runtimeConfigPath = Path.Combine(runtimeDirectory, "active-" + Guid.NewGuid().ToString("N") + (CoreBackend.IsSingBox(_settings.CorePath) ? ".json" : ".yaml"));
+            var runtimePath = _runtimeConfigPath = Path.Combine(runtimeDirectory, "active-" + Guid.NewGuid().ToString("N") + (singBox ? ".json" : ".yaml"));
             var selectedServer = _settings.ProfileSelections.GetValueOrDefault(_settings.ConfigPath)
                 ?? _settings.ProfileSubscriptions.GetValueOrDefault(_settings.ConfigPath)?.SelectedServer;
             var usableServer=SubscriptionInformation.ResolveSelection(actual,selectedServer);
             var replacedHeading=usableServer!=selectedServer;
             selectedServer=usableServer;
-            XrayBridgePlan? bridgePlan = XrayBridgePlan.Create(actual);
+            var selectionCacheId = "morphocyte-selection-v1-" + _settings.ServerSelectionRevision.ToString(System.Globalization.CultureInfo.InvariantCulture);
+            XrayBridgePlan? bridgePlan = await Task.Run(async () =>
+            {
+                var plan = XrayBridgePlan.Create(actual);
+                try
+                {
+                    var runtime = CoreBackend.RuntimeText(executable, actual, diagnostics, mode == ConnectionMode.FullTunnel, speedPort,
+                        selectedServer, plan.Endpoints, selectionCacheId, proxyOnly: mode == ConnectionMode.LocalProxy);
+                    if (plan.HasConnections) plan.ConfigureDnsFromRuntime(runtime);
+                    var bridgeCheck = await plan.ValidateAsync(startToken);
+                    if (!bridgeCheck.Success) throw new InvalidDataException(bridgeCheck.Message);
+                    await File.WriteAllTextAsync(runtimePath, runtime, new UTF8Encoding(false), startToken);
+                    return plan;
+                }
+                catch { plan.Dispose(); throw; }
+            }, startToken);
             try
             {
-                await File.WriteAllTextAsync(_runtimeConfigPath, CoreBackend.RuntimeText(_settings.CorePath, actual, _diagnostics, _settings.FullTunnel, _speedTestPort, selectedServer, bridgePlan.Endpoints,
-                    selectionCacheId:"morphocyte-selection-v1-"+_settings.ServerSelectionRevision.ToString(System.Globalization.CultureInfo.InvariantCulture)), new UTF8Encoding(false), startToken);
-                var runtimeCheck = await CoreProcessManager.ValidateAsync(_settings.CorePath, _runtimeConfigPath, startToken, fullTunnel: _settings.FullTunnel);
+                var runtimeCheck = await CoreProcessManager.ValidateAsync(executable, runtimePath, startToken,
+                    dataDirectory: Path.GetDirectoryName(actual.Path));
                 if (!runtimeCheck.Success) throw new InvalidDataException(runtimeCheck.Message);
+                startToken.ThrowIfCancellationRequested();
+                if (mode == ConnectionMode.LocalProxy) EnsureLocalProxyPortAvailable();
+                else if (!await ConfirmAndStopOtherMihomoAsync()) { ResetDiagnostics(); return; }
+                SetStatus("ЗАПУСК VPN…", ModeLabel(mode), "#FFD166");
                 var ownedPlan = bridgePlan; bridgePlan = null;
-                await _core.StartWithBridgeAsync(CoreProcessManager.CreateStartInfo(_settings.CorePath, _runtimeConfigPath,
-                    Path.GetDirectoryName(_settings.ConfigPath)), ownedPlan, startToken);
+                Func<CancellationToken, Task>? ready = singBox || mode != ConnectionMode.Rules || !string.IsNullOrWhiteSpace(selectedServer)
+                    ? diagnostics.WaitForControllerAsync : null;
+                await _core.StartWithBridgeAsync(CoreProcessManager.CreateStartInfo(executable, runtimePath,
+                    Path.GetDirectoryName(actual.Path)), ownedPlan, startToken, ready, bridgeValidated: true);
             }
             finally { bridgePlan?.Dispose(); }
-            if (CoreBackend.IsSingBox(_settings.CorePath) || _settings.FullTunnel || !string.IsNullOrWhiteSpace(selectedServer))
-            {
-                // A live process alone does not mean its TUN / API is ready.
-                using var ready = CancellationTokenSource.CreateLinkedTokenSource(startToken);
-                ready.CancelAfter(TimeSpan.FromSeconds(8));
-                while (true)
-                {
-                    ready.Token.ThrowIfCancellationRequested();
-                    try { await _diagnostics.ReadVersionAsync(ready.Token); break; }
-                    catch (System.Net.Http.HttpRequestException) { await Task.Delay(150, ready.Token); }
-                }
-            }
             if (!string.IsNullOrWhiteSpace(selectedServer) && actual.VpnRoute is { } selectionGroup)
                 await _diagnostics.RestoreSelectionAsync(selectionGroup, selectedServer, startToken);
-            if (_settings.FullTunnel && actual.VpnRoute is { } route)
+            if (mode != ConnectionMode.Rules && actual.VpnRoute is { } route)
             {
                 var selected = await _diagnostics.ReadSelectionAsync(route, startToken);
                 if (selected is "DIRECT" or "REJECT")
                 {
                     await StopCoreAsync();
-                    throw new IOException("TUN не включён: в группе выбран прямой маршрут или блокировка. Выбери VPN-подключение в профиле.");
+                    throw new IOException("В группе выбран прямой маршрут или блокировка. Выбери VPN-подключение в профиле.");
                 }
             }
             _connectionRequested = true;
             _ignoreRecoveryNetworkUntil = DateTime.UtcNow.AddSeconds(15);
             _startedAt = DateTime.Now;
             _uptimeTimer.Start();
-            SetStatus("ЯДРО РАБОТАЕТ", _settings.FullTunnel ? "TUN · весь трафик через VPN" : "Правила VPN загружены", "#73FFBF");
+            SetStatus("ПРОВЕРЯЮ VPN", ModeLabel(mode), "#FFD166");
+            SetLog($"Ядро готово за {startupTime.Elapsed.TotalSeconds:0.00} с. Проверяю ответ VPN-сервера.");
             LastIssueText.Text = "";
             ConnectionStateText.Text = "VPN ещё не проверен";
             if(replacedHeading)
@@ -516,7 +544,8 @@ public partial class MainWindow : Window
                 SetLog("Вместо служебного разделителя подписки выбран первый настоящий сервер. Проверь подключение; сервер можно изменить в списке.");
             }
             StartTrafficMonitor();
-            _ = RefreshConnectionSnapshotAsync();
+            _ = CheckConnectionAsync(manual: false);
+            if (JournalPage.IsVisible) _ = RefreshConnectionSnapshotAsync();
         }
         catch
         {
@@ -534,6 +563,11 @@ public partial class MainWindow : Window
         var recognizedEngine = CoreBackend.IsSingBox(_settings.CorePath) || Path.GetFileNameWithoutExtension(_settings.CorePath).Equals("mihomo", StringComparison.OrdinalIgnoreCase);
         if (recognizedEngine && CoreProcessManager.FindOtherInstances(otherEngine).Count > 0)
         {
+            if (_autoStartingCore)
+            {
+                SetStatus("VPN ВЫКЛЮЧЕН", "Работает другое VPN-ядро", "#667A74");
+                return false;
+            }
             UtilityDialogs.ShowNotice(this, "ДРУГОЕ VPN-ЯДРО РАБОТАЕТ", "Сначала останови VPN в другом приложении или экземпляре MorphocyteOS. Mihomo и sing-box не должны одновременно управлять TUN. Чужие процессы не остановлены.");
             return false;
         }
@@ -541,6 +575,11 @@ public partial class MainWindow : Window
         {
             var instances = CoreProcessManager.FindOtherInstances(_settings.CorePath);
             if (instances.Count == 0) return true;
+            if (_autoStartingCore)
+            {
+                SetStatus("VPN ВЫКЛЮЧЕН", "Работает другое VPN-ядро", "#667A74");
+                return false;
+            }
             if (_recoveringConnection) { SetLog("Восстановление остановлено: найдено другое ядро."); return false; }
             if (_startupMode) RestoreFromTray();
 
@@ -683,7 +722,7 @@ public partial class MainWindow : Window
         }
 
         // Keep collecting and persisting every entry while a dialog is visible,
-        // but do not invalidate the blurred background bitmap with log text layout.
+        // but avoid laying out background log text while a dialog covers it.
         if (_dialogBackdropVisible && _coreLogWindow is null)
         {
             _logDisplayDeferred = true;
@@ -1125,6 +1164,7 @@ public partial class MainWindow : Window
             _settings.AutoCheckUpdates = choice.AutoCheckUpdates;
             _settings.LaunchAtSignIn = choice.LaunchAtSignIn;
             _settings.AutoConnectOnStartup = choice.AutoConnectOnStartup;
+            _settings.AutoConnectOnOpen = choice.AutoConnectOnOpen;
             _settings.AutoReconnect = choice.AutoReconnect;
             if (choice.LaunchAtSignIn != previous.LaunchAtSignIn)
             {
@@ -1143,7 +1183,7 @@ public partial class MainWindow : Window
             SetLog("Настройки сохранены.");
             return new SettingsDialogSelection(_settings.ConfigPath, _settings.CorePath, _settings.Theme,
                 _settings.InterfaceScale, _settings.AutoCheckUpdates, LaunchAtSignIn: _settings.LaunchAtSignIn,
-                AutoConnectOnStartup: _settings.AutoConnectOnStartup, AutoReconnect: _settings.AutoReconnect);
+                AutoConnectOnStartup: _settings.AutoConnectOnStartup, AutoReconnect: _settings.AutoReconnect, AutoConnectOnOpen: _settings.AutoConnectOnOpen);
         }
         catch (Exception saveError)
         {
@@ -1218,6 +1258,7 @@ public partial class MainWindow : Window
         _settings.ProfileSubscriptions = new(_settings.ProfileSubscriptions, StringComparer.OrdinalIgnoreCase);
         _settings.ProfileSelections = new(_settings.ProfileSelections, StringComparer.OrdinalIgnoreCase);
         _settings.ProfileDrafts = new(_settings.ProfileDrafts, StringComparer.OrdinalIgnoreCase);
+        _settings.ArchivedDrafts = new(_settings.ArchivedDrafts, StringComparer.OrdinalIgnoreCase);
         _settings.ProfileRuleStates = new(_settings.ProfileRuleStates, StringComparer.OrdinalIgnoreCase);
         _settings.ProfileFolderOrders = new(_settings.ProfileFolderOrders, StringComparer.OrdinalIgnoreCase);
     }

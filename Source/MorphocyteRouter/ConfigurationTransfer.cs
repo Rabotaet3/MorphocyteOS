@@ -27,11 +27,13 @@ internal sealed class TransferOptions
     public bool AutoCheckUpdates { get; set; }
     public bool LaunchAtSignIn { get; set; }
     public bool AutoConnectOnStartup { get; set; }
+    public bool? AutoConnectOnOpen { get; set; }
     public bool AutoReconnect { get; set; } = true;
     public string PreferredRoute { get; set; } = "VPN";
     public bool ShowEventLog { get; set; }
     // Null preserves the destination mode when reading an older transfer file.
     public bool? FullTunnel { get; set; }
+    public bool? ProxyOnly { get; set; }
     public string? SelectedServer { get; set; }
 }
 

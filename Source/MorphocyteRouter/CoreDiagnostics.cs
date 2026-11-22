@@ -9,7 +9,7 @@ using System.Text.Json;
 namespace MorphocyteRouter;
 
 internal record ConnectionActivity(string Process, string Destination, string Network, string Rule, string Route,
-    string Id = "", long Upload = 0, long Download = 0);
+    string Id = "", long Upload = 0, long Download = 0, string DestinationIp = "", string Inbound = "");
 internal record CoreSnapshot(string Version, IReadOnlyList<ConnectionActivity> Connections, string Selection);
 internal record TrafficSample(long Upload, long Download);
 
@@ -38,6 +38,23 @@ internal sealed class CoreDiagnostics : IDisposable
         var value = Text(version.RootElement, "version");
         if (value.Length == 0) throw new InvalidDataException("Ядро не сообщило версию.");
         return value;
+    }
+
+    internal async Task WaitForControllerAsync(CancellationToken token)
+    {
+        using var deadline = CancellationTokenSource.CreateLinkedTokenSource(token);
+        deadline.CancelAfter(TimeSpan.FromSeconds(8));
+        try
+        {
+            while (true)
+            {
+                try { await ReadVersionAsync(deadline.Token).ConfigureAwait(false); return; }
+                catch (HttpRequestException) when (!deadline.IsCancellationRequested)
+                { await Task.Delay(100, deadline.Token).ConfigureAwait(false); }
+            }
+        }
+        catch (OperationCanceledException) when (!token.IsCancellationRequested)
+        { throw new IOException("Ядро не открыло локальный API за 8 секунд."); }
     }
 
     internal async Task<bool> CheckDnsAsync(CancellationToken token)
@@ -234,7 +251,8 @@ internal sealed class CoreDiagnostics : IDisposable
             if (process.Length == 0) process = Path.GetFileName(Text(metadata, "processPath"));
             output.Add(new ConnectionActivity(process, destination + ":" + Text(metadata, "destinationPort"),
                 Text(metadata, "network").ToUpperInvariant(), Text(connection, "rule") + " " + Text(connection, "rulePayload"), chains,
-                Text(connection, "id"), Bytes(connection, "upload"), Bytes(connection, "download")));
+                Text(connection, "id"), Bytes(connection, "upload"), Bytes(connection, "download"),
+                Text(metadata, "destinationIP"), Text(metadata, "inboundName")));
         }
         return output;
     }

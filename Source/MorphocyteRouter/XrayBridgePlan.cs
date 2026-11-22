@@ -163,9 +163,14 @@ internal sealed class XrayBridgePlan : IDisposable
     {
         if (!HasConnections) return (true, "");
         await EnsureEngineAsync(token);
+        return await ValidateFilesAsync(token);
+    }
+
+    private async Task<(bool Success, string Message)> ValidateFilesAsync(CancellationToken token)
+    {
         foreach(var child in _profilePlans)
         {
-            var check=await child.ValidateAsync(token);
+            var check=await child.ValidateFilesAsync(token);
             if(!check.Success) return check;
         }
         if(_inbounds.Count==0 && _fullProfile is null) return (true,"");

@@ -49,6 +49,7 @@ public partial class MainWindow
                 _downloadCapacity=null; _capacityServer=""; _health.Clear(); _nextHealthCheck=DateTime.UtcNow.AddSeconds(2);
                 RefreshHealthReadout(); RefreshConnectionCard();
                 ConnectionStateText.Text="Проверка не выполнялась";
+                if (diagnostics is not null) SetStatus("ПРОВЕРЯЮ VPN", ModeLabel(_settings.Mode), "#FFD166");
                 SetLog(diagnostics is null?"VPN-сервер выбран. Он будет использован при запуске.":"VPN-сервер переключён. Выбор сохранён.");
                 success=true;
             }
@@ -69,7 +70,12 @@ public partial class MainWindow
                 if(!_closing && (_diagnosticLifetime is null || _diagnosticLifetime.IsCancellationRequested))
                 {
                     _diagnosticLifetime?.Dispose(); _diagnosticLifetime=CancellationTokenSource.CreateLinkedTokenSource(_lifetime.Token);
-                    if(_core.IsRunning) StartTrafficMonitor();
+                    _checkingConnection = false;
+                    if(_core.IsRunning)
+                    {
+                        StartTrafficMonitor();
+                        if (success) _ = CheckConnectionAsync(manual: false);
+                    }
                 }
             }
         });

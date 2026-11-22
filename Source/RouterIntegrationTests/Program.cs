@@ -39,6 +39,11 @@ internal partial class Program
                     Directory.CreateDirectory(scratch);
                     Console.WriteLine($"TOTAL: {await RunSubscriptionPageChecks(scratch, args[0])} subscription-page checks passed.");
                 }
+                else if (args.Contains("--render-stability-only"))
+                {
+                    var scratch = Directory.CreateDirectory(Path.Combine(AppContext.BaseDirectory, "render-" + Guid.NewGuid().ToString("N"))).FullName;
+                    Console.WriteLine($"TOTAL: {await RunRenderStabilityChecks(scratch, args[0])} render-stability checks passed.");
+                }
                 else if (args.Contains("--rule-interaction-only"))
                 {
                     var scratch = Path.Combine(AppContext.BaseDirectory, "integration-" + Guid.NewGuid().ToString("N"));
@@ -68,6 +73,12 @@ internal partial class Program
                     var scratch = Path.Combine(AppContext.BaseDirectory, "integration-" + Guid.NewGuid().ToString("N"));
                     Directory.CreateDirectory(scratch);
                     Console.WriteLine($"TOTAL: {await RunPageTransitionChecks(scratch, args[0])} page-transition checks passed.");
+                }
+                else if (args.Contains("--startup-draft-only"))
+                {
+                    var scratch = Path.Combine(AppContext.BaseDirectory, "integration-" + Guid.NewGuid().ToString("N"));
+                    Directory.CreateDirectory(scratch);
+                    Console.WriteLine($"TOTAL: {await RunStartupAndDraftChecks(scratch, args[0])} startup and draft checks passed.");
                 }
                 else if (args.Contains("--journal-only"))
                 {
@@ -152,8 +163,10 @@ internal partial class Program
             try { passed+=await RunSubscriptionPageChecks(scratch,fakeExe); }
             finally { UiScaleManager.CurrentScale=subscriptionScale; ThemeManager.Apply(subscriptionTheme); }
             passed += await RunVisualLayoutChecks(scratch, fakeExe);
+            passed += await RunRenderStabilityChecks(scratch, fakeExe);
             passed += await RunConnectionJournalChecks(scratch, fakeExe);
             passed += await RunConnectionRouteChecks(scratch, fakeExe);
+            passed += await RunStartupAndDraftChecks(scratch, fakeExe);
             passed += await RunPageTransitionChecks(scratch, fakeExe);
             passed += await RunFreshLaunchChecks(scratch);
             passed += await RunProfileImportChecks(scratch, fakeExe);

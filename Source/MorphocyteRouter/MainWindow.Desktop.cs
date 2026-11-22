@@ -178,7 +178,7 @@ public partial class MainWindow
     private void RefreshTrayState()
     {
         if (_tray is null || _trayPower is null) return;
-        _tray.Text = "MorphocyteOS · " + (_core.IsRunning ? "ядро работает" : "VPN выключен");
+        _tray.Text = "MorphocyteOS · " + StatusText.Text;
         _trayPower.Header = _core.HasTrackedProcess ? "Остановить VPN" : _recoveryLifetime is not null ? "Отменить восстановление" : "Запустить VPN";
         _trayPower.IsEnabled = !_busy && !_closing && (_core.HasTrackedProcess || _recoveryLifetime is not null || _document is { HasVpnConnection: true });
         if (_traySettings is not null) _traySettings.IsEnabled = !_busy && !_closing;

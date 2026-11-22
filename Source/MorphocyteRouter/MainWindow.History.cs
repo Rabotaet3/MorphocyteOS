@@ -103,6 +103,9 @@ public partial class MainWindow
     private void RefreshRuleHistoryControls()
     {
         if (UndoButton is null || RedoRulesButton is null || ChangesSummaryText is null) return;
+        RecoverDraftButton.Visibility = _document is not null && _settings.GetArchivedDrafts(_document.Path).Count > 0
+            ? Visibility.Visible : Visibility.Collapsed;
+        SetWorkspaceControlAvailability(RecoverDraftButton, RecoverDraftButton.Visibility == Visibility.Visible);
         UndoButton.IsEnabled = _undoRules.Count > 0 && !_busy && !_closing;
         RedoRulesButton.IsEnabled = _redoRules.Count > 0 && !_busy && !_closing;
         var old = _appliedRules.GroupBy(EditIdentity).ToDictionary(group => group.Key, group => new Queue<DomainRule>(group));

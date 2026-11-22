@@ -24,12 +24,19 @@ public partial class MainWindow
     }
     private bool _readingSubscriptionInfo;
     private int _subscriptionInfoGeneration;
+    private void RefreshSubscriptionRefreshButton()
+    {
+        SetWorkspaceControlAvailability(ReloadSubscriptionButton, _settings.ProfileSubscriptions.ContainsKey(_settings.ConfigPath),
+            temporarilyLocked: _updatingSubscription);
+        ReloadSubscriptionButton.Content = _updatingSubscription ? "ОБНОВЛЯЮ…" : "ОБНОВИТЬ";
+    }
+
     private void RefreshSubscriptionBanner()
     {
         var source=_settings.ProfileSubscriptions.GetValueOrDefault(_settings.ConfigPath);
         SubscriptionBanner.Visibility=source is null?Visibility.Collapsed:Visibility.Visible;
         SubscriptionEmptyPanel.Visibility=source is null?Visibility.Visible:Visibility.Collapsed;
-        ReloadSubscriptionButton.IsEnabled=source is not null;
+        RefreshSubscriptionRefreshButton();
         RefreshSubscriptionServers();
         var data=source?.Metadata;
         var title=data?.Title is { Length:>0 } label?label:"ПОДПИСКА";
@@ -57,7 +64,7 @@ public partial class MainWindow
 
     internal async Task RefreshSubscriptionInformationAsync(HttpClient? client=null)
     {
-        if(_readingSubscriptionInfo || _closing || !_settings.ProfileSubscriptions.TryGetValue(_settings.ConfigPath,out var source)) return;
+        if(_readingSubscriptionInfo || _updatingSubscription || _closing || !_settings.ProfileSubscriptions.TryGetValue(_settings.ConfigPath,out var source)) return;
         var path=_settings.ConfigPath;
         var generation=_subscriptionInfoGeneration;
         _readingSubscriptionInfo=true; RefreshSubscriptionBanner();

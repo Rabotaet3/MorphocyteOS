@@ -98,7 +98,8 @@ public sealed class ClashConfigDocument
         VpnRoute = groups?.FirstOrDefault(name => name == "VPN") ?? groups?.FirstOrDefault() ?? routes.FirstOrDefault();
     }
 
-    internal string BuildRuntimeText(int controllerPort, string secret, bool fullTunnel = false, int speedTestPort = 0, string? selectedServer = null)
+    internal string BuildRuntimeText(int controllerPort, string secret, bool fullTunnel = false, int speedTestPort = 0,
+        string? selectedServer = null, bool proxyOnly = false)
     {
         if (controllerPort is < 1 or > 65535 || !System.Text.RegularExpressions.Regex.IsMatch(secret, "^[A-F0-9]{64}$"))
             throw new ArgumentException("Недопустимые параметры локальной диагностики.");
@@ -214,6 +215,17 @@ public sealed class ClashConfigDocument
                 && single.Children[0].ToString() is "https://1.1.1.1/dns-query" or "https://cloudflare-dns.com/dns-query")
                 single.Add("https://dns.google/dns-query");
             // Keep custom resolvers, fallback filters and per-domain policies intact.
+        }
+        if (proxyOnly)
+        {
+            foreach (var key in new[] { "port", "socks-port", "redir-port", "tproxy-port", "listeners", "tunnels", "tun", "authentication" })
+                root.Children.Remove(new YamlScalarNode(key));
+            root.Children[new YamlScalarNode("tun")] = new YamlMappingNode { { "enable", "false" } };
+            root.Children[new YamlScalarNode("mixed-port")] = new YamlScalarNode(CoreBackend.LocalProxyPort.ToString(CultureInfo.InvariantCulture));
+            root.Children[new YamlScalarNode("allow-lan")] = new YamlScalarNode("false");
+            root.Children[new YamlScalarNode("bind-address")] = new YamlScalarNode("127.0.0.1");
+            if (Get(root, "dns") is YamlMappingNode dns)
+                dns.Children.Remove(new YamlScalarNode("listen"));
         }
         if (speedTestPort != 0)
         {

@@ -9,9 +9,11 @@ public partial class MainWindow
     {
         var options = new TransferOptions { Theme = selection.Theme, InterfaceScale = selection.InterfaceScale,
             AutoCheckUpdates = selection.AutoCheckUpdates, LaunchAtSignIn = selection.LaunchAtSignIn,
-            AutoConnectOnStartup = selection.AutoConnectOnStartup, AutoReconnect = selection.AutoReconnect, ShowEventLog = _settings.ShowEventLog,
+            AutoConnectOnStartup = selection.AutoConnectOnStartup, AutoConnectOnOpen = selection.AutoConnectOnOpen,
+            AutoReconnect = selection.AutoReconnect, ShowEventLog = _settings.ShowEventLog,
             PreferredRoute = _settings.PreferredRoute is "DIRECT" or "REJECT" ? _settings.PreferredRoute : "VPN" };
         options.FullTunnel = _settings.FullTunnel;
+        options.ProxyOnly = _settings.ProxyOnly;
         if (selection.Transfer is { } pending)
             return Task.Run(() =>
             {
@@ -19,6 +21,7 @@ public partial class MainWindow
                 options.PreferredRoute = pending.Options.PreferredRoute;
                 options.ShowEventLog = pending.Options.ShowEventLog;
                 options.FullTunnel = pending.Options.FullTunnel;
+                options.ProxyOnly = pending.Options.ProxyOnly;
                 options.SelectedServer = pending.Options.SelectedServer;
                 copy.Options = options;
                 return copy;
@@ -71,7 +74,9 @@ public partial class MainWindow
         if (package.HasDraft) _settings.PutDraft(path, document.SourceHash, rules);
         else _settings.PutRuleState(path, document.SourceHash, rules);
         _settings.PreferredRoute = package.Options.PreferredRoute;
-        if (package.Options.FullTunnel is { } fullTunnel) _settings.FullTunnel = fullTunnel;
+        if (package.Options.FullTunnel.HasValue || package.Options.ProxyOnly.HasValue)
+            _settings.Mode = package.Options.ProxyOnly == true ? ConnectionMode.LocalProxy
+                : package.Options.FullTunnel == true ? ConnectionMode.FullTunnel : ConnectionMode.Rules;
         if (package.Options.SelectedServer is { Length: > 0 } selected) _settings.ProfileSelections[path] = selected;
         if (package.SubscriptionUrl is { } url)
         {

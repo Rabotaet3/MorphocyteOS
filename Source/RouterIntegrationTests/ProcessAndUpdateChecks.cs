@@ -72,7 +72,8 @@ internal partial class Program
                 await Task.Delay(250);
                 dialog.UpdateLayout();
                 Check(settingsScroll.VerticalOffset > 0 && Application.Current.Windows.Count == dialogCount
-                    && Descendants<CheckBox>(dialog).Count() == 4,
+                    && Descendants<StackPanel>(settingsScroll).Count(section => section.IsVisible &&
+                        section.Name is "SettingsAppearance" or "SettingsProfile" or "SettingsUpdates" or "SettingsStartup") == 4,
                     "section buttons scroll the shared settings page without opening or hiding separate pages");
                 Check(!Descendants<TextBlock>(dialog).Any(text => text.Text.Contains("30 минут") || text.Text.StartsWith("Цвета меняются")
                     || text.Text.StartsWith("Меняет весь интерфейс") || text.Text.StartsWith("Приложение запускается в трее"))
@@ -94,11 +95,12 @@ internal partial class Program
                 dialog.UpdateLayout();
                 var startupOptions = Descendants<CheckBox>(dialog).Where(option => Descendants<TextBlock>(option)
                     .Any(text => text.Text.StartsWith("Запускать приложение") || text.Text.StartsWith("Подключать VPN"))).ToArray();
-                Check(startupOptions.Length == 2 && startupOptions.All(option =>
+                Check(startupOptions.Length == 3 && startupOptions.All(option =>
                     Descendants<TextBlock>(option).Any(label => label.IsVisible && label.ActualWidth > 20 && label.ActualHeight > 10 && label.Text.Length > 10)),
                     "startup option captions are rendered inside checkbox templates rather than merely stored as Content");
                 var launch = startupOptions[0]; var connect = startupOptions[1];
-                Check(!connect.IsEnabled && launch.Focusable, "auto-connect is disabled until Windows startup is enabled and the labeled option accepts keyboard focus");
+                Check(!connect.IsEnabled && launch.Focusable && startupOptions[2].IsEnabled,
+                    "Windows sign-in auto-connect depends on startup while manual-open auto-connect is independent");
                 typeof(System.Windows.Controls.Primitives.ToggleButton).GetMethod("OnClick", BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(launch, null);
                 Check(launch.IsChecked == true && connect.IsEnabled, "clicking the labeled startup option enables its dependent VPN setting");
                 settingsScroll.ScrollToTop(); dialog.UpdateLayout();

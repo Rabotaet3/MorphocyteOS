@@ -67,6 +67,19 @@ internal partial class Program
         {
             window.Show(); await Idle();
             ((DispatcherTimer)Field("_diagnosticTimer")!).Stop(); ((DispatcherTimer)Field("_logRefreshTimer")!).Stop();
+            var power = (Button)Field("PowerButton")!;
+            var offlineCheck = (Button)Field("CheckConnectionButton")!;
+            var releaseBusy = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            var busy = (Task)Invoke("RunExclusiveAsync", (Func<Task>)(() => releaseBusy.Task))!;
+            try
+            {
+                await Dispatcher.Yield(DispatcherPriority.Render);
+                Check(!power.IsEnabled && ((Border)power.Template.FindName("B", power)).Opacity == 1,
+                    "a brief workspace lock never dims the available start button while VPN is stopped");
+                Check(!offlineCheck.IsEnabled && ((Border)offlineCheck.Template.FindName("B", offlineCheck)).Opacity < 1,
+                    "actions unavailable with a stopped VPN retain their disabled appearance");
+            }
+            finally { releaseBusy.TrySetResult(); await busy; }
             Set("_pageAnimationsEnabled", new Func<bool>(() => true));
             var routes = (FrameworkElement)Field("RoutesPage")!;
             var journal = (FrameworkElement)Field("JournalPage")!;
@@ -91,27 +104,35 @@ internal partial class Program
             Check(initialDifference < .02, "first animation frame visually matches the outgoing page instead of revealing the new page through transparent gaps");
             Check(journal.IsVisible && !routes.IsVisible && layer.IsVisible && image.Source is not null,
                 "real journal-tab click starts a smooth overlay while immediately selecting just the journal page");
-            Check(!layer.IsHitTestVisible && !layer.Focusable && layer.HasAnimatedProperties,
+            Check(!layer.IsHitTestVisible && !layer.Focusable && layer.Clip is RectangleGeometry { HasAnimatedProperties: true },
                 "decorative transition cannot intercept pointer or keyboard interaction");
-            Check(host.RenderSize == originalSize && routes.Opacity == 1 && journal.Opacity == 0,
-                "page transition keeps layout still and hides incoming text until outgoing text disappears");
+            Check(host.RenderSize == originalSize && routes.Opacity == 1 && journal.Opacity == 1 && layer.Opacity == 1,
+                "the incoming page is fully rendered underneath the opaque transition without resizing the layout");
             layer.Visibility = Visibility.Hidden;
-            journal.Opacity=1;
             var incomingFrame = CapturePage();
-            journal.Opacity=0;
+            journal.Opacity = 0;
+            var emptyFrame = CapturePage();
+            journal.Opacity = 1;
             layer.Visibility = Visibility.Visible;
-            await Task.Delay(35);
-            var middleOpacity = layer.Opacity;
+            await Task.Delay(70);
+            var remaining = ((RectangleGeometry)layer.Clip).Rect;
             var middleFrame = CapturePage();
-            Check(middleOpacity is > 0 and < 1 && ChangedPixels(firstFrame, middleFrame) > .01
+            Check(remaining.Left > 0 && remaining.Width > 0 && remaining.Width < originalSize.Width
+                && ChangedPixels(firstFrame, middleFrame) > .01
                 && ChangedPixels(middleFrame, incomingFrame) > .01,
-                "outgoing page fades smoothly against the background without showing the incoming text");
-            Check(journal.Opacity==0,"outgoing phase never superimposes two pages of text");
-            await Task.Delay(75);
-            Check(!layer.IsVisible && journal.Opacity is >0 and <1,"incoming page fades in only after the outgoing snapshot is hidden");
+                "the moving edge transitions between two fully rendered pages");
+            var leastContent = ChangedPixels(middleFrame, emptyFrame);
+            var deadline = DateTime.UtcNow.AddMilliseconds(210);
+            while (layer.IsVisible && DateTime.UtcNow < deadline)
+            {
+                await Task.Delay(12);
+                leastContent = Math.Min(leastContent, ChangedPixels(CapturePage(), emptyFrame));
+            }
+            Check(leastContent > .01 && journal.Opacity == 1,
+                "frame samples across the handoff never show the empty background");
             await Finish();
-            Check(layer.Visibility == Visibility.Collapsed && image.Source is null && !layer.HasAnimatedProperties,
-                "completed fade releases its bitmap and animation clock");
+            Check(layer.Visibility == Visibility.Collapsed && image.Source is null && layer.Clip is null,
+                "completed transition releases its bitmap and animation clock");
             var finalFrame = CapturePage();
             Check(ChangedPixels(finalFrame, incomingFrame) < .02, "final rendered frame matches the real incoming page without a completion flash");
             SaveFrame(firstFrame, "transition-first"); SaveFrame(middleFrame, "transition-middle"); SaveFrame(finalFrame, "journal-after");
@@ -183,12 +204,12 @@ internal partial class Program
                 var tab=target switch { "SubscriptionPage"=>"SubscriptionTabButton","JournalPage"=>"JournalTabButton",_=>"RoutesTabButton" };
                 var incoming=(FrameworkElement)Field(target)!;
                 ((Button)Field(tab)!).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
-                Check(incoming.IsVisible&&incoming.Opacity==0&&layer.IsVisible,$"{tab} starts with incoming content fully hidden");
+                Check(incoming.IsVisible&&incoming.Opacity==1&&layer.IsVisible&&layer.Opacity==1,$"{tab} keeps the new page visible behind the outgoing image");
                 await Task.Delay(30);
-                Check(incoming.Opacity==0,$"{tab} cannot double the outgoing text during its fade");
-                var deadline=DateTime.UtcNow.AddMilliseconds(220);
-                while(layer.IsVisible&&DateTime.UtcNow<deadline) await Task.Delay(5);
-                Check(!layer.IsVisible&&image.Source is null,$"{tab} removes the outgoing snapshot before revealing the incoming page");
+                Check(incoming.Opacity==1&&layer.Opacity==1&&layer.Clip is RectangleGeometry,$"{tab} reveals a moving portion of the new page at full opacity");
+                var finishBy=DateTime.UtcNow.AddMilliseconds(240);
+                while(layer.IsVisible&&DateTime.UtcNow<finishBy) await Task.Delay(5);
+                Check(!layer.IsVisible&&image.Source is null&&incoming.IsVisible,$"{tab} removes the outgoing snapshot as soon as the reveal finishes");
                 await Finish();
                 Check(incoming.Opacity==1&&!incoming.HasAnimatedProperties,$"{tab} finishes with a sharp page and no retained animation clock");
             }
@@ -196,7 +217,7 @@ internal partial class Program
                 "decorative page transitions neither edit routing nor start a VPN");
             Invoke("AnimateMainPage", false);
             Set("_allowClose", true); window.Close(); await Task.Delay(260);
-            Check(image.Source is null && !layer.HasAnimatedProperties, "closing during a transition releases its image and cannot trigger late navigation");
+            Check(image.Source is null && layer.Clip is null, "closing during a transition releases its image and cannot trigger late navigation");
             return count;
         }
         finally

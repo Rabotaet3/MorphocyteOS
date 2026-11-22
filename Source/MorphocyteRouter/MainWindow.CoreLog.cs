@@ -112,10 +112,6 @@ public partial class MainWindow
         var footer = new WrapPanel { HorizontalAlignment = HorizontalAlignment.Right };
         footer.Children.Add(copy); footer.Children.Add(dock);
         window.Content = DialogChrome.BuildFrame(window, "ЖУРНАЛ СОБЫТИЙ", _floatingCoreLogHost, footer);
-        System.Windows.Shell.WindowChrome.SetWindowChrome(window, new() {
-            CaptionHeight = 0, ResizeBorderThickness = new Thickness(6), GlassFrameThickness = new Thickness(0),
-            CornerRadius = new CornerRadius(18), UseAeroCaptionButtons = false
-        });
         // Move the same control, retaining its selection, history and scroll offset.
         CoreLogHost.Content = null;
         _floatingCoreLogHost.Content = CoreLogSurface;

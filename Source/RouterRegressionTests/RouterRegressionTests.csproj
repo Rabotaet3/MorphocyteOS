@@ -6,6 +6,7 @@
     <Compile Include="../MorphocyteRouter/DomainRule.cs" Link="DomainRule.cs" />
     <Compile Include="../MorphocyteRouter/AtomicFile.cs" Link="AtomicFile.cs" />
     <Compile Include="../MorphocyteRouter/AppSettings.cs" Link="AppSettings.cs" />
+    <Compile Include="../MorphocyteRouter/ConnectionMode.cs" Link="ConnectionMode.cs" />
     <Compile Include="../MorphocyteRouter/CoreProcessManager.cs" Link="CoreProcessManager.cs" />
     <Compile Include="../MorphocyteRouter/WindowsConsoleProcess.cs" Link="WindowsConsoleProcess.cs" />
     <Compile Include="../MorphocyteRouter/CoreBackend.cs" Link="CoreBackend.cs" />

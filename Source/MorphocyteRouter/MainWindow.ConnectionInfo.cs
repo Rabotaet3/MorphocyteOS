@@ -22,6 +22,7 @@ public partial class MainWindow
     // Batch updates behind the stable view, then refresh once.
     private readonly List<ConnectionTableRow> _connectionRows = new();
     private ListCollectionView? _connectionsView;
+    private string _connectionQuery = "";
     private string _selectedConnection = "";
     private readonly ConnectionHealth _health = new();
     private DateTime _nextHealthCheck = DateTime.MinValue;
@@ -47,10 +48,16 @@ public partial class MainWindow
         EndpointText.Text = _document is null || !_document.HasVpnConnection ? "Нет подключения" : _selectedConnection.Length > 0
             ? _selectedConnection : servers.Contains(remembered,StringComparer.Ordinal)?remembered : _document.ConnectionCount == 1 ? _document.Endpoint : "Выбрать сервер";
         EndpointText.ToolTip = EndpointText.Text;
-        _subscriptionServers?.SetCurrent(_selectedConnection.Length>0?_selectedConnection:remembered);
+        if (!_updatingSubscription) _subscriptionServers?.SetCurrent(_selectedConnection.Length>0?_selectedConnection:remembered);
     }
 
     private async void RefreshConnections_Click(object sender, System.Windows.RoutedEventArgs e) => await RefreshConnectionSnapshotAsync();
+
+    private void ConnectionDetails_Click(object sender, RoutedEventArgs e)
+    {
+        if (ConnectionsGrid.SelectedItem is ConnectionTableRow row)
+            UtilityDialogs.ShowNotice(this, "СОЕДИНЕНИЕ", row.DescribeConnection());
+    }
 
     private async Task RefreshConnectionSnapshotAsync()
     {
@@ -88,6 +95,9 @@ public partial class MainWindow
         // continues; only painting the newest table snapshot is deferred.
         if (_connectionRouteMenu is { IsOpen: true }) { _connectionTableRefreshPending = true; return; }
         _connectionTableRefreshPending = false;
+        var query = ConnectionSearchBox.Text.Trim();
+        var refresh = !string.Equals(_connectionQuery, query, StringComparison.OrdinalIgnoreCase);
+        _connectionQuery = query;
         var scroll = FindVisualDescendant<ScrollViewer>(ConnectionsGrid);
         var vertical = scroll?.VerticalOffset ?? 0;
         var horizontal = scroll?.HorizontalOffset ?? 0;
@@ -108,12 +118,13 @@ public partial class MainWindow
                 occurrences[identity] = occurrence + 1;
                 var key = identity + "\0" + occurrence;
                 retained.Add(key);
-                if (byKey.TryGetValue(key, out var row)) row.Update(activity);
-                else _connectionRows.Add(new(key, activity));
+                if (byKey.TryGetValue(key, out var row)) refresh |= row.Update(activity);
+                else { _connectionRows.Add(new(key, activity)); refresh = true; }
             }
             for (var i = _connectionRows.Count - 1; i >= 0; i--)
-                if (!retained.Contains(_connectionRows[i].Key)) _connectionRows.RemoveAt(i);
+                if (!retained.Contains(_connectionRows[i].Key)) { _connectionRows.RemoveAt(i); refresh = true; }
         }
+        if (!refresh) { RefreshJournalRouteControls(); return; }
         // Retain the view and its sort descriptions, even when a visible field changes.
         view.Refresh();
         foreach (var row in selected)
@@ -134,9 +145,8 @@ public partial class MainWindow
     private bool MatchesConnectionSearch(object value)
     {
         var row = (ConnectionTableRow)value;
-        var search = ConnectionSearchBox.Text.Trim();
-        return search.Length == 0 || $"{row.Process} {row.Destination} {row.Network} {row.RuleLabel} {row.RawRule} {row.Route}"
-            .Contains(search, StringComparison.OrdinalIgnoreCase);
+        return _connectionQuery.Length == 0 || $"{row.Process} {row.Destination} {row.Network} {row.RuleLabel} {row.RawRule} {row.Route}"
+            .Contains(_connectionQuery, StringComparison.OrdinalIgnoreCase);
     }
 
     private async void CheckConnection_Click(object sender, System.Windows.RoutedEventArgs e) => await CheckConnectionAsync(manual: true);
@@ -163,6 +173,7 @@ public partial class MainWindow
             _health.Record(delay);
             RefreshHealthReadout();
             RefreshConnectionCard();
+            SetStatus("VPN ОТВЕЧАЕТ", ModeLabel(_settings.Mode), "#73FFBF");
             ConnectionStateText.Text = $"Проверено {DateTime.Now:HH:mm:ss}";
             LastIssueText.Text = "";
             if (manual) SetLog("Проверка VPN: HTTPS-запрос выполнен успешно.");
@@ -170,16 +181,21 @@ public partial class MainWindow
         catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         catch (Exception ex)
         {
-            if (ReferenceEquals(diagnostics, _diagnostics) && !_closing)
+            if (ReferenceEquals(diagnostics, _diagnostics) && !token.IsCancellationRequested && !_closing)
             {
                 _health.Record(null);
                 RefreshHealthReadout();
+                SetStatus("VPN НЕ ОТВЕЧАЕТ", ModeLabel(_settings.Mode), "#FFD166");
                 ConnectionStateText.Text = "Нет ответа · " + DateTime.Now.ToString("HH:mm:ss");
                 LastIssueText.Text = manual ? ex is IOException ? ex.Message : "Проверка не завершилась. Проверь сервер и журнал." : "";
                 if (manual || _health.Count == 1) SetLog("Проверка VPN: HTTPS-запрос не прошёл.");
             }
         }
-        finally { _checkingConnection = false; UpdateControls(); }
+        finally
+        {
+            if (ReferenceEquals(diagnostics, _diagnostics) && !token.IsCancellationRequested)
+            { _checkingConnection = false; UpdateControls(); }
+        }
     }
 
     private void RefreshHealthReadout()
@@ -234,6 +250,7 @@ public partial class MainWindow
         _diagnosticLifetime?.Cancel();
         _diagnosticLifetime?.Dispose();
         _diagnosticLifetime = null;
+        _checkingConnection = false;
         _diagnostics?.Dispose();
         _diagnostics = null;
         _selectedConnection = "";

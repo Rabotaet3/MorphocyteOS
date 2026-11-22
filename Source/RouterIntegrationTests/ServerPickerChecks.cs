@@ -61,11 +61,11 @@ internal partial class Program
             Check(!Descendants<Button>(window).Any(button=>button.Name=="ChooseVpnServerButton"),"connection card is informational and has no duplicate server picker");
             ((Button)Field("SubscriptionTabButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); await Idle();
             var serverView=(DependencyObject)((ContentControl)Field("SubscriptionServersHost")).Content;
-            var rows=Descendants<StackPanel>(serverView).Single(item=>item.Name=="VpnServerRows");
+            var rows=Descendants<ListBox>(serverView).Single(item=>item.Name=="VpnServerRows");
             var search=Descendants<TextBox>(serverView).Single(item=>item.Name=="VpnServerSearch");
-            Check(rows.Children.OfType<Button>().Count()==40,"subscription page contains all forty servers");
+            Check(rows.Items.Count==40&&Descendants<VpnServerRow>(rows).Count()<40,"subscription page contains all forty servers and only renders nearby rows");
             search.Text="Сервер 40"; window.UpdateLayout();
-            var result=rows.Children.OfType<Button>().Single();
+            var result=Descendants<VpnServerRow>(rows).Single();
             Check(result.Tag!.ToString()==names[^1],"page search finds the final server");
             var label=Descendants<TextBlock>(result).Single(item=>item.Name=="VpnServerTitle");
             var labelBounds=label.TransformToAncestor(result).TransformBounds(new Rect(label.RenderSize));

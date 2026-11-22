@@ -204,7 +204,7 @@ public partial class MainWindow
         {
             UpdateControls();
             // Background recovery never asks to kill another application's core.
-            if (CoreProcessManager.FindOtherInstances(_settings.CorePath).Any(instance => instance.ProcessId != _core.TrackedProcessId))
+            if (!_settings.ProxyOnly && CoreProcessManager.FindOtherInstances(_settings.CorePath).Any(instance => instance.ProcessId != _core.TrackedProcessId))
             { SetLog("Восстановление остановлено: найдено другое ядро. Проверь процессы или запусти VPN вручную."); return RecoveryAttemptResult.Stop; }
             _ignoreRecoveryNetworkUntil = DateTime.UtcNow.AddSeconds(15);
             if (!await StopCoreAsync()) return RecoveryAttemptResult.Stop;

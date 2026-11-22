@@ -61,7 +61,7 @@ public partial class MainWindow
         var displayOffset = new Vector();
         if (IsLoaded && IsVisible && !_closing && _pageAnimationsEnabled())
         {
-            // Capture the current composition, including an interrupted fade.
+            // Capture the current composition, including an interrupted transition.
             // The real pages switch immediately: keyboard commands, the log and
             // diagnostics still see exactly one active page during animation.
             MainPageHost.UpdateLayout();
@@ -112,11 +112,12 @@ public partial class MainWindow
         }
         SelectWorkspacePage(page);
         if (frame is null) return;
-        var incoming=page switch { WorkspacePage.Subscription=>(FrameworkElement)SubscriptionPage,WorkspacePage.Journal=>JournalPage,_=>RoutesPage };
-        // Two separate phases prevent the text of unrelated pages from being
-        // composited on top of each other. The incoming page stays transparent
-        // until the outgoing snapshot has completely disappeared.
-        incoming.Opacity=0;
+        var viewport = MainPageHost.RenderSize;
+        // The new page is already fully rendered under the snapshot. Reveal it
+        // with a moving clip so both pages always cover the viewport without
+        // fading to the empty background or stacking two sets of text.
+        var clip = new RectangleGeometry(new Rect(viewport));
+        PageTransitionLayer.Clip = clip;
         PageTransitionImage.Source = frame;
         PageTransitionImage.Width = displaySize.Width; PageTransitionImage.Height = displaySize.Height;
         Canvas.SetLeft(PageTransitionImage, displayOffset.X); Canvas.SetTop(PageTransitionImage, displayOffset.Y);
@@ -125,32 +126,21 @@ public partial class MainWindow
         PageTransitionLayer.Opacity = 1;
         PageTransitionLayer.Visibility = Visibility.Visible;
         var version = _pageTransitionVersion;
-        var fade = new DoubleAnimation(1, 0, TimeSpan.FromMilliseconds(85))
+        var reveal = new RectAnimation(new Rect(viewport), new Rect(viewport.Width, 0, 0, viewport.Height), TimeSpan.FromMilliseconds(180))
         {
             EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }, FillBehavior = FillBehavior.HoldEnd
         };
-        fade.Completed += (_, _) => {
-            if(version!=_pageTransitionVersion) return;
-            PageTransitionLayer.Visibility=Visibility.Collapsed;
-            PageTransitionImage.Source=null;
-            var reveal=new DoubleAnimation(0,1,TimeSpan.FromMilliseconds(115)) {
-                EasingFunction=new SineEase { EasingMode=EasingMode.EaseOut },FillBehavior=FillBehavior.HoldEnd
-            };
-            reveal.Completed+=(_,_)=> { if(version==_pageTransitionVersion) ResetPageTransition(); };
-            incoming.BeginAnimation(OpacityProperty,reveal,HandoffBehavior.SnapshotAndReplace);
-        };
-        PageTransitionLayer.BeginAnimation(OpacityProperty, fade, HandoffBehavior.SnapshotAndReplace);
+        reveal.Completed += (_, _) => { if (version == _pageTransitionVersion) ResetPageTransition(); };
+        clip.BeginAnimation(RectangleGeometry.RectProperty, reveal, HandoffBehavior.SnapshotAndReplace);
     }
 
     private void ResetPageTransition()
     {
         _pageTransitionVersion++;
-        PageTransitionLayer.BeginAnimation(OpacityProperty, null);
-        PageTransitionLayer.Opacity = 0;
         PageTransitionLayer.Visibility = Visibility.Collapsed;
+        if (PageTransitionLayer.Clip is RectangleGeometry clip) clip.BeginAnimation(RectangleGeometry.RectProperty, null);
+        PageTransitionLayer.Clip = null;
         PageTransitionImage.Source = null;
-        foreach(var page in new FrameworkElement[]{SubscriptionPage,RoutesPage,JournalPage})
-        { page.BeginAnimation(OpacityProperty,null); page.Opacity=1; }
     }
 
     private void MainPageHost_SizeChanged(object sender, SizeChangedEventArgs e) => ResetPageTransition();

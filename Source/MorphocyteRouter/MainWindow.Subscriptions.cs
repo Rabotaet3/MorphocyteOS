@@ -47,7 +47,7 @@ public partial class MainWindow
         var input = new TextBox { Name = "SubscriptionUrlInput", MaxLength = 8192, Margin = new Thickness(22, 16, 22, 8), Padding = new Thickness(10) };
         var feedback = new TextBlock { Name = "SubscriptionSourceFeedback", TextWrapping = TextWrapping.Wrap, Margin = new Thickness(22, 0, 22, 12), FontSize = 12 };
         feedback.SetResourceReference(TextBlock.ForegroundProperty, "ThemeMuted");
-        var explanation = new TextBlock { Text = "Новая подписка заменит серверы в текущем профиле. Правила и папки сохранятся. Если VPN этого профиля запущен, подключение кратковременно перезапустится.",
+        var explanation = new TextBlock { Text = "Новая подписка заменит серверы в текущем профиле. Правила и папки сохранятся. Если конфигурация изменится, работающий VPN кратковременно переподключится.",
             TextWrapping = TextWrapping.Wrap, FontSize = 13, Margin = new Thickness(22, 14, 22, 0) };
         explanation.SetResourceReference(TextBlock.ForegroundProperty, "ThemeMuted");
         var body = new StackPanel(); body.Children.Add(explanation); body.Children.Add(input);
@@ -103,6 +103,19 @@ public partial class MainWindow
     private async Task<bool> RefreshSubscriptionFromSourceCoreAsync(CancellationToken token, HttpClient? client,
         SubscriptionSource? proposed, Window promptOwner)
     {
+        _updatingSubscription = true;
+        RefreshSubscriptionBanner();
+        try { return await ApplySubscriptionRefreshAsync(token, client, proposed, promptOwner); }
+        finally
+        {
+            _updatingSubscription = false;
+            if (!_closing) RefreshSubscriptionBanner();
+        }
+    }
+
+    private async Task<bool> ApplySubscriptionRefreshAsync(CancellationToken token, HttpClient? client,
+        SubscriptionSource? proposed, Window promptOwner)
+    {
         if (_document is not { } original)
             throw new InvalidDataException("Сначала выбери профиль.");
         var previousSource = _settings.ProfileSubscriptions.GetValueOrDefault(original.Path);
@@ -114,8 +127,9 @@ public partial class MainWindow
         // An older header-only request must not replace the metadata delivered
         // by this complete refresh, even when it finishes downloading later.
         _subscriptionInfoGeneration++;
-        var imported = await SubscriptionImporter.ImportAsync(source.ReadUrl(), token, client,
-            hardwareId: SubscriptionDeviceIdentity.GetOrCreate(_settings.StorageDirectory), allowPartial: true);
+        var storage = _settings.StorageDirectory;
+        var imported = await Task.Run(() => SubscriptionImporter.ImportAsync(source.ReadUrl(), token, client,
+            hardwareId: SubscriptionDeviceIdentity.GetOrCreate(storage), allowPartial: true), token);
         if (!ProfileImportDialog.ConfirmCompatibility(promptOwner, imported)) return false;
         if (imported.InsecureTls && !UtilityDialogs.ShowConfirm(promptOwner, "ПРОВЕРКА СЕРТИФИКАТА ОТКЛЮЧЕНА",
             "В обновлённой подписке отключена проверка TLS-сертификата. Сохранить эти настройки?", "СОХРАНИТЬ", "ОТМЕНА")) return false;
@@ -138,38 +152,46 @@ public partial class MainWindow
             try { selected = await diagnostics.ReadSelectionAsync(route, deadline.Token); }
             catch (Exception) when (!token.IsCancellationRequested) { }
         }
-        var merged = SubscriptionRefresh.Merge(original.Path, oldText, imported, selected);
-        var candidate = ClashConfigDocument.Parse(original.Path, merged.Yaml);
+        var (merged, candidate, currentCount, updatedCount) = await Task.Run(() =>
+        {
+            var result = SubscriptionRefresh.Merge(original.Path, oldText, imported, selected);
+            var document = result.Yaml == oldText ? original : ClashConfigDocument.Parse(original.Path, result.Yaml);
+            return (result, document, VpnServerCatalog.Choices(original).Count, VpnServerCatalog.Choices(document).Count);
+        }, token);
+        var profileChanged = !ReferenceEquals(candidate, original);
         var rules = _rules.Select(rule => rule.Copy()).ToArray();
-        var folders = _folderOrder.ToArray();
         var dirty = _dirty;
         var ruleState = _settings.GetRuleState(original.Path);
-        var appliedRules = _appliedRules;
+        var previousDraft = _settings.GetDraft(original.Path);
+        var previousDraftSaved = _draftSaved;
         var previousUpdatedAt = source.UpdatedAt; var previousSelection = source.SelectedServer;
         var previousMetadata=source.Metadata;
         var previousPartialImport = source.AllowPartialImport;
         var previousHardwareId = source.SendHardwareId;
         var previousProfileSelection = _settings.ProfileSelections.GetValueOrDefault(original.Path);
-        var undo = _undoRules.ToArray(); var redo = _redoRules.ToArray();
         var wantedBefore = _connectionRequested;
         var temp = Path.Combine(Path.GetDirectoryName(original.Path)!, ".subscription-" + Guid.NewGuid().ToString("N") + ".yaml");
-        string? backup = null; var wasRunning = _core.IsRunning;
+        var corePath = _settings.CorePath;
+        var fullTunnel = _settings.FullTunnel;
+        var proxyOnly = _settings.ProxyOnly;
+        var wasRunning = _core.IsRunning;
+        var metadataChanged = false;
+        string? backup = null;
         try
         {
             await File.WriteAllTextAsync(temp, merged.Yaml, token);
-            if (!CoreBackend.IsSingBox(_settings.CorePath) && XrayBridgePlan.ContainsConnections(candidate))
+            if (!CoreBackend.IsSingBox(corePath) && XrayBridgePlan.ContainsConnections(candidate))
                 throw new InvalidDataException("Для серверов этой подписки выбери основное ядро sing-box в настройках и повтори загрузку.");
-            var check = await CoreProcessManager.ValidateAsync(_settings.CorePath, temp, token, fullTunnel: _settings.FullTunnel);
+            var check = await Task.Run(() => CoreProcessManager.ValidateAsync(corePath, temp, token, fullTunnel, proxyOnly), token);
             if (!check.Success) throw new InvalidDataException("Ядро не приняло обновлённую подписку. Текущий профиль сохранён.");
             if (dirty)
             {
-                await File.WriteAllTextAsync(temp, candidate.BuildText(rules), token);
-                check = await CoreProcessManager.ValidateAsync(_settings.CorePath, temp, token, fullTunnel: _settings.FullTunnel);
+                var draftText = await Task.Run(() => candidate.BuildText(rules), token);
+                await File.WriteAllTextAsync(temp, draftText, token);
+                check = await Task.Run(() => CoreProcessManager.ValidateAsync(corePath, temp, token, fullTunnel, proxyOnly), token);
                 if (!check.Success) throw new InvalidDataException("Обновлённые серверы несовместимы с черновиком правил. Текущий профиль сохранён.");
             }
             token.ThrowIfCancellationRequested();
-            var currentCount = VpnServerCatalog.Choices(original).Count;
-            var updatedCount = VpnServerCatalog.Choices(candidate).Count;
             if (merged.Removed > 0 || updatedCount < currentCount || merged.SelectionRemoved)
             {
                 var details = new List<string>();
@@ -181,66 +203,72 @@ public partial class MainWindow
                     details.Add("Выбранного сервера больше нет. После обновления будет использован доступный сервер из той же группы.");
                 if (!UtilityDialogs.ShowConfirm(promptOwner, "ИЗМЕНИЛСЯ СПИСОК СЕРВЕРОВ", string.Join("\n\n", details), "ОБНОВИТЬ", "ОТМЕНА")) return false;
             }
-            if (!await StopCoreAsync()) throw new IOException("Подписка не изменена: остановка ядра не подтверждена.");
+            if (profileChanged)
+            {
+                if (!await StopCoreAsync()) throw new IOException("Подписка не изменена: остановка ядра не подтверждена.");
+                token.ThrowIfCancellationRequested();
+                backup = await Task.Run(() => original.CommitText(merged.Yaml), token);
+                CancelConnectionIntent();
+                _document = candidate;
+                // The refresh only replaces the server sections. Keep the editor,
+                // its applied rules and history attached to the same rule objects.
+                if (dirty) _settings.PutDraft(original.Path, candidate.SourceHash, rules, archiveConflict: false);
+                else _settings.RemoveDraft(original.Path);
+                if (ruleState?.SourceHash == original.SourceHash)
+                    _settings.PutRuleState(original.Path, candidate.SourceHash, ruleState.Rules);
+                if (merged.SelectedServer.Length > 0) _settings.ProfileSelections[original.Path] = merged.SelectedServer;
+                else _settings.ProfileSelections.Remove(original.Path);
+            }
+            else if (await File.ReadAllTextAsync(original.Path, token) != oldText)
+                throw new IOException("Профиль изменён на диске. Открой его заново перед обновлением подписки.");
             token.ThrowIfCancellationRequested();
-            backup = original.CommitText(merged.Yaml);
-            _document = candidate;
-            if (dirty) _settings.PutDraft(original.Path, candidate.SourceHash, rules);
-            else _settings.RemoveDraft(original.Path);
-            if (ruleState?.SourceHash == original.SourceHash)
-                _settings.PutRuleState(original.Path, candidate.SourceHash, ruleState.Rules);
-            await LoadConfigAsync(original.Path);
-            if (merged.SelectedServer.Length > 0) _settings.ProfileSelections[original.Path] = merged.SelectedServer;
-            _undoRules.AddRange(undo); _redoRules.AddRange(redo); _historyState = CaptureRuleEditState(_dirty);
-            token.ThrowIfCancellationRequested();
-            if (wasRunning && !_closing)
+            if (profileChanged && wasRunning && !_closing)
             {
                 await StartCoreAsync(applyDraft: false);
                 if (!_core.IsRunning) throw new IOException("Не удалось возобновить VPN после обновления подписки.");
             }
             token.ThrowIfCancellationRequested();
+            metadataChanged = true;
             source.UpdatedAt = DateTimeOffset.UtcNow; source.SelectedServer = merged.SelectedServer;
             source.AllowPartialImport = true;
             source.SendHardwareId = true;
             source.Metadata=imported.Metadata;
             _settings.ProfileSubscriptions[original.Path] = source;
             await SaveSettingsAsync();
+            if (profileChanged) _draftSaved = dirty;
             token.ThrowIfCancellationRequested();
             _selectedConnection = merged.SelectedServer;
             RefreshConnectionCard();
-            RefreshSubscriptionBanner();
-            RefreshRuleHistoryControls();
-            SetLog($"Подписка обновлена: добавлено серверов {merged.Added}, удалено {merged.Removed}. Правила и папки сохранены.");
+            SetLog(profileChanged
+                ? $"Подписка обновлена: добавлено серверов {merged.Added}, удалено {merged.Removed}. Правила и папки сохранены."
+                : "Сведения о подписке обновлены. Список серверов не изменился.");
             return true;
         }
         catch
         {
-            if (backup is not null && await StopCoreAsync())
+            if (backup is not null || metadataChanged)
             {
-                if (await File.ReadAllTextAsync(original.Path) != merged.Yaml)
-                    throw new IOException("YAML изменён извне; откат подписки остановлен. Резервная копия сохранена.");
-                AtomicFile.Write(original.Path, oldText);
-                _document = ClashConfigDocument.Load(original.Path);
-                _folderOrder.Clear(); _folderOrder.AddRange(folders); ReplaceRules(rules);
-                SetDirty(dirty);
-                if (dirty) _settings.PutDraft(original.Path, original.SourceHash, rules);
-                else _settings.RemoveDraft(original.Path);
-                if (ruleState is not null) _settings.PutRuleState(original.Path, original.SourceHash, ruleState.Rules);
-                else _settings.ProfileRuleStates.Remove(original.Path);
-                _settings.PutFolderOrder(original.Path, folders);
+                if (backup is not null)
+                {
+                    if (!await StopCoreAsync()) throw;
+                    if (await File.ReadAllTextAsync(original.Path) != merged.Yaml)
+                        throw new IOException("YAML изменён извне; откат подписки остановлен. Резервная копия сохранена.");
+                    await Task.Run(() => AtomicFile.Write(original.Path, oldText));
+                    _document = original;
+                    if (previousDraft is null) _settings.RemoveDraft(original.Path);
+                    else _settings.ProfileDrafts[original.Path] = previousDraft;
+                    _draftSaved = previousDraftSaved;
+                    if (ruleState is null) _settings.ProfileRuleStates.Remove(original.Path);
+                    else _settings.ProfileRuleStates[original.Path] = ruleState;
+                    if (previousProfileSelection is null) _settings.ProfileSelections.Remove(original.Path);
+                    else _settings.ProfileSelections[original.Path] = previousProfileSelection;
+                }
                 source.UpdatedAt = previousUpdatedAt; source.SelectedServer = previousSelection;
                 source.AllowPartialImport = previousPartialImport;
                 source.SendHardwareId = previousHardwareId;
                 source.Metadata=previousMetadata;
                 if (previousSource is null) _settings.ProfileSubscriptions.Remove(original.Path);
                 else _settings.ProfileSubscriptions[original.Path] = previousSource;
-                if (previousProfileSelection is null) _settings.ProfileSelections.Remove(original.Path);
-                else _settings.ProfileSelections[original.Path] = previousProfileSelection;
-                _undoRules.Clear(); _undoRules.AddRange(undo); _redoRules.Clear(); _redoRules.AddRange(redo);
-                _appliedRules = appliedRules;
-                _historyState = CaptureRuleEditState(dirty);
-                RefreshRuleHistoryControls();
-                RefreshSubscriptionBanner();
                 try { await SaveSettingsAsync(); }
                 catch { SetLog("Прежний профиль восстановлен, но настройки не удалось записать. Проверь доступ к файлу настроек."); }
                 SetLog("Предыдущая подписка восстановлена. Правила и черновик сохранены.");
@@ -253,6 +281,6 @@ public partial class MainWindow
             }
             throw;
         }
-        finally { if (File.Exists(temp)) File.Delete(temp); }
+        finally { await Task.Run(() => { if (File.Exists(temp)) File.Delete(temp); }); }
     }
 }

@@ -72,7 +72,8 @@ internal partial class Program
                     {
                         Check(window.DiagnosticSteps.Count == 6 && copy.IsEnabled && repeat.IsEnabled, "temporary diagnostic window displays all stages and copy/repeat controls");
                         Check(window.DiagnosticSteps.Count(step => step.State == DiagnosticState.Success) == 4, "diagnostic badges distinguish actual success from informational TCP skip");
-                        Check(((FrameworkElement)Field("WindowContent")).Effect is System.Windows.Media.Effects.BlurEffect, "diagnostic window uses the shared blurred backdrop");
+                        Check(((FrameworkElement)Field("DialogShade")).IsVisible && ((FrameworkElement)Field("WindowContent")).Effect is null
+                            && HasOpaqueNativeSurface(dialog), "diagnostic window uses the opaque shared dialog surface and lightweight shade");
                         Check(!window.DiagnosticReport.Contains("test-only") && !window.DiagnosticReport.Contains("vpn.example"), "copyable diagnostic report excludes credentials and server address");
                         foreach (var scale in new[] { .8, 1d, 1.5 })
                         {

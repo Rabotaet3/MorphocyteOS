@@ -2,30 +2,42 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Input;
 using System.Windows.Media;
-using System.Windows.Media.Animation;
-using System.Windows.Threading;
+using System.Windows.Shell;
 
 namespace MorphocyteRouter;
 
 internal static class DialogChrome
 {
     internal static Window CreateWindow(Window? owner, string title, double width, double height,
-        double? minWidth = null, double? minHeight = null, ResizeMode resizeMode = ResizeMode.NoResize) => new()
+        double? minWidth = null, double? minHeight = null, ResizeMode resizeMode = ResizeMode.NoResize)
     {
-        Title = title,
-        Owner = owner,
-        WindowStartupLocation = owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner,
-        Width = width,
-        Height = height,
-        MinWidth = minWidth ?? width,
-        MinHeight = minHeight ?? height,
-        ResizeMode = resizeMode,
-        WindowStyle = WindowStyle.None,
-        AllowsTransparency = true,
-        Background = Brushes.Transparent,
-        Foreground = ThemeManager.GetBrush("ThemeText"),
-        ShowInTaskbar = false
-    };
+        var dialog = new Window
+        {
+            Title = title,
+            Owner = owner,
+            WindowStartupLocation = owner is null ? WindowStartupLocation.CenterScreen : WindowStartupLocation.CenterOwner,
+            Width = width,
+            Height = height,
+            MinWidth = minWidth ?? width,
+            MinHeight = minHeight ?? height,
+            ResizeMode = resizeMode,
+            WindowStyle = WindowStyle.None,
+            ShowInTaskbar = false
+        };
+        dialog.SetResourceReference(Control.BackgroundProperty, "ThemeCanvas");
+        dialog.SetResourceReference(Control.ForegroundProperty, "ThemeText");
+        // WindowChrome rounds the opaque native window without a per-pixel
+        // alpha surface, and keeps the resize hit targets on custom dialogs.
+        WindowChrome.SetWindowChrome(dialog, new WindowChrome
+        {
+            CaptionHeight = 0,
+            ResizeBorderThickness = new Thickness(resizeMode is ResizeMode.CanResize or ResizeMode.CanResizeWithGrip ? 6 : 0),
+            GlassFrameThickness = new Thickness(0),
+            CornerRadius = new CornerRadius(18),
+            UseAeroCaptionButtons = false
+        });
+        return dialog;
+    }
 
     internal static Border BuildFrame(Window dialog, string title, UIElement content, UIElement? footer = null)
     {
@@ -142,7 +154,6 @@ internal static class DialogChrome
 
     internal static void ShowModal(Window? owner, Window dialog)
     {
-        AnimateWindowOpen(dialog);
         SetBackdrop(owner, true);
         dialog.Closed += (_, _) => SetBackdrop(owner, false);
         dialog.ShowDialog();
@@ -150,72 +161,10 @@ internal static class DialogChrome
 
     internal static void ShowModeless(Window owner, Window dialog)
     {
-        AnimateWindowOpen(dialog);
         SetBackdrop(owner, true);
         dialog.Closed += (_, _) => SetBackdrop(owner, false);
         dialog.Show();
         dialog.Activate();
-    }
-
-    private static void AnimateWindowOpen(Window dialog)
-    {
-        if (dialog.Content is not FrameworkElement content) return;
-        // Warm the bitmap before entrance, then animate only its opacity and transform.
-        // The gentle zoom stays inside the HWND and never overshoots its final size.
-        var originalOpacity = content.Opacity;
-        var originalCache = content.CacheMode;
-        var originalTransform = content.RenderTransform;
-        var originalOrigin = content.RenderTransformOrigin;
-        var zoom = new ScaleTransform(0.975, 0.975);
-        // Subpixel filtering avoids the pixel-snapped steps of the previous zoom.
-        content.CacheMode = new BitmapCache { SnapsToDevicePixels = false };
-        content.RenderTransformOrigin = new Point(0.5, 0.5);
-        content.RenderTransform = zoom;
-        content.Opacity = 0.01;
-        var closed = false;
-
-        void Restore()
-        {
-            content.BeginAnimation(UIElement.OpacityProperty, null);
-            zoom.BeginAnimation(ScaleTransform.ScaleXProperty, null);
-            zoom.BeginAnimation(ScaleTransform.ScaleYProperty, null);
-            content.Opacity = originalOpacity;
-            content.RenderTransform = originalTransform;
-            content.RenderTransformOrigin = originalOrigin;
-            content.CacheMode = originalCache;
-        }
-
-        void FirstPaint(object? sender, EventArgs args)
-        {
-            dialog.ContentRendered -= FirstPaint;
-            dialog.Dispatcher.BeginInvoke(DispatcherPriority.Render, new Action(() =>
-            {
-                if (closed) return;
-                var fade = new DoubleAnimation(0.01, originalOpacity, TimeSpan.FromMilliseconds(140))
-                {
-                    EasingFunction = new SineEase { EasingMode = EasingMode.EaseInOut }
-                };
-                var settle = new DoubleAnimation(0.975, 1, TimeSpan.FromMilliseconds(170))
-                {
-                    EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-                };
-                settle.Completed += (_, _) => Restore();
-                content.BeginAnimation(UIElement.OpacityProperty, fade);
-                zoom.BeginAnimation(ScaleTransform.ScaleXProperty,
-                    new DoubleAnimation(0.975, 1, TimeSpan.FromMilliseconds(170))
-                    {
-                        EasingFunction = new CubicEase { EasingMode = EasingMode.EaseOut }
-                    });
-                zoom.BeginAnimation(ScaleTransform.ScaleYProperty, settle);
-            }));
-        }
-        dialog.ContentRendered += FirstPaint;
-        dialog.Closed += (_, _) =>
-        {
-            closed = true;
-            dialog.ContentRendered -= FirstPaint;
-            Restore();
-        };
     }
 
     private static Button? FindButtonAncestor(DependencyObject? current)

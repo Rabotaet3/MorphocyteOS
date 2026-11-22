@@ -24,6 +24,24 @@ internal sealed class ConnectionTableRow(string key, ConnectionActivity activity
     public string RuleHint => RuleLabel + Environment.NewLine + "Техническое правило: " + RawRule;
     public event PropertyChangedEventHandler? PropertyChanged;
 
+    internal string DescribeConnection()
+    {
+        static string ValueOrUnknown(string value) => string.IsNullOrWhiteSpace(value) ? "Ядро не указало" : value;
+        var lines = new List<string>
+        {
+            "Приложение: " + ValueOrUnknown(Process),
+            "Назначение: " + ValueOrUnknown(Destination),
+            "IP назначения: " + ValueOrUnknown(_activity.DestinationIp),
+            "Протокол: " + ValueOrUnknown(Network)
+        };
+        if (_activity.Inbound.Length > 0) lines.Add("Вход ядра: " + _activity.Inbound);
+        lines.Add("Сработавшее правило: " + RuleLabel);
+        if (!string.IsNullOrWhiteSpace(RawRule)) lines.Add("Правило ядра: " + RawRule.Trim());
+        lines.Add("Фактический маршрут: " + ValueOrUnknown(Route));
+        if (PendingRouteLabel.Length > 0) lines.Add(PendingRouteLabel);
+        return string.Join(Environment.NewLine, lines);
+    }
+
     internal void SetPendingRoute(string label)
     {
         if (PendingRouteLabel == label) return;
@@ -32,11 +50,16 @@ internal sealed class ConnectionTableRow(string key, ConnectionActivity activity
         PropertyChanged?.Invoke(this, new(nameof(RouteHint)));
     }
 
-    internal void Update(ConnectionActivity activity)
+    internal bool Update(ConnectionActivity activity)
     {
         var previous = _activity;
         _activity = activity;
-        void Changed(string name) => PropertyChanged?.Invoke(this, new(name));
+        bool changed = false;
+        void Changed(string name)
+        {
+            changed = true;
+            PropertyChanged?.Invoke(this, new(name));
+        }
         if (previous.Process != Process) Changed(nameof(Process));
         if (previous.Destination != Destination)
         {
@@ -47,6 +70,7 @@ internal sealed class ConnectionTableRow(string key, ConnectionActivity activity
         if (previous.Route != Route) { Changed(nameof(Route)); Changed(nameof(RouteHint)); }
         if (previous.Rule != RawRule || previous.Process != Process)
         { Changed(nameof(RawRule)); Changed(nameof(RuleLabel)); Changed(nameof(RuleHint)); }
+        return changed;
     }
 }
 

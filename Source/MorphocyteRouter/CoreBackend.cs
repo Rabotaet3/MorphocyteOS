@@ -7,6 +7,7 @@ internal static class CoreBackend
 {
     internal const string SingBoxVersion = "1.14.4";
     internal const string SingBoxFileName = "sing-box.exe";
+    internal const int LocalProxyPort = 17890;
     internal const string SingBoxHash = "8F30682EE198855440D2A7FE070D5D3653793B2D01BB8C85EEA88F93BBE7C8B9";
     // Stable releases before 1.2.7 allow managed files in ThirdPartySource but
     // reject a new root executable. Keep the bundled engine update-compatible;
@@ -28,11 +29,13 @@ internal static class CoreBackend
     }
 
     internal static string RuntimeText(string executable, ClashConfigDocument document, CoreDiagnostics api, bool fullTunnel, int speedPort, string? selectedServer = null,
-        IReadOnlyDictionary<string, XrayBridgeEndpoint>? xrayEndpoints = null, string? selectionCacheId = null)
+        IReadOnlyDictionary<string, XrayBridgeEndpoint>? xrayEndpoints = null, string? selectionCacheId = null, bool proxyOnly = false)
     {
         if (!IsSingBox(executable) && XrayBridgePlan.ContainsConnections(document))
             throw new InvalidDataException("Подключения Xray поддерживаются с основным ядром sing-box. Выбери его в настройках.");
-        return IsSingBox(executable) ? SingBoxConfig.Build(document, api.Port, api.Secret, fullTunnel, speedPort, selectedServer, xrayEndpoints: xrayEndpoints,selectionCacheId:selectionCacheId)
-            : document.BuildRuntimeText(api.Port, api.Secret, fullTunnel, speedPort, selectedServer);
+        return IsSingBox(executable)
+            ? SingBoxConfig.Build(document, api.Port, api.Secret, fullTunnel || proxyOnly, speedPort, selectedServer,
+                includeTun: !proxyOnly, xrayEndpoints: xrayEndpoints, selectionCacheId: selectionCacheId, proxyOnly: proxyOnly)
+            : document.BuildRuntimeText(api.Port, api.Secret, fullTunnel || proxyOnly, speedPort, selectedServer, proxyOnly);
     }
 }

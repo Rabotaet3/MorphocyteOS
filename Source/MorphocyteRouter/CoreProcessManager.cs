@@ -56,7 +56,10 @@ public sealed partial class CoreProcessManager
         await process.WaitForExitAsync();
     });
 
-    public async Task StartAsync(ProcessStartInfo info, CancellationToken cancellationToken = default)
+    public Task StartAsync(ProcessStartInfo info, CancellationToken cancellationToken = default)
+        => StartAsync(info, cancellationToken, waitUntilReady: null);
+
+    private async Task StartAsync(ProcessStartInfo info, CancellationToken cancellationToken, Func<CancellationToken, Task>? waitUntilReady)
     {
         await _gate.WaitAsync(cancellationToken);
         try
@@ -106,7 +109,24 @@ public sealed partial class CoreProcessManager
             }
             if (console is null && info.RedirectStandardOutput) process.BeginOutputReadLine();
             if (console is null && info.RedirectStandardError) process.BeginErrorReadLine();
-            await Task.Delay(TimeSpan.FromMilliseconds(1400), cancellationToken);
+            if (waitUntilReady is null)
+                await Task.Delay(TimeSpan.FromMilliseconds(1400), cancellationToken);
+            else
+            {
+                using var readyLifetime = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                var ready = waitUntilReady(readyLifetime.Token);
+                var exited = process.WaitForExitAsync(readyLifetime.Token);
+                try
+                {
+                    if (await Task.WhenAny(ready, exited) == ready) await ready;
+                    else await exited;
+                }
+                finally
+                {
+                    readyLifetime.Cancel();
+                    try { await ready; } catch (OperationCanceledException) when (readyLifetime.IsCancellationRequested) { }
+                }
+            }
             if (process.HasExited)
             {
                 var exitCode = process.ExitCode;
@@ -325,7 +345,7 @@ public sealed partial class CoreProcessManager
     }
 
     public static async Task<(bool Success, string Message)> ValidateAsync(string executable, string configPath,
-        CancellationToken cancellationToken = default, bool fullTunnel = false)
+        CancellationToken cancellationToken = default, bool fullTunnel = false, bool proxyOnly = false, string? dataDirectory = null)
     {
         if (CoreBackend.IsSingBox(executable) && !configPath.EndsWith(".json", StringComparison.OrdinalIgnoreCase))
         {
@@ -335,12 +355,12 @@ public sealed partial class CoreProcessManager
                 using var api = new CoreDiagnostics();
                 var document = ClashConfigDocument.Load(configPath);
                 using var bridge = XrayBridgePlan.Create(document);
-                var runtime = SingBoxConfig.Build(document, api.Port, api.Secret, fullTunnel, xrayEndpoints: bridge.Endpoints);
+                var runtime = CoreBackend.RuntimeText(executable, document, api, fullTunnel, 0, xrayEndpoints: bridge.Endpoints, proxyOnly: proxyOnly);
                 if (bridge.HasConnections) bridge.ConfigureDnsFromRuntime(runtime);
                 var xrayCheck = await bridge.ValidateAsync(cancellationToken);
                 if (!xrayCheck.Success) return xrayCheck;
                 await File.WriteAllTextAsync(temporary, runtime, cancellationToken);
-                return await ValidateAsync(executable, temporary, cancellationToken);
+                return await ValidateAsync(executable, temporary, cancellationToken, dataDirectory: dataDirectory);
             }
             catch (InvalidDataException error) { return (false, error.Message); }
             finally { if (File.Exists(temporary)) File.Delete(temporary); }
@@ -357,7 +377,7 @@ public sealed partial class CoreProcessManager
             catch (IOException error) { return (false, error.Message); }
             catch (UnauthorizedAccessException error) { return (false, error.Message); }
         }
-        var info = CreateStartInfo(executable, configPath);
+        var info = CreateStartInfo(executable, configPath, dataDirectory);
         if (CoreBackend.IsSingBox(executable)) info.ArgumentList[0] = "check";
         else if (IsXray(executable)) info.ArgumentList.Insert(1, "-test");
         else info.ArgumentList.Insert(0, "-t");

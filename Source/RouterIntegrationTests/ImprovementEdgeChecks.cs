@@ -35,7 +35,7 @@ internal partial class Program
         Task Call(string name, params object[] values) => (Task)typeof(MainWindow).GetMethod(name, BindingFlags.Instance | BindingFlags.NonPublic)!.Invoke(window, values)!;
         ObservableCollection<DomainRule> Rules() => (ObservableCollection<DomainRule>)Field("_rules");
         var core = (CoreProcessManager)Field("_core");
-        DispatcherTimer CloseDialog(string title, string? button = null)
+        DispatcherTimer CloseDialog(string title, string? button = null, Action? beforeClose = null)
         {
             var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(80) };
             timer.Tick += (_, _) =>
@@ -43,6 +43,7 @@ internal partial class Program
                 var dialog = Application.Current.Windows.OfType<Window>().FirstOrDefault(item => item != window && item.Title == title);
                 if (dialog is null) return;
                 timer.Stop();
+                beforeClose?.Invoke();
                 if (button is null) dialog.Close();
                 else Descendants<Button>(dialog).Single(item => Equals(item.Content, button)).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
             };
@@ -68,18 +69,68 @@ internal partial class Program
             await window.ChangeRuleRouteAsync(Rules()[0], "VPN");
             var savedBefore = File.ReadAllText(path); var draftBefore = settings.GetDraft(path)!.Rules[0].Route;
             await Call("StartCoreAsync", false);
+            ((Button)Field("SubscriptionTabButton")).RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            await gate.WaitAsync(); gate.Release();
+            await Task.Delay(240);
+            window.UpdateLayout();
+            var serverHost = (ContentControl)Field("SubscriptionServersHost");
+            var initialView = (VpnServerListView)serverHost.Content;
+            Descendants<TextBox>(initialView).Single().Text = "Beta";
+            var ruleBeforeRefresh = Rules()[0];
             using var good = new HttpClient(new DiagnosticHandler(_ => new(HttpStatusCode.OK) { Content = new StringContent(fresh, Encoding.UTF8) }));
-            var refreshConfirmation = CloseDialog("ИЗМЕНИЛСЯ СПИСОК СЕРВЕРОВ", "ОБНОВИТЬ");
+            var stableBackdrop = false;
+            var refreshConfirmation = CloseDialog("ИЗМЕНИЛСЯ СПИСОК СЕРВЕРОВ", "ОБНОВИТЬ", () =>
+            {
+                var content = (FrameworkElement)Field("WindowContent");
+                stableBackdrop = content.IsVisible && content.Effect is null && content.CacheMode is null
+                    && ((FrameworkElement)Field("DialogShade")).IsVisible;
+            });
             try
             {
                 Check(await window.RefreshSubscriptionAsync(default, good) && core.IsRunning,
                     "refreshing an active subscription restarts the owned core after validation and confirmation");
             }
             finally { refreshConfirmation.Stop(); }
+            var refreshedView = (VpnServerListView)serverHost.Content;
+            Check(stableBackdrop, "the refresh confirmation shades the visible window without changing its render surface");
+            Check(ReferenceEquals(initialView, refreshedView) && refreshedView.ViewState.Query == "Beta"
+                && ReferenceEquals(ruleBeforeRefresh, Rules()[0]),
+                "changed servers stay in the same viewport and retain the filter and existing rule editor rows");
+            var servers = Descendants<ListBox>(refreshedView).Single(item => item.Name == "VpnServerRows");
+            Check(servers.Items.Cast<VpnServerItem>().Select(item => item.Name).SequenceEqual(new[] { "Beta" }),
+                "the retained viewport shows the filtered replacement servers");
             Check(settings.GetDraft(path)!.Rules[0].Route == draftBefore && Rules()[0].Route == draftBefore
                 && File.ReadAllText(path).Contains("keep.example,REJECT"),
                 "active subscription refresh does not apply pending routing edits");
             var stableYaml = File.ReadAllText(path); var stableDraft = settings.GetDraft(path)!.SourceHash;
+            var activePid = core.TrackedProcessId;
+            var reload = (Button)Field("ReloadSubscriptionButton");
+            var buttonWidth = reload.ActualWidth;
+            var listSize = serverHost.RenderSize;
+            var response = new TaskCompletionSource<HttpResponseMessage>(TaskCreationOptions.RunContinuationsAsynchronously);
+            using (var delayed = new HttpClient(new SourceCheckHandler((_, _) => response.Task)))
+            {
+                var refresh = window.RefreshSubscriptionAsync(default, delayed);
+                await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+                window.UpdateLayout();
+                Check(ReferenceEquals(serverHost.Content, refreshedView) && Equals(reload.Content, "ОБНОВЛЯЮ…") && !reload.IsEnabled
+                    && buttonWidth > 0 && reload.ActualWidth == buttonWidth && serverHost.RenderSize == listSize
+                    && ((Border)reload.Template.FindName("B", reload)).Opacity == 1,
+                    "pending subscription download keeps the current server list visible and shows its progress on the existing button");
+                var powerButton = (Button)Field("PowerButton");
+                var connectButton = (Button)Field("CheckConnectionButton");
+                var speedButton = (Button)Field("SpeedTestButton");
+                var modeToggle = (CheckBox)Field("FullTunnelCheck");
+                Check(new[] { powerButton, connectButton, speedButton }.All(button =>
+                        !button.IsEnabled && ((Border)button.Template.FindName("B", button)).Opacity == 1)
+                    && !modeToggle.IsEnabled && modeToggle.Opacity == 1,
+                    "refresh blocks the sidebar actions but keeps their appearance steady while VPN is running");
+                response.SetResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = new StringContent(fresh, Encoding.UTF8) });
+                Check(await refresh && core.TrackedProcessId == activePid && ReferenceEquals(serverHost.Content, refreshedView)
+                    && File.ReadAllText(path) == stableYaml && settings.GetDraft(path)?.SourceHash == stableDraft,
+                    "identical subscription refresh preserves the live core, list, saved YAML and pending draft");
+                Check(Equals(reload.Content, "ОБНОВИТЬ") && reload.IsEnabled, "the refresh button returns to its ready state");
+            }
             using var failing = new HttpClient(new DiagnosticHandler(_ => new(HttpStatusCode.OK)
                 { Content = new StringContent(fresh.Replace("192.0.2.22", "startup-fail.example"), Encoding.UTF8) }));
             var failed = false;
@@ -89,7 +140,9 @@ internal partial class Program
                 "failed subscription restart restores the old profile, owned core and unchanged draft");
             using var cancelled = new CancellationTokenSource();
             Action cancelOnStop = () => cancelled.Cancel(); core.Exited += cancelOnStop;
-            try { Check(!await window.RefreshSubscriptionAsync(cancelled.Token, good), "subscription cancellation after stopping the core is reported as cancelled"); }
+            using var changed = new HttpClient(new DiagnosticHandler(_ => new(HttpStatusCode.OK)
+                { Content = new StringContent(fresh.Replace("192.0.2.22", "192.0.2.24"), Encoding.UTF8) }));
+            try { Check(!await window.RefreshSubscriptionAsync(cancelled.Token, changed), "subscription cancellation after stopping the core is reported as cancelled"); }
             finally { core.Exited -= cancelOnStop; }
             Check(core.IsRunning && File.ReadAllText(path) == stableYaml && settings.GetDraft(path)!.SourceHash == stableDraft,
                 "cancelling refresh after stop restarts the prior VPN without committing new servers");

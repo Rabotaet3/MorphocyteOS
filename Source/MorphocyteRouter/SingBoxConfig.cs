@@ -33,11 +33,12 @@ internal static class SingBoxConfig
 
     internal static string Build(ClashConfigDocument document, int controllerPort, string secret, bool fullTunnel,
         int speedPort = 0, string? selectedServer = null, bool includeTun = true,
-        IReadOnlyDictionary<string, XrayBridgeEndpoint>? xrayEndpoints = null, string? selectionCacheId = null)
+        IReadOnlyDictionary<string, XrayBridgeEndpoint>? xrayEndpoints = null, string? selectionCacheId = null, bool proxyOnly = false)
     {
         // Reuse the tested full-VPN exception selection / pruning, without adding Mihomo listeners.
         selectedServer=SubscriptionInformation.ResolveSelection(document,selectedServer);
-        var yaml = new YamlStream(); yaml.Load(new StringReader(document.BuildRuntimeText(controllerPort, secret, fullTunnel, selectedServer:selectedServer)));
+        var yaml = new YamlStream();
+        yaml.Load(new StringReader(document.BuildRuntimeText(controllerPort, secret, fullTunnel, selectedServer: selectedServer, proxyOnly: proxyOnly)));
         var root = (YamlMappingNode)yaml.Documents[0].RootNode;
         if (Get(root, "proxy-providers") is YamlMappingNode { Children.Count: > 0 }) throw Unsupported("proxy-providers");
         if (Get(root, "listeners") is YamlSequenceNode { Children.Count: > 0 }) throw Unsupported("пользовательские listeners");

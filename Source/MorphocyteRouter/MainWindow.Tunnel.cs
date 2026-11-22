@@ -7,14 +7,15 @@ namespace MorphocyteRouter;
 
 public partial class MainWindow
 {
-    public static readonly DependencyProperty FullTunnelActiveProperty = DependencyProperty.Register(
-        nameof(FullTunnelActive), typeof(bool), typeof(MainWindow), new PropertyMetadata(false));
-    public bool FullTunnelActive { get => (bool)GetValue(FullTunnelActiveProperty); set => SetValue(FullTunnelActiveProperty, value); }
+    public static readonly DependencyProperty DefaultVpnRouteActiveProperty = DependencyProperty.Register(
+        nameof(DefaultVpnRouteActive), typeof(bool), typeof(MainWindow), new PropertyMetadata(false));
+    public bool DefaultVpnRouteActive { get => (bool)GetValue(DefaultVpnRouteActiveProperty); set => SetValue(DefaultVpnRouteActiveProperty, value); }
     private int _speedTestPort;
     private CancellationTokenSource? _speedTestLifetime;
     private double? _downloadCapacity;
     private string _capacityServer = "";
     private bool _changingTunnel;
+    internal bool LocalProxyMode => _settings.ProxyOnly;
 
     private static int FreeLoopbackPort(int otherPort)
     {
@@ -24,54 +25,85 @@ public partial class MainWindow
             using var listener = new TcpListener(IPAddress.Loopback, 0);
             listener.Start();
             port = ((IPEndPoint)listener.LocalEndpoint).Port;
-        } while (port == otherPort);
+        } while (port == otherPort || port == CoreBackend.LocalProxyPort);
         return port;
     }
 
     private void RefreshTunnelControls()
     {
+        DefaultVpnRouteActive = _settings.Mode != ConnectionMode.Rules;
         if (!_changingTunnel) FullTunnelCheck.IsChecked = _settings.FullTunnel;
-        FullTunnelActive = _settings.FullTunnel;
-        FullTunnelCheck.IsEnabled = !_busy && !_closing && _document is { HasVpnConnection: true };
-        SpeedTestButton.IsEnabled = !_busy && !_closing && _core.IsRunning && _diagnostics is not null;
+        SetWorkspaceControlAvailability(FullTunnelCheck, _document is { HasVpnConnection: true });
+        LocalProxyAddressButton.Visibility = _settings.ProxyOnly && _core.IsRunning ? Visibility.Visible : Visibility.Collapsed;
+        SetWorkspaceControlAvailability(SpeedTestButton, _core.IsRunning && _diagnostics is not null);
         SpeedTestButton.Content = _speedTestLifetime is null ? "СКОРОСТЬ" : "ОСТАНОВИТЬ";
     }
 
+    private static string ModeLabel(ConnectionMode mode) => mode switch
+    {
+        ConnectionMode.FullTunnel => "Весь трафик через VPN",
+        ConnectionMode.LocalProxy => "Только локальный прокси",
+        _ => "По правилам"
+    };
+
     private async void FullTunnel_Click(object sender, RoutedEventArgs e)
     {
-        var requested = FullTunnelCheck.IsChecked == true;
+        var requested = FullTunnelCheck.IsChecked == true ? ConnectionMode.FullTunnel : ConnectionMode.Rules;
         if (_busy || _closing) { RefreshTunnelControls(); return; }
         _changingTunnel = true;
         try { await RunExclusiveAsync(() => ChangeTunnelModeAsync(requested)); }
         finally { _changingTunnel = false; RefreshTunnelControls(); }
     }
 
-    private async Task ChangeTunnelModeAsync(bool enabled)
+    internal Task SetLocalProxyModeAsync(bool enabled) =>
+        RunExclusiveAsync(() => ChangeTunnelModeAsync(enabled ? ConnectionMode.LocalProxy : ConnectionMode.Rules));
+
+    private void CopyLocalProxyAddress_Click(object sender, RoutedEventArgs e)
     {
-        if (enabled == _settings.FullTunnel || _document is not { HasVpnConnection: true }) return;
-        var previous = _settings.FullTunnel;
+        try
+        {
+            Clipboard.SetText($"127.0.0.1:{CoreBackend.LocalProxyPort}");
+            SetLog("Адрес локального прокси скопирован.");
+        }
+        catch (System.Runtime.InteropServices.ExternalException) { SetLog("Не удалось скопировать адрес прокси."); }
+    }
+
+    private async Task ChangeTunnelModeAsync(ConnectionMode mode)
+    {
+        if (mode == _settings.Mode || _document is not { HasVpnConnection: true }) return;
+        var previous = _settings.Mode;
         var wasRunning = _core.IsRunning;
         var previousIntent = _connectionRequested;
         CancelConnectionIntent();
         if (wasRunning && !await StopCoreAsync())
         { _connectionRequested = previousIntent; throw new IOException("Не удалось подтвердить остановку ядра. Режим не изменён."); }
-        _settings.FullTunnel = enabled;
+        _settings.Mode = mode;
         try
         {
             // A mode switch never commits unrelated pending rule edits.
             if (wasRunning) await StartCoreAsync(applyDraft: false);
             if (wasRunning && !_core.IsRunning) throw new IOException("Переключение режима отменено.");
             await SaveSettingsAsync();
-            SetLog(enabled ? "TUN: VPN по умолчанию; исключения «Напрямую» и блокировки сохранены." : "TUN: восстановлена маршрутизация по правилам.");
+            SetLog("Режим подключения: " + ModeLabel(mode) + ".");
         }
         catch
         {
             if (_core.HasTrackedProcess && !await StopCoreAsync()) throw new IOException("Остановка ядра не подтверждена. Проверь журнал перед сменой режима.");
-            _settings.FullTunnel = previous;
+            _settings.Mode = previous;
             if (wasRunning && !_closing) await StartCoreAsync(applyDraft: false);
             throw;
         }
         finally { RefreshTunnelControls(); }
+    }
+
+    private static void EnsureLocalProxyPortAvailable()
+    {
+        using var listener = new TcpListener(IPAddress.Loopback, CoreBackend.LocalProxyPort) { ExclusiveAddressUse = true };
+        try { listener.Start(); }
+        catch (SocketException error)
+        {
+            throw new IOException($"Не удалось открыть локальный прокси на 127.0.0.1:{CoreBackend.LocalProxyPort}. Проверь, свободен ли порт.", error);
+        }
     }
 
     private void RefreshBandwidthReadout()

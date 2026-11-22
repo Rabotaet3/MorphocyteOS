@@ -13,9 +13,10 @@ public sealed partial class CoreProcessManager
     internal IReadOnlyList<int> BridgeProcessIds => _bridges.Select(bridge=>bridge.TrackedProcessId).OfType<int>().ToArray();
     private static bool IsXray(string executable) => Path.GetFileNameWithoutExtension(executable).Equals("xray", StringComparison.OrdinalIgnoreCase);
 
-    internal async Task StartWithBridgeAsync(ProcessStartInfo info, XrayBridgePlan plan, CancellationToken token)
+    internal async Task StartWithBridgeAsync(ProcessStartInfo info, XrayBridgePlan plan, CancellationToken token,
+        Func<CancellationToken, Task>? waitUntilReady = null, bool bridgeValidated = false)
     {
-        if (!plan.HasConnections) { plan.Dispose(); await StartAsync(info, token); return; }
+        if (!plan.HasConnections) { plan.Dispose(); await StartAsync(info, token, waitUntilReady); return; }
         if (HasTrackedProcess) { plan.Dispose(); throw new IOException("Предыдущие процессы VPN ещё не завершены."); }
         _bridgePlan = plan;
         var plans=plan.ProcessPlans;
@@ -35,15 +36,20 @@ public sealed partial class CoreProcessManager
         {
             token.ThrowIfCancellationRequested();
             if (!CoreBackend.IsSingBox(info.FileName)) throw new InvalidDataException("Мост Xray требует основного ядра sing-box.");
-            plan.ConfigureDnsFromRuntime(await File.ReadAllTextAsync(info.ArgumentList[^1], token));
-            var check = await plan.ValidateAsync(token);
-            if (!check.Success) throw new InvalidDataException(check.Message);
+            if (!bridgeValidated)
+            {
+                plan.ConfigureDnsFromRuntime(await File.ReadAllTextAsync(info.ArgumentList[^1], token));
+                var check = await plan.ValidateAsync(token);
+                if (!check.Success) throw new InvalidDataException(check.Message);
+            }
             plan.ReleasePorts();
-            for(var index=0;index<plans.Count;index++)
-                await _bridges[index].StartAsync(CreateStartInfo(XrayBridgePlan.EnginePath, plans[index].ConfigPath!), token);
+            await Parallel.ForEachAsync(Enumerable.Range(0, plans.Count),
+                new ParallelOptions { MaxDegreeOfParallelism = 4, CancellationToken = token },
+                async (index, childToken) => await _bridges[index].StartAsync(
+                    CreateStartInfo(XrayBridgePlan.EnginePath, plans[index].ConfigPath!), childToken));
             await plan.VerifyReadyAsync(token);
             if (_bridgeFailed || _bridges.Any(bridge=>!bridge.IsRunning)) throw new IOException("Вспомогательное ядро Xray завершилось при запуске.");
-            await StartAsync(info, token);
+            await StartAsync(info, token, waitUntilReady);
             if (_bridgeFailed || _bridges.Any(bridge=>!bridge.IsRunning)) throw new IOException("Вспомогательное ядро Xray завершилось при запуске.");
         }
         catch { await StopAsync(); throw; }

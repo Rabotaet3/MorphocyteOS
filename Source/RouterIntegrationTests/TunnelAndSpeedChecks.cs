@@ -162,20 +162,23 @@ internal partial class Program
         settings.ConfigPath = path; settings.CorePath = fakeExe; settings.AutoCheckUpdates = false;
         var window = new MainWindow(settings, Path.Combine(scratch, "tunnel.log")) { ShowInTaskbar = false };
         object Field(string name) => typeof(MainWindow).GetField(name, BindingFlags.NonPublic | BindingFlags.Instance)!.GetValue(window)!;
-        async Task Mode(bool enabled) => await (Task)typeof(MainWindow).GetMethod("RunExclusiveAsync", BindingFlags.NonPublic | BindingFlags.Instance)!
-            .Invoke(window, new object[] { (Func<Task>)(() => (Task)typeof(MainWindow).GetMethod("ChangeTunnelModeAsync", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, new object[] { enabled })!) })!;
+        async Task Mode(ConnectionMode mode) => await (Task)typeof(MainWindow).GetMethod("RunExclusiveAsync", BindingFlags.NonPublic | BindingFlags.Instance)!
+            .Invoke(window, new object[] { (Func<Task>)(() => (Task)typeof(MainWindow).GetMethod("ChangeTunnelModeAsync", BindingFlags.NonPublic | BindingFlags.Instance)!.Invoke(window, new object[] { mode })!) })!;
         try
         {
             window.Show(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             var gate = (SemaphoreSlim)Field("_operations"); await gate.WaitAsync(); gate.Release();
             settings.PutDraft(path, document.SourceHash, document.Rules);
-            await Mode(true);
+            var toggle = (CheckBox)Field("FullTunnelCheck");
+            toggle.IsChecked = true;
+            toggle.RaiseEvent(new RoutedEventArgs(CheckBox.ClickEvent));
+            await gate.WaitAsync(); gate.Release();
             Check(settings.FullTunnel && AppSettings.Load(settingsPath).FullTunnel && !((CoreProcessManager)Field("_core")).HasTrackedProcess, "TUN preference persists without auto-starting a stopped VPN");
             Check(settings.GetDraft(path) is not null && File.ReadAllText(path) == original, "switching TUN does not apply pending YAML edits");
-            Check(((CheckBox)Field("FullTunnelCheck")).IsChecked == true && !((Button)Field("SpeedTestButton")).IsEnabled && Field("_speedTestLifetime") is null, "TUN controls reflect saved preference and never start speed tests automatically");
+            Check(toggle.IsChecked == true && !((Button)Field("SpeedTestButton")).IsEnabled && Field("_speedTestLifetime") is null, "TUN toggle reflects saved preference and never starts speed tests automatically");
             window.UpdateLayout();
-            var toggle = (CheckBox)Field("FullTunnelCheck");
-            Check(toggle.ToolTip is null, "TUN toggle has no explanatory hover popup");
+            Check(toggle.ContextMenu is null && Descendants<System.Windows.Shapes.Ellipse>(toggle).Any(thumb => thumb.Name == "ToggleThumb"),
+                "the existing two-state animated TUN toggle replaces the connection-mode menu");
             var tools = (FrameworkElement)Field("SidebarTools");
             var toggleBounds = toggle.TransformToAncestor(window).TransformBounds(new Rect(toggle.RenderSize));
             var toolsBounds = tools.TransformToAncestor(window).TransformBounds(new Rect(tools.RenderSize));
@@ -191,14 +194,15 @@ internal partial class Program
             Check(Math.Abs(faded.Opacity - .48) < .01 && changeButton.IsEnabled && faded.IsHitTestVisible, "TUN dims VPN rows without disabling route selection or other interactions");
             Check(Descendants<Border>(list).Single(border => border.Name == "RuleSurface" && ReferenceEquals(border.DataContext, uiRules[1])).Opacity == 1,
                 "blocking exceptions retain normal appearance while TUN is enabled");
-            Check(Descendants<System.Windows.Shapes.Ellipse>(toggle).Any(thumb => thumb.Name == "ToggleThumb"), "TUN uses an animated round-thumb switch rather than a checkbox mark");
             await Task.Delay(250); // Wait for the existing folder re-expansion animation.
             CaptureInteraction(window, Path.Combine(scratch, "tunnel-muted-vpn.png"));
             await window.ChangeRuleRouteAsync(uiRules[0], "DIRECT");
             window.UpdateLayout(); await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
             var restoredRow = Descendants<Border>(list).Single(border => border.Name == "RuleSurface" && ReferenceEquals(border.DataContext, uiRules[0]));
             Check(restoredRow.Opacity == 1 && uiRules[0].RouteLabel == "НАПРЯМУЮ", "changing a VPN row to DIRECT restores its normal appearance immediately while TUN stays on");
-            await Mode(false);
+            toggle.IsChecked = false;
+            toggle.RaiseEvent(new RoutedEventArgs(CheckBox.ClickEvent));
+            await gate.WaitAsync(); gate.Release();
             Check(!settings.FullTunnel && !AppSettings.Load(settingsPath).FullTunnel, "returning to rules saves the off state");
             CaptureInteraction(window, Path.Combine(scratch, "tunnel-card.png"));
             File.WriteAllText(path, "morphocyte-fake-api: true\n" + original);
@@ -207,13 +211,21 @@ internal partial class Program
             await window.ChangeRuleRouteAsync(pendingRules[0], "REJECT");
             var core = (CoreProcessManager)Field("_core");
             var oldPid = core.TrackedProcessId;
-            await Mode(true);
+            await Mode(ConnectionMode.FullTunnel);
             Check(core.IsRunning && core.TrackedProcessId != oldPid && settings.FullTunnel, "changing TUN while connected restarts only the owned fake core");
             Check(settings.GetDraft(path) is not null && pendingRules[0].Route == "REJECT" && (bool)Field("_dirty") && File.ReadAllText(path) == "morphocyte-fake-api: true\n" + original, "live mode switch preserves unapplied editor edits and the complete original YAML");
             var activeConfig = (string)Field("_runtimeConfigPath");
             Check(((YamlSequenceNode)Value(Root(File.ReadAllText(activeConfig)), "rules")).Children.Last().ToString() == "MATCH,VPN", "active runtime really uses default VPN with exceptions rather than only changing the toggle");
             oldPid = core.TrackedProcessId;
-            await Mode(false);
+            await window.SetLocalProxyModeAsync(true);
+            var proxyRuntime = Root(File.ReadAllText((string)Field("_runtimeConfigPath")));
+            Check(core.IsRunning && core.TrackedProcessId != oldPid && AppSettings.Load(settingsPath).Mode == ConnectionMode.LocalProxy
+                && Value((YamlMappingNode)Value(proxyRuntime, "tun"), "enable").ToString() == "false"
+                && Value(proxyRuntime, "bind-address").ToString() == "127.0.0.1"
+                && Value(proxyRuntime, "mixed-port").ToString() == CoreBackend.LocalProxyPort.ToString(),
+                "local-proxy mode restarts the owned core with a loopback listener and no TUN");
+            oldPid = core.TrackedProcessId;
+            await Mode(ConnectionMode.Rules);
             Check(core.IsRunning && core.TrackedProcessId != oldPid && !settings.FullTunnel && ((YamlSequenceNode)Value(Root(File.ReadAllText((string)Field("_runtimeConfigPath"))), "rules")).Children.Count == 3, "turning TUN off restarts the core with the original selective rules");
             var capacityField = typeof(MainWindow).GetField("_downloadCapacity", BindingFlags.NonPublic | BindingFlags.Instance)!;
             capacityField.SetValue(window, 12_500_000d);

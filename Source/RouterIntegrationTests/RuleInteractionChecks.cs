@@ -25,6 +25,7 @@ internal partial class Program
         var configPath = Path.Combine(scratch, "interaction.yaml");
         File.WriteAllText(configPath, "proxies:\n  - name: VPN\n    type: socks5\n    server: 127.0.0.1\n    port: 9999\ntun:\n  enable: true\nrules:\n"
             + string.Join("\n", Enumerable.Range(1, 32).Select(i => $"  - DOMAIN-SUFFIX,site{i}.example,VPN")) + "\n  - MATCH,DIRECT\n");
+        settings.ConfigPath = configPath;
         var window = new MainWindow(settings, Path.Combine(scratch, "interaction.log")) { Width = 1120, Height = 760, ShowInTaskbar = false };
         object Field(string name) => typeof(MainWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.GetValue(window)!;
         void SetField(string name, object value) => typeof(MainWindow).GetField(name, BindingFlags.Instance | BindingFlags.NonPublic)!.SetValue(window, value);
@@ -46,9 +47,10 @@ internal partial class Program
         {
             window.Show();
             await Dispatcher.Yield(DispatcherPriority.ApplicationIdle);
+            await Idle();
             count += RunRuleBadgeAlignmentChecks(window, scratch);
-            Check(window.AllowsTransparency && window.Background is SolidColorBrush { Color.A: 0 },
-                "the native window background is transparent outside the rounded WPF frame");
+            Check(HasOpaqueNativeSurface(window) && System.Windows.Shell.WindowChrome.GetWindowChrome(window)?.CornerRadius.TopLeft == 23,
+                "the main window uses an opaque native surface with rounded chrome");
             var rulesListAppearance = (ListView)Field("RulesList");
             Check(rulesListAppearance.Background is SolidColorBrush { Color.A: 0 }
                 && Descendants<Border>(window).Any(border => border.CornerRadius.TopLeft == 15),
@@ -61,17 +63,16 @@ internal partial class Program
             Check(powerSurface is { Margin.Left: >= 3, Margin.Right: >= 3, Margin.Top: >= 3, Margin.Bottom: >= 3 }
                 && powerSurface.RenderTransform.Value.IsIdentity,
                 "main buttons keep a stable surface inside their paint bounds");
-            await (Task)Invoke("LoadConfigAsync", configPath)!;
             count += await RunHoverBoundsChecks(window, scratch);
             async Task SmokeModal(string title, string method, object?[] arguments, string screenshot)
             {
                 var utilityDialogs = typeof(MainWindow).Assembly.GetType("MorphocyteRouter.UtilityDialogs")!;
                 var show = utilityDialogs.GetMethod(method, BindingFlags.Static | BindingFlags.Public)!;
                 var seen = false;
-                var blurred = false;
+                var stableBackdrop = false;
                 var roundedClip = false;
                 var themedFrame = false;
-                var openingAnimated = false;
+                var openingPainted = false;
                 var timer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
                 timer.Tick += (_, _) =>
                 {
@@ -82,13 +83,13 @@ internal partial class Program
                     seen = true;
                     var windowContent = (FrameworkElement)Field("WindowContent");
                     var frameContent = (FrameworkElement)Field("FrameContent");
-                    blurred = windowContent.Effect is BlurEffect;
+                    stableBackdrop = windowContent.Effect is null && windowContent.CacheMode is null
+                        && ((FrameworkElement)Field("DialogShade")).IsVisible;
                     roundedClip = frameContent.Clip is RectangleGeometry { RadiusX: >= 19, RadiusY: >= 19 };
                     themedFrame = dialog.Content is Border frame && frame.CornerRadius.TopLeft >= 14
                         && frame.BorderThickness.Left > 0 && frame.Background is not null;
-                    openingAnimated = dialog.Content is FrameworkElement animatedContent
-                        && animatedContent.RenderTransform is ScaleTransform openingScale
-                        && (openingScale.ScaleX < 1 || animatedContent.Opacity < 1);
+                    openingPainted = HasOpaqueNativeSurface(dialog) && dialog.Content is FrameworkElement
+                        { Opacity: 1, CacheMode: null };
                     if (title == "НАСТРОЙКИ")
                     {
                         var saveButton = Descendants<Button>(dialog).Single(button => Equals(button.Content, "СОХРАНИТЬ"));
@@ -103,8 +104,8 @@ internal partial class Program
                             "settings expose nine dark, light and gradient themes");
                         Check(Descendants<ComboBox>(dialog).Any(combo => combo.Items.Cast<object>().Contains("125%")),
                             "settings expose interface scaling including font scaling");
-                        Check(picker.Template.FindName("PART_Popup", picker) is Popup { PopupAnimation: PopupAnimation.Fade },
-                            "theme, scale and route selectors use a fade-in dropdown without extending their layout bounds");
+                        Check(picker.Template.FindName("PART_Popup", picker) is Popup { AllowsTransparency: false, PopupAnimation: PopupAnimation.None },
+                            "theme, scale and route selectors open on an opaque dropdown");
                         CaptureInteraction(dialog, Path.Combine(scratch, "appearance-" + screenshot));
                         var updatesTab = Descendants<Button>(dialog).Single(button => Equals(button.Content, "Обновления"));
                         updatesTab.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -119,7 +120,7 @@ internal partial class Program
                                 .All(panel => panel.Visibility == Visibility.Visible),
                             "settings navigation scrolls one page while all four sections remain present");
                     }
-                    if (title == "ЧАСТЫЕ ВОПРОСЫ") CaptureInteraction(window, Path.Combine(scratch, "rounded-blurred-window.png"));
+                    if (title == "ЧаВо?") CaptureInteraction(window, Path.Combine(scratch, "rounded-shaded-window.png"));
                     CaptureInteraction(dialog, Path.Combine(scratch, screenshot));
                     dialog.Close();
                 };
@@ -127,10 +128,10 @@ internal partial class Program
                 _ = show.Invoke(null, arguments);
                 timer.Stop();
                 await Task.Delay(240);
-                Check(seen && blurred && roundedClip && themedFrame && openingAnimated && ((FrameworkElement)Field("WindowContent")).Effect is null,
-                    $"{title} opens with the themed frame and rounded, clipped blur, then restores the main window");
+                Check(seen && stableBackdrop && roundedClip && themedFrame && openingPainted && !((FrameworkElement)Field("DialogShade")).IsVisible,
+                    $"{title} opens fully painted with the themed frame and restores the main window shade on close");
             }
-            await SmokeModal("ЧАСТЫЕ ВОПРОСЫ", "ShowFaq", new object?[] { window }, "faq-1.17.0-test.png");
+            await SmokeModal("ЧаВо?", "ShowFaq", new object?[] { window }, "faq-1.17.0-test.png");
             await SmokeModal("НАСТРОЙКИ", "ShowSettings", new object?[] { window, configPath, fakeExe, "Тёмная морфоцитная", false, 1d, false, null }, "settings-release.png");
             await SmokeModal("ПРОВЕРКА ОКНА", "ShowNotice", new object?[] { window, "ПРОВЕРКА ОКНА", "Короткое тестовое сообщение.", "ПОНЯТНО" }, "notice-dialog.png");
             var themeManager = typeof(MainWindow).Assembly.GetType("MorphocyteRouter.ThemeManager")!;
@@ -156,7 +157,7 @@ internal partial class Program
             var folderDialogType = typeof(MainWindow).Assembly.GetType("MorphocyteRouter.FolderNameDialog")!;
             var showFolderDialog = folderDialogType.GetMethod("ShowAsync", BindingFlags.Static | BindingFlags.Public)!;
             var folderDialogSeen = false;
-            var folderDialogBlurred = false;
+            var folderDialogShade = false;
             var folderDialogTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(100) };
             folderDialogTimer.Tick += (_, _) =>
             {
@@ -165,7 +166,8 @@ internal partial class Program
                 if (folderDialog is null) return;
                 folderDialogTimer.Stop();
                 folderDialogSeen = folderDialog.Content is Border frame && frame.CornerRadius.TopLeft >= 14;
-                folderDialogBlurred = ((FrameworkElement)Field("WindowContent")).Effect is BlurEffect;
+                folderDialogShade = ((FrameworkElement)Field("DialogShade")).IsVisible
+                    && ((FrameworkElement)Field("WindowContent")).Effect is null && HasOpaqueNativeSurface(folderDialog);
                 CaptureInteraction(folderDialog, Path.Combine(scratch, "folder-dialog.png"));
                 folderDialog.Close();
             };
@@ -173,7 +175,7 @@ internal partial class Program
             var folderDialogTask = (Task<string?>)showFolderDialog.Invoke(null, new object[] { window, "Первое правило", "Второе правило" })!;
             await folderDialogTask;
             await Task.Delay(240);
-            Check(folderDialogSeen && folderDialogBlurred && ((FrameworkElement)Field("WindowContent")).Effect is null,
+            Check(folderDialogSeen && folderDialogShade && !((FrameworkElement)Field("DialogShade")).IsVisible,
                 "folder creation uses the shared dialog chrome and restores the backdrop when closed");
 
             var settingsClick = typeof(MainWindow).GetMethod("SettingsButton_Click", BindingFlags.Instance | BindingFlags.NonPublic)!;
@@ -227,8 +229,6 @@ internal partial class Program
                 "125-percent scaling changes rendered main-window fonts and controls together");
             var scaledDialogSeen = false;
             var scaledSettingsDialogStayedOpen = false;
-            // Let the 170 ms entrance scale finish before measuring the stable
-            // user-selected interface scale on controls inside the dialog.
             var restoreTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(250) };
             restoreTimer.Tick += (_, _) =>
             {

@@ -12,6 +12,7 @@ public partial class MainWindow
     private ServerPingSession? _subscriptionPing;
     private CancellationToken _subscriptionServersToken;
     private bool _subscriptionServersInProviderOrder;
+    private bool _updatingSubscription;
     private bool _subscriptionDetailsExpanded;
     private int _subscriptionDetailsVersion;
 
@@ -47,21 +48,28 @@ public partial class MainWindow
     }
 
     private void EditSubscription_Click(object sender,RoutedEventArgs e) => ShowSubscriptionSource(this);
-    private async void ReloadSubscription_Click(object sender,RoutedEventArgs e) => await RefreshSubscriptionAsync(_lifetime.Token);
+    private async void ReloadSubscription_Click(object sender, RoutedEventArgs e) => await RefreshSubscriptionAsync(_lifetime.Token);
 
     private void RefreshSubscriptionServers()
     {
-        if(SubscriptionServersHost is null) return;
+        if (SubscriptionServersHost is null || _updatingSubscription) return;
         var selected=_selectedConnection.Length>0?_selectedConnection:RememberedVpnServer();
         var providerOrder = _document is { } current && _settings.ProfileSubscriptions.ContainsKey(current.Path);
         if(ReferenceEquals(_subscriptionServersDocument,_document) && _subscriptionServers is not null
             && _subscriptionServersToken==_lifetime.Token && _subscriptionServersInProviderOrder==providerOrder)
         { _subscriptionServers.SetCurrent(selected); return; }
-        _subscriptionServers?.Dispose();
+        var sameProfile = _document is not null && string.Equals(_subscriptionServersDocument?.Path, _document.Path, StringComparison.OrdinalIgnoreCase)
+            && _subscriptionServersToken == _lifetime.Token;
         _subscriptionServersDocument=_document;
         _subscriptionServersToken=_lifetime.Token;
         _subscriptionServersInProviderOrder = providerOrder;
-        if(_document is not { } document) { SubscriptionServersHost.Content=null; return; }
+        if (_document is not { } document)
+        {
+            _subscriptionServers?.Dispose();
+            _subscriptionServers = null;
+            SubscriptionServersHost.Content = null;
+            return;
+        }
         var servers=VpnServerCatalog.Choices(document,subscriptionOrder:providerOrder);
         var presentations=document.ProxyNodes.Concat(document.ProxyGroups)
             .GroupBy(node=>node.Children.TryGetValue(new YamlScalarNode("name"),out var name)?name.ToString():"",StringComparer.Ordinal)
@@ -76,12 +84,20 @@ public partial class MainWindow
                 presentations[name] = presentation with { Title = title };
             }
         }
-        _subscriptionServers=new VpnServerListView(servers,selected,async(name,token)=> {
+        async Task<int> CheckServerAsync(string name, CancellationToken token)
+        {
             if(!ReferenceEquals(document,_document) || _closing) throw new OperationCanceledException(token);
             if(_core.IsRunning && _diagnostics is { } diagnostics) return await diagnostics.CheckProxyAsync(name,token);
             _subscriptionPing??=new ServerPingSession(document);
             return await _subscriptionPing.CheckAsync(name,token);
-        },SelectVpnServerAsync,presentations,_lifetime.Token);
+        }
+        if (sameProfile && _subscriptionServers is { } view)
+        {
+            view.ReplaceServers(servers, selected, presentations, CheckServerAsync);
+            return;
+        }
+        _subscriptionServers?.Dispose();
+        _subscriptionServers=new VpnServerListView(servers,selected,CheckServerAsync,SelectVpnServerAsync,presentations,_lifetime.Token);
         _subscriptionServers.ChecksFinished+=async()=>await DisposeSubscriptionPingAsync();
         SubscriptionServersHost.Content=_subscriptionServers;
     }

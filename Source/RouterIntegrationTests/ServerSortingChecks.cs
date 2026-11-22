@@ -65,13 +65,14 @@ internal partial class Program
                 {
                     if(watch.Elapsed>TimeSpan.FromSeconds(15)) throw new Exception("Sorting modal timed out");
                     if(watch.ElapsedMilliseconds<500) return;
-                    var rows=Descendants<StackPanel>(dialog).Single(p=>p.Name=="VpnServerRows");
+                    var rows=Descendants<ListBox>(dialog).Single(p=>p.Name=="VpnServerRows");
+                    VpnServerRow[] Realized() => Descendants<VpnServerRow>(rows).ToArray();
                     var ping=Descendants<Button>(dialog).Single(p=>p.Name=="VpnServerPing");
-                    string[] Order()=>rows.Children.OfType<Button>().Select(b=>(string)b.Tag).ToArray();
+                    string[] Order()=>rows.Items.Cast<VpnServerItem>().Select(item=>item.Name).ToArray();
                     if(stage==0)
                     {
                         Check(Order().SequenceEqual(names),"opening the dialog does not move the selected server to the top");
-                        var selected=rows.Children.OfType<Button>().Single(b=>(string)b.Tag==names[1]);
+                        var selected=Realized().Single(b=>(string)b.Tag==names[1]);
                         Check(System.Windows.Automation.AutomationProperties.GetItemStatus(selected)=="Выбран"&&!Descendants<Border>(selected).Any(b=>b.Name=="VpnServerSelected"),"selected server uses a row highlight without a check box");
                         Check(!Descendants<ComboBox>(dialog).Any(),"server list no longer contains the sorting control");
                         stage=1; ping.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
@@ -84,10 +85,10 @@ internal partial class Program
                     else if(ping.Content!.ToString()=="PING")
                     {
                         Check(Order().SequenceEqual(names),"ping results preserve provider order and do not move any server");
-                        var labels=rows.Children.OfType<Button>().SelectMany(b=>Descendants<TextBlock>(b).Where(t=>t.Name=="VpnServerLatency")).ToArray();
+                        var labels=names.Select(name=>Descendants<TextBlock>(Realized().Single(row=>Equals(row.Tag,name))).Single(t=>t.Name=="VpnServerLatency")).ToArray();
                         Check(labels.Select(t=>t.Text).SequenceEqual(new[]{"10 мс","30 мс","90 мс","Недоступен"}),"measured delays and failures appear at the right side of the correct rows");
                         dialog.Width=dialog.MinWidth; dialog.UpdateLayout();
-                        Check(labels.All(label=> { var parent=rows.Children.OfType<Button>().Single(b=>Descendants<TextBlock>(b).Contains(label)); var rect=label.TransformToAncestor(parent).TransformBounds(new Rect(label.RenderSize)); return rect.Right<=parent.ActualWidth && rect.Left>=0; }),"latency labels fit inside rows at the minimum window width");
+                        Check(labels.All(label=> { var parent=Realized().Single(b=>Descendants<TextBlock>(b).Contains(label)); var rect=label.TransformToAncestor(parent).TransformBounds(new Rect(label.RenderSize)); return rect.Right<=parent.ActualWidth && rect.Left>=0; }),"latency labels fit inside rows at the minimum window width");
                         stage=2;
                     }
                     else if(!Order().SequenceEqual(names)) throw new Exception("Rows moved during a running ping batch");
@@ -142,7 +143,7 @@ internal partial class Program
                     {
                         if(watch.Elapsed>TimeSpan.FromSeconds(8)) throw new Exception("Row layout timed out");
                         if(watch.ElapsedMilliseconds<500) return;
-                        var row=Descendants<StackPanel>(dialog).Single(p=>p.Name=="VpnServerRows").Children.OfType<Button>().Single();
+                        var row=Descendants<VpnServerRow>(dialog).Single();
                         Rect Bounds(FrameworkElement item)=>item.TransformToAncestor(row).TransformBounds(new Rect(item.RenderSize));
                         var title=Descendants<TextBlock>(row).Single(t=>t.Name=="VpnServerTitle");
                         var details=Descendants<TextBlock>(row).Single(t=>t.Name=="VpnServerDetails");

@@ -6,7 +6,9 @@ using System.Windows.Media;
 
 namespace MorphocyteRouter;
 
-internal sealed record SettingsDialogSelection(string ConfigPath, string CorePath, string Theme, double InterfaceScale, bool AutoCheckUpdates, ImportedProfile? Imported = null, bool LaunchAtSignIn = false, bool AutoConnectOnStartup = true, ConfigurationPackage? Transfer = null, bool AutoReconnect = true);
+internal sealed record SettingsDialogSelection(string ConfigPath, string CorePath, string Theme, double InterfaceScale, bool AutoCheckUpdates,
+    ImportedProfile? Imported = null, bool LaunchAtSignIn = false, bool AutoConnectOnStartup = true, ConfigurationPackage? Transfer = null,
+    bool AutoReconnect = true, bool AutoConnectOnOpen = false);
 
 internal static partial class UtilityDialogs
 {
@@ -43,9 +45,10 @@ internal static partial class UtilityDialogs
     public static void ShowFaq(MainWindow owner)
     {
         var body = new StackPanel { Margin = new Thickness(22, 12, 22, 18) };
-        AddFaq(body, "С чего начать?", "Основное ядро sing-box входит в комплект, а нейтральный YAML-шаблон встроен. Нажми «Импорт профиля», вставь свою VLESS-ссылку или JSON Xray и создай YAML. Либо выбери готовый YAML в настройках. Mihomo доступен как альтернативное ядро. Чужих серверов и ключей в программе нет.");
-        AddFaq(body, "Как включить TUN?", "Включи полный TUN и запусти VPN с правами администратора. Явные исключения DIRECT и блокировки сохраняются. Другие TUN-программы нужно остановить. Исходный YAML остаётся прежним; сложные неподдерживаемые параметры будут отклонены. Для перехода на альтернативное ядро останови VPN, выбери Mihomo в настройках и сохрани.");
-        AddFaq(body, "Что делает импорт?", "Принимает HTTPS-подписку (YAML Clash/Mihomo, список VLESS или Base64), VLESS-ссылку или JSON Xray с одним VLESS-сервером. Создаёт отдельный локальный YAML с TUN. Из подписки переносятся серверы, а не чужие правила, DNS или inbounds. По умолчанию трафик идёт напрямую; через VPN идут добавленные правила. Подписка загружается по нажатию; автоматически не обновляется. Для повторного обновления используй «Обновить подписку» в настройках; правила и папки сохраняются.");
+        AddFaq(body, "Как подключиться впервые?", "Открой «Подписка» и добавь ссылку провайдера. Для готового YAML, ссылки на отдельный сервер или JSON Xray используй «Настройки → VPN-профиль». Выбери сервер и нажми «Запустить VPN». Основное ядро sing-box входит в сборку. Mihomo можно выбрать в настройках.");
+        AddFaq(body, "Что делает тумблер TUN?", "При включённом TUN трафик по умолчанию идёт через VPN с учётом правил «Напрямую» и «Блокировать». При выключенном TUN действуют правила профиля и его маршрут по умолчанию. Смена положения тумблера переподключает запущенный VPN.");
+        AddFaq(body, "Как подключить только выбранные приложения?", $"Открой «Настройки → VPN-профиль → Локальный прокси» и включи его. В нужном приложении укажи HTTP или SOCKS5 по адресу 127.0.0.1:{CoreBackend.LocalProxyPort}. Этот режим работает без TUN.");
+        AddFaq(body, "Как обновить подписку и проверить серверы?", "На вкладке «Подписка» нажми «Обновить». Морфоцит сохранит твои правила и папки. Если список серверов изменился, активный VPN может переподключиться. Кнопка PING замеряет задержку HTTPS через каждый сервер. Повторное нажатие во время замера останавливает проверку.");
         AddFaq(body, "Как направить сайт через VPN?", "Введи домен, например example.com, выбери «Весь домен», маршрут VPN и нажми «Добавить». Затем нажми «Применить в YAML». «Весь домен» включает поддомены, «Точное имя» — только этот адрес, «По слову» — совпадение части домена.");
         AddFaq(body, "Как добавить целую программу?", "Нажми «Выбрать .exe» или «Запущенные процессы». Выбранные приложения добавляются в черновик правил; можно выбрать несколько через Ctrl/Shift. Затем нажми «Применить в YAML». Правило охватывает соединения этой программы.");
         AddFaq(body, "Как изменить маршрут правила?", "Нажми маршрут справа в строке правила и выбери VPN, «Напрямую» или «Блокировать». Если строка входит в выделенную группу, маршрут изменится у всех выделенных правил. Изменения начнут действовать после «Применить в YAML».");
@@ -54,19 +57,20 @@ internal static partial class UtilityDialogs
         AddFaq(body, "Как перемещать и удалять папки?", "Тяни заголовок папки вверх или вниз для изменения порядка. Правила можно вынести в «Общие правила». При удалении папки её правила остаются в общих.");
         AddFaq(body, "Изменения сохраняются автоматически?", "Список, папки, отключённые правила и оформление сохраняются между запусками. Черновик начинает влиять на трафик после «Применить в YAML». Перед записью профиль проверяется ядром; остаются три последние резервные копии.");
         AddFaq(body, "Как отменить изменение правил?", "Кнопки «Отменить» и ↷ восстанавливают изменения правил и папок до применения YAML. Ctrl+Z отменяет изменение, Ctrl+Y повторяет. После применения начинается новая история.");
-        AddFaq(body, "Почему правило не действует?", "Проверь, что профиль работает в режиме rule, TUN включён, VPN запущен и изменения применены. Иногда сервису нужны дополнительные домены. Если другое правило совпало раньше, оно может иметь приоритет.");
+        AddFaq(body, "Почему правило не действует?", "Проверь, что VPN запущен и изменения применены в YAML. В режиме правил учитываются порядок совпадений и маршрут MATCH. С включённым TUN учитываются явные прямые маршруты и блокировки. Выбери соединение в журнале и нажми «Подробнее», чтобы увидеть фактическое правило и маршрут.");
         AddFaq(body, "Почему после удаления правила трафик всё ещё идёт через VPN?", "У профиля есть остальные правила и действие по умолчанию (MATCH). Они сохраняются: удаление правила программы не заставляет весь её трафик идти напрямую. Сложные RULE-SET, GEOIP и другие правила не показаны в этом редакторе; их нужно проверять в самом YAML.");
-        AddFaq(body, "Как настроить внешний вид и открыть журнал?", "В настройках можно выбрать тему и масштаб. Масштаб меняет кнопки, списки, окна и шрифты. Вкладка «Журнал и соединения» показывает события ядра и активные соединения с процессами, адресами, правилами и маршрутами.");
-        AddFaq(body, "Как работают трей и автозапуск?", "Крестик сворачивает окно в трей, оставляя VPN работать. В меню значка «Выход» останавливает VPN и закрывает приложение. В настройках → «Запуск» можно включить запуск при входе в Windows и подключение последнего сохранённого профиля. Черновик при автоподключении не применяется.");
+        AddFaq(body, "Как вернуть черновик после правки YAML?", "После загрузки изменённого профиля в «Маршрутах» появится «Сравнить черновик», если сохранилась прежняя версия. Перенеси нужные правила в текущий черновик и нажми «Применить в YAML».");
+        AddFaq(body, "Как настроить внешний вид и открыть журнал?", "Тема и масштаб находятся в настройках. Вкладка «Журнал и соединения» показывает события ядра, процессы и активные соединения. В деталях соединения можно посмотреть адрес назначения, сработавшее правило и фактический маршрут.");
+        AddFaq(body, "Как работают трей и автозапуск?", "Крестик сворачивает окно в трей, оставляя VPN работать. Команда «Выход» в трее останавливает VPN и закрывает приложение. В настройках → «Запуск» есть отдельные варианты подключения при открытии Морфоцита и при входе в Windows. Автоподключение использует сохранённый профиль.");
         AddFaq(body, "Как перенести настройки?", "В настройках → «VPN-профиль» → «Перенос» нажми «Экспорт настроек». Файл .morphocyte содержит выбранный профиль с данными подключения, правила, папки и параметры приложения. На другом компьютере выбери «Импорт настроек» и «Сохранить». Создаётся отдельная копия профиля; неприменённые правила остаются черновиком. Ядро берётся с нового компьютера. Файл содержит секреты VPN — передавай его только доверенному человеку.");
-        AddFaq(body, "Что показывают скорость, пинг и доступность?", "Скорость — текущий трафик через ядро, включая прямые маршруты. Пинг — задержка HTTPS-запроса через VPN, а доступность — доля успешных запросов среди последних 20 проверок. Проверки идут каждые 20 секунд при открытом окне. Это не тест максимальной скорости и не измерение потерь пакетов.");
-        AddFaq(body, "Что делать, если VPN не отвечает?", "Во вкладке «Журнал и соединения» нажми «Проверить подключение». Проверка проходит по этапам: ядро, выбор VPN, сервер, DNS и HTTPS. «Копировать диагностику» копирует только результат проверки, без профиля, ссылок, адресов серверов и ключей.");
+        AddFaq(body, "Что означают статус, пинг и скорость?", "«VPN отвечает» появляется после успешного HTTPS-запроса. Пинг показывает задержку этого запроса. «Приём» и «Отдача» показывают текущий трафик через ядро. Кнопка «Скорость» запускает отдельный замер пропускной способности.");
+        AddFaq(body, "Что делать, если VPN не отвечает?", "Попробуй другой сервер или открой «Журнал и соединения → Проверить подключение». Диагностика покажет этап, на котором возникла проблема. Кнопка «Копировать диагностику» копирует результаты проверки без профиля и ключей.");
         AddFaq(body, "Что происходит после сна или смены сети?", "Приложение проверяет работавшее подключение и при необходимости перезапускает своё ядро, до трёх попыток. Ручное отключение VPN отменяет восстановление. Неприменённые правила остаются черновиком. В настройках → «Запуск» восстановление можно отключить.");
         AddFaq(body, "Как обновлять приложение?", "Автоматическая проверка ищет новую версию на GitHub при запуске и каждые 30 минут. Она только показывает уведомление: загрузка и установка начинаются исключительно по кнопке пользователя. В настройках → «Обновления» можно отключить проверку или проверить релиз вручную. Установка остановит VPN; личные профили и настройки сохраняются. После обновления запусти VPN вручную.");
-        var dialog = DialogChrome.CreateWindow(owner, "ЧАСТЫЕ ВОПРОСЫ", 680, 690, 530, 480, ResizeMode.CanResize);
+        var dialog = DialogChrome.CreateWindow(owner, "ЧаВо?", 680, 690, 530, 480, ResizeMode.CanResize);
         var close = DialogChrome.MakeButton("ЗАКРЫТЬ", false);
         close.Click += (_, _) => dialog.Close();
-        dialog.Content = DialogChrome.BuildFrame(dialog, "ЧАСТЫЕ ВОПРОСЫ", Scroll(body), Footer(close));
+        dialog.Content = DialogChrome.BuildFrame(dialog, "ЧаВо?", Scroll(body), Footer(close));
         DialogChrome.ShowModal(owner, dialog);
     }
 
@@ -161,13 +165,15 @@ internal static partial class UtilityDialogs
             return option;
         }
         var launchAtSignIn = LabeledOption("Запускать приложение при входе в Windows", owner.LaunchAtSignIn);
-        var autoConnect = LabeledOption("Подключать VPN с последним сохранённым профилем", owner.AutoConnectOnStartup);
+        var autoConnect = LabeledOption("Подключать VPN при входе в Windows", owner.AutoConnectOnStartup);
+        var connectOnOpen = LabeledOption("Подключать VPN при открытии Морфоцита", owner.AutoConnectOnOpen);
         autoConnect.IsEnabled = launchAtSignIn.IsChecked == true;
         launchAtSignIn.Checked += (_, _) => autoConnect.IsEnabled = true;
         launchAtSignIn.Unchecked += (_, _) => autoConnect.IsEnabled = false;
         var startupOptions = new StackPanel();
         startupOptions.Children.Add(launchAtSignIn);
         startupOptions.Children.Add(autoConnect);
+        startupOptions.Children.Add(connectOnOpen);
         startup.Children.Add(Card("АВТОЗАПУСК", null, startupOptions));
         var autoReconnect = LabeledOption("Переподключать VPN при пробуждении компьютера и смене сети", owner.AutoReconnect);
         autoReconnect.Name = "AutoReconnectOption";
@@ -348,7 +354,7 @@ internal static partial class UtilityDialogs
         footer.Children.Add(save);
         SettingsDialogSelection CurrentSelection() => new(selectedConfig, selectedCore, selectedTheme,
             selectedScale, automatic.IsChecked == true, importedProfile, launchAtSignIn.IsChecked == true,
-            autoConnect.IsChecked == true, pendingTransfer, autoReconnect.IsChecked == true);
+            autoConnect.IsChecked == true, pendingTransfer, autoReconnect.IsChecked == true, connectOnOpen.IsChecked == true);
         var subscriptionActions = new WrapPanel();
         var sourceButton = DialogChrome.MakeButton("Ссылка подписки", false);
         var refreshSubscription = DialogChrome.MakeButton("Обновить подписку", false);
@@ -367,6 +373,33 @@ internal static partial class UtilityDialogs
         subscriptionActions.Children.Add(sourceButton); subscriptionActions.Children.Add(refreshSubscription);
         var subscriptionBody = new StackPanel(); subscriptionBody.Children.Add(subscriptionActions); subscriptionBody.Children.Add(subscriptionFeedback);
         profile.Children.Add(Card("ПОДПИСКА", null, subscriptionBody));
+        var proxyMode = DialogChrome.MakeButton("", false);
+        void UpdateProxyModeButton() => proxyMode.Content = owner.LocalProxyMode ? "Выключить локальный прокси" : "Включить локальный прокси";
+        UpdateProxyModeButton();
+        proxyMode.Click += async (_, _) =>
+        {
+            if (!SavedProfileSelected()) { saveFeedback.Text = "Сначала сохрани выбранный профиль."; return; }
+            var enabled = !owner.LocalProxyMode;
+            proxyMode.IsEnabled = false;
+            try
+            {
+                await owner.SetLocalProxyModeAsync(enabled);
+                if (!lifetime.IsCancellationRequested)
+                    saveFeedback.Text = owner.LocalProxyMode != enabled
+                        ? "Режим подключения не изменён. Проверь выбранный профиль и журнал."
+                        : enabled ? "Локальный прокси включён." : "Восстановлена маршрутизация по правилам.";
+            }
+            finally
+            {
+                if (!lifetime.IsCancellationRequested)
+                {
+                    UpdateProxyModeButton();
+                    proxyMode.IsEnabled = true;
+                }
+            }
+        };
+        profile.Children.Add(Card("ЛОКАЛЬНЫЙ ПРОКСИ",
+            $"HTTP и SOCKS5 на 127.0.0.1:{CoreBackend.LocalProxyPort}. Укажи этот адрес в нужном приложении.", proxyMode));
         profile.Children.Add(DeviceIdentityCard(owner,dialog));
         var transferActions = new WrapPanel();
         var export = DialogChrome.MakeButton("Экспорт настроек", false);
@@ -428,6 +461,7 @@ internal static partial class UtilityDialogs
                 automatic.IsChecked = package.Options.AutoCheckUpdates;
                 launchAtSignIn.IsChecked = package.Options.LaunchAtSignIn;
                 autoConnect.IsChecked = package.Options.AutoConnectOnStartup;
+                connectOnOpen.IsChecked = package.Options.AutoConnectOnOpen ?? owner.AutoConnectOnOpen;
                 autoReconnect.IsChecked = package.Options.AutoReconnect;
                 configValue.Text = "Профиль из файла переноса";
                 configValue.ToolTip = null;
@@ -473,10 +507,12 @@ internal static partial class UtilityDialogs
                 automatic.IsChecked = applied.AutoCheckUpdates;
                 launchAtSignIn.IsChecked = applied.LaunchAtSignIn;
                 autoConnect.IsChecked = applied.AutoConnectOnStartup;
+                connectOnOpen.IsChecked = applied.AutoConnectOnOpen;
                 autoReconnect.IsChecked = applied.AutoReconnect;
                 UiScaleManager.Apply(dialog, (FrameworkElement)dialog.Content, selectedScale);
                 UpdatePath(configValue, selectedConfig);
                 UpdatePath(coreValue, selectedCore);
+                UpdateProxyModeButton();
                 saveFeedback.Text = "Сохранено. Можно продолжать работу с настройками.";
             }
             catch (Exception ex)

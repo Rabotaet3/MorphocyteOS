@@ -73,6 +73,21 @@ internal partial class Program
             var before = scroll.VerticalOffset;
             var horizontal = scroll.HorizontalOffset;
             var anchor = view.GetItemAt((int)(before / 38));
+            var resets = 0;
+            System.Collections.Specialized.NotifyCollectionChangedEventHandler trackResets = (_, e) =>
+            {
+                if (e.Action == System.Collections.Specialized.NotifyCollectionChangedAction.Reset) resets++;
+            };
+            var notifications = (System.Collections.Specialized.INotifyCollectionChanged)view;
+            notifications.CollectionChanged += trackResets;
+            try
+            {
+                Snapshot(rows.Select(row => row with { Upload = 42, Download = 128 }));
+                await Idle();
+                Check(resets == 0 && scroll.VerticalOffset == before && scroll.HorizontalOffset == horizontal,
+                    "traffic-only snapshots leave the scrolling journal viewport untouched");
+            }
+            finally { notifications.CollectionChanged -= trackResets; }
             var updated = rows.Where(row => row.Id != "c160").Select(row => row.Id == "c85" ? row with { Rule = "ProcessName app-085.exe", Upload = 42 } : row)
                 .Prepend(new ConnectionActivity("aaa-new.exe", "new.example:443", "TCP", "Match", "DIRECT", "new")).ToArray();
             Snapshot(updated); await Idle();

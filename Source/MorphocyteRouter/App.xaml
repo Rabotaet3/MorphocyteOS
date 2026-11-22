@@ -3,7 +3,7 @@
              xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
              ShutdownMode="OnMainWindowClose">
     <Application.Resources>
-        <ui:ScrollThumbViewportConverter xmlns:ui="clr-namespace:MorphocyteRouter" x:Key="ScrollThumbViewport"/>
+        <ui:ScrollThumbViewportConverter x:Key="ScrollThumbViewport" xmlns:ui="clr-namespace:MorphocyteRouter"/>
 
         <Style TargetType="ToolTip">
             <Setter Property="Background" Value="{DynamicResource ThemeTooltipBackground}"/>
@@ -12,7 +12,7 @@
             <Setter Property="Padding" Value="8,5"/>
         </Style>
 
-        <Style x:Key="FlatButton" TargetType="Button">
+        <Style x:Key="FlatButton" TargetType="Button" xmlns:ui="clr-namespace:MorphocyteRouter">
             <Setter Property="Foreground" Value="{DynamicResource ThemeText}"/>
             <Setter Property="Background" Value="{DynamicResource ThemeButton}"/>
             <Setter Property="BorderBrush" Value="{DynamicResource ThemeButtonBorder}"/>
@@ -57,10 +57,57 @@
                             <Trigger Property="IsKeyboardFocused" Value="True">
                                 <Setter TargetName="B" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/>
                             </Trigger>
-                            <Trigger Property="IsEnabled" Value="False">
+                            <MultiTrigger>
+                                <MultiTrigger.Conditions>
+                                    <Condition Property="IsEnabled" Value="False"/>
+                                    <Condition Property="ui:WorkspaceControlAppearance.KeepEnabledAppearance" Value="False"/>
+                                </MultiTrigger.Conditions>
                                 <Setter TargetName="B" Property="Opacity" Value="0.4"/>
-                            </Trigger>
+                            </MultiTrigger>
                         </ControlTemplate.Triggers>
+                    </ControlTemplate>
+                </Setter.Value>
+            </Setter>
+        </Style>
+
+        <ControlTemplate x:Key="VpnServerRowTemplate" TargetType="Button">
+            <Border x:Name="RowBorder" Margin="3" CornerRadius="9" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}">
+                <ContentPresenter Margin="{TemplateBinding Padding}" HorizontalAlignment="Stretch" VerticalAlignment="Center"/>
+            </Border>
+            <ControlTemplate.Triggers>
+                <Trigger Property="IsMouseOver" Value="True"><Setter TargetName="RowBorder" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/></Trigger>
+                <Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="RowBorder" Property="BorderBrush" Value="{DynamicResource ThemeAccent}"/></Trigger>
+            </ControlTemplate.Triggers>
+        </ControlTemplate>
+
+        <Style x:Key="VpnServerListStyle" TargetType="ListBox">
+            <Setter Property="Focusable" Value="False"/>
+            <Setter Property="IsTabStop" Value="False"/>
+            <Setter Property="VirtualizingPanel.IsVirtualizing" Value="True"/>
+            <Setter Property="VirtualizingPanel.VirtualizationMode" Value="Recycling"/>
+            <Setter Property="VirtualizingPanel.ScrollUnit" Value="Pixel"/>
+            <Setter Property="ItemsPanel">
+                <Setter.Value><ItemsPanelTemplate><VirtualizingStackPanel/></ItemsPanelTemplate></Setter.Value>
+            </Setter>
+            <Setter Property="ItemContainerStyle">
+                <Setter.Value>
+                    <Style TargetType="ListBoxItem">
+                        <Setter Property="Focusable" Value="False"/>
+                        <Setter Property="IsTabStop" Value="False"/>
+                        <Setter Property="Template">
+                            <Setter.Value><ControlTemplate TargetType="ListBoxItem"><ContentPresenter/></ControlTemplate></Setter.Value>
+                        </Setter>
+                    </Style>
+                </Setter.Value>
+            </Setter>
+            <Setter Property="Template">
+                <Setter.Value>
+                    <ControlTemplate TargetType="ListBox">
+                        <ScrollViewer x:Name="VpnServerScroll" CanContentScroll="True" ClipToBounds="True" Padding="4"
+                                      Focusable="False" IsTabStop="False" FocusVisualStyle="{x:Null}"
+                                      HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+                            <ItemsPresenter/>
+                        </ScrollViewer>
                     </ControlTemplate>
                 </Setter.Value>
             </Setter>
@@ -171,12 +218,9 @@
                                 </ToggleButton.Template>
                             </ToggleButton>
                             <Popup x:Name="PART_Popup" Placement="Bottom" IsOpen="{TemplateBinding IsDropDownOpen}"
-                                   AllowsTransparency="True" Focusable="False" PopupAnimation="Fade" HorizontalOffset="-8">
-                                <Border MinWidth="{Binding ActualWidth, ElementName=ComboRoot}" MaxHeight="320" Margin="8,6,8,10"
-                                        Background="{DynamicResource ThemePopup}" BorderBrush="{DynamicResource ThemeButtonBorder}" BorderThickness="1" CornerRadius="12" Padding="5">
-                                    <Border.Effect>
-                                        <DropShadowEffect Color="{DynamicResource ThemeShadowColor}" BlurRadius="10" ShadowDepth="3" Opacity="0.24"/>
-                                    </Border.Effect>
+                                   Focusable="False" VerticalOffset="6">
+                                <Border MinWidth="{Binding ActualWidth, ElementName=ComboRoot}" MaxHeight="320"
+                                        Background="{DynamicResource ThemePopup}" BorderBrush="{DynamicResource ThemeButtonBorder}" BorderThickness="1" Padding="5">
                                     <ScrollViewer SnapsToDevicePixels="True" VerticalScrollBarVisibility="Auto" HorizontalScrollBarVisibility="Disabled">
                                         <StackPanel IsItemsHost="True" KeyboardNavigation.DirectionalNavigation="Contained"/>
                                     </ScrollViewer>
