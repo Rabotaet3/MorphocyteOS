@@ -1,0 +1,17 @@
+<dialog class="a-subscription-dialog" aria-labelledby="atlas-subscription-title" data-source-dialog>
+  <form data-source-form>
+    <header>
+      <h2 id="atlas-subscription-title">Ссылка подписки</h2>
+      <button class="a-icon" type="button" data-source-cancel aria-label="Закрыть">×</button>
+    </header>
+    <label for="atlas-source-url">Ссылка от провайдера</label>
+    <input class="a-input" id="atlas-source-url" name="url" placeholder="https://" required maxlength="8192"
+      type="text" inputmode="url" autocomplete="off" spellcheck="false">
+    <p class="a-note">Правила и папки сохранятся. Если состав серверов изменится, активный VPN может переподключиться.</p>
+    <p data-source-status role="status" hidden></p>
+    <footer>
+      <button class="a-button" type="button" data-source-cancel>Отмена</button>
+      <button class="a-button a-apply" type="submit" data-source-save>Загрузить и применить</button>
+    </footer>
+  </form>
+</dialog>

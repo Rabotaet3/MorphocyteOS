@@ -1,0 +1,29 @@
+{
+  "Тёмная морфоцитная": {
+    "light": "#90ffcc", "accent": "#53ddb0", "shade": "#3d947f", "core": "#112b2f", "outline": "#162f32"
+  },
+  "Светлая морфоцитная": {
+    "light": "#69d6b0", "accent": "#279e81", "shade": "#176a5c", "core": "#122e31", "outline": "#174841"
+  },
+  "Аврора": {
+    "light": "#8af2e2", "accent": "#48d1bf", "shade": "#437c9e", "core": "#122a34", "outline": "#1a3c48"
+  },
+  "Космический градиент": {
+    "light": "#ebcffa", "accent": "#b99be8", "shade": "#6755a5", "core": "#251c3d", "outline": "#3a2b54"
+  },
+  "Графит": {
+    "light": "#d6e6fa", "accent": "#95b6d9", "shade": "#517297", "core": "#1b2a3a", "outline": "#2d435a"
+  },
+  "Океан": {
+    "light": "#a3effa", "accent": "#50c5ea", "shade": "#2b759d", "core": "#112d43", "outline": "#1b4057"
+  },
+  "Аметист": {
+    "light": "#e8cffa", "accent": "#c59de8", "shade": "#785aa8", "core": "#2b1e3d", "outline": "#413057"
+  },
+  "Закат": {
+    "light": "#ffd8ae", "accent": "#eea780", "shade": "#a45972", "core": "#352233", "outline": "#512f43"
+  },
+  "Тёплый свет": {
+    "light": "#f3c697", "accent": "#c18553", "shade": "#8b5141", "core": "#37271f", "outline": "#573b30"
+  }
+}

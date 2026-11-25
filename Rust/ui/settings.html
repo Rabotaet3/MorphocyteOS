@@ -1,0 +1,53 @@
+<form class="a-scroll-work a-settings-grid" data-preferences>
+  <section class="a-settings-card" aria-labelledby="atlas-appearance">
+    <h2 id="atlas-appearance">Внешний вид</h2>
+    <label class="a-setting"><span>Тема</span><select class="a-select" data-theme-choice></select></label>
+    <label class="a-setting"><span>Масштаб интерфейса</span><select class="a-select" name="scale">
+      <option value="0.8">80%</option><option value="0.9">90%</option><option value="1">100%</option>
+      <option value="1.1">110%</option><option value="1.25">125%</option><option value="1.5">150%</option>
+    </select></label>
+    <label class="a-setting"><span>Прозрачность панелей · <output data-glass-value>21%</output></span>
+      <input type="range" min="0" max="100" value="21" data-glass-picker></label>
+  </section>
+  <section class="a-settings-card" aria-labelledby="atlas-profile">
+    <h2 id="atlas-profile">VPN-профиль</h2>
+    <p class="a-path" data-profile-path></p>
+    <div class="a-setting-buttons">
+      <button class="a-button" type="button" data-operation="pick_yaml">Выбрать YAML</button>
+      <button class="a-button" type="button" data-operation="import_profile">Импорт профиля</button>
+      <button class="a-button" type="button" data-operation="create_template">Создать шаблон</button>
+    </div>
+    <div class="a-setting-buttons">
+      <button class="a-button" type="button" data-source>Ссылка подписки</button>
+      <button class="a-button" type="button" data-refresh>Обновить подписку</button>
+    </div>
+    <h3>Ядро sing-box</h3>
+    <p class="a-path" data-core-path></p>
+    <div class="a-setting-buttons" data-core-controls>
+      <button class="a-button" type="button" data-operation="pick_core" data-core-change>Выбрать ядро</button>
+      <button class="a-button" type="button" data-operation="bundled_core" data-core-change>Ядро из комплекта</button>
+    </div>
+    <p class="a-note" data-core-reason hidden>Останови VPN, чтобы сменить ядро.</p>
+  </section>
+  <section class="a-settings-card" aria-labelledby="atlas-startup">
+    <h2 id="atlas-startup">Запуск</h2>
+    <label class="a-setting-check"><input type="checkbox" name="launchAtSignIn"> Запускать приложение при входе в Windows</label>
+    <label class="a-setting-check"><input type="checkbox" name="connectAtSignIn"> Подключать VPN при входе в Windows</label>
+    <label class="a-setting-check"><input type="checkbox" name="connectOnOpen"> Подключать VPN при открытии Морфоцита</label>
+    <label class="a-setting-check"><input type="checkbox" name="reconnect"> Восстанавливать VPN после сна и смены сети</label>
+  </section>
+  <section class="a-settings-card" aria-labelledby="atlas-updates">
+    <h2 id="atlas-updates">Обновления</h2>
+    <label class="a-setting-check"><input type="checkbox" name="automaticUpdates"> Проверять обновления Морфоцита автоматически</label>
+    <p class="a-note" data-update-status role="status"></p>
+    <div class="a-setting-buttons">
+      <button class="a-button" type="button" data-operation="check_updates">Проверить обновления</button>
+      <button class="a-button" type="button" data-update-open hidden>Установить обновление</button>
+      <button class="a-button" type="button" data-update-preview>Пример уведомления</button>
+    </div>
+    <p class="a-note">Версия <span data-atlas-version></span></p>
+  </section>
+  <section class="a-settings-card">
+    <button class="a-button a-exit" type="button" data-exit>Выйти из Морфоцита</button>
+  </section>
+</form>

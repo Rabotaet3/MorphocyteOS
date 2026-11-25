@@ -1,0 +1,33 @@
+[package]
+name = "morphocyte-atlas"
+version = "1.4.0"
+edition = "2024"
+description = "MorphocyteOS Atlas desktop shell"
+
+[[bin]]
+name = "morphocyte-atlas"
+path = "src/main.rs"
+test = false
+
+[dependencies]
+base64 = { version = "0.22", optional = true }
+getrandom = { version = "0.3", optional = true }
+png = "0.17"
+serde_json = "1"
+serde_yaml_ng = { version = "0.10", optional = true }
+tao = "0.34"
+ureq = { version = "3.4", default-features = false, features = ["native-tls", "json"], optional = true }
+url = { version = "2.5", optional = true }
+wry = "0.53"
+
+[target.'cfg(windows)'.dependencies]
+windows = { version = "0.61.3", features = ["Win32_Graphics_Gdi", "Win32_Security", "Win32_Security_Authorization", "Win32_Security_Cryptography", "Win32_NetworkManagement_IpHelper", "Win32_NetworkManagement_Ndis", "Win32_Networking_WinSock", "Win32_Storage_FileSystem", "Win32_System_Com", "Win32_System_Com_StructuredStorage", "Win32_System_Diagnostics_ToolHelp", "Win32_System_Environment", "Win32_System_IO", "Win32_System_JobObjects", "Win32_System_LibraryLoader", "Win32_System_Registry", "Win32_System_SystemInformation", "Win32_System_TaskScheduler", "Win32_System_Threading", "Win32_System_Variant", "Win32_UI_Controls_Dialogs", "Win32_UI_HiDpi", "Win32_UI_Input_KeyboardAndMouse", "Win32_UI_Shell", "Win32_UI_Shell_PropertiesSystem", "Win32_UI_WindowsAndMessaging"] }
+
+[features]
+default = ["native-router"]
+isolated-check = []
+native-router = ["dep:base64", "dep:getrandom", "dep:serde_yaml_ng", "dep:ureq", "dep:url"]
+
+[profile.release]
+strip = true
+

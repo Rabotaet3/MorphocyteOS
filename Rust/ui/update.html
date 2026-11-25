@@ -1,0 +1,19 @@
+<dialog class="a-subscription-dialog a-update-dialog" data-update-dialog aria-labelledby="atlas-update-title">
+  <header>
+    <span class="a-update-icon" aria-hidden="true">↑</span>
+    <div>
+      <p class="a-update-kicker" data-update-kicker>Обновление</p>
+      <h2 id="atlas-update-title" data-update-title></h2>
+    </div>
+    <button class="a-icon" type="button" data-update-dismiss aria-label="Закрыть">×</button>
+  </header>
+  <p class="a-note" data-update-description></p>
+  <div data-update-progress hidden>
+    <progress max="1" value="0" aria-label="Загрузка обновления"></progress>
+    <p class="a-note" data-update-install-status role="status"></p>
+  </div>
+  <footer>
+    <button class="a-button" type="button" data-update-dismiss>Позже</button>
+    <button class="a-button a-apply" type="button" data-update-install>Установить</button>
+  </footer>
+</dialog>
