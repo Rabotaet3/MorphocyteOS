@@ -204,6 +204,13 @@ body { font-family: "Segoe UI", system-ui, sans-serif; }
 #morphocyte-atlas .a-log-message { min-width: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
 #morphocyte-atlas .a-log-untimed { grid-column: 2; }
 #morphocyte-atlas .a-subscription-details { max-height: min(110px, 23vh); overflow: auto; }
+#morphocyte-atlas [data-subscription-announcement] {
+  flex-basis: 100%;
+  min-width: 0;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+#morphocyte-atlas .a-subscription-details span:empty { display: none; }
 #morphocyte-atlas .a-brand { user-select: none; }
 #morphocyte-atlas [data-screen="routes"] .a-heading .a-tools { justify-content: flex-end; margin-bottom: 0; }
 #morphocyte-atlas .a-settings-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; align-content: start; }

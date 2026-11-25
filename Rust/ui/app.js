@@ -688,11 +688,17 @@
     if (updateDialog.open && updateDialog.dataset.release) renderUpdateProgress(value);
     $("[data-apply]").disabled = !value.dirty;
     const sub = value.subscription;
+    const checkedAt = sub?.checkedAt != null ? new Date(sub.checkedAt) : null;
     $("[data-subscription-name]").textContent = sub?.title || "Моя подписка";
-    $("[data-subscription-updated]").textContent = sub?.checkedAt ? new Date(sub.checkedAt).toLocaleString("ru-RU") : "Данные подписки недоступны";
+    $("[data-subscription-updated]").textContent = checkedAt && Number.isFinite(checkedAt.getTime())
+      ? "Обновлено " + checkedAt.toLocaleString("ru-RU")
+      : sub ? "Подписка загружена" : "Подписка не добавлена";
     $("[data-usage-label]").textContent = sub?.trafficLabel || "";
-    $(".a-usage").value = sub?.usagePercent || 0;
-    $("[data-subscription-expiry]").textContent = sub?.expiryLabel || "";
+    const usage = $(".a-usage");
+    usage.hidden = value.nativePreview && sub?.usagePercent == null;
+    usage.value = sub?.usagePercent || 0;
+    $("[data-subscription-expiry]").textContent = sub?.expiresAt
+      ? "До " + new Date(sub.expiresAt).toLocaleDateString("ru-RU") : sub?.expiryLabel || "";
     $("[data-subscription-announcement]").textContent = sub?.announcement || "";
     $("[data-home-subscription]").textContent = sub?.trafficLabel || sub?.title || "Подписка не добавлена";
     renderPreferences(value);

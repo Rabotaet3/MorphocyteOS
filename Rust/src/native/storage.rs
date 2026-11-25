@@ -1,8 +1,8 @@
 use super::{Result, http_agent, problem, random_token, socket_exhausted};
 use super::profile::{MAX_PROFILE, Profile};
-use base64::{Engine, engine::general_purpose::STANDARD};
+use base64::{Engine, engine::general_purpose::{STANDARD, STANDARD_NO_PAD}};
 use serde_json::{Value, json};
-use std::{fs, io::{ErrorKind, Write}, path::{Path, PathBuf}, time::Duration};
+use std::{fs, io::{ErrorKind, Write}, path::{Path, PathBuf}, time::{Duration, SystemTime, UNIX_EPOCH}};
 use windows::{
     Win32::{Foundation::{HLOCAL, HWND, LocalFree}, Security::Cryptography::{
         CRYPT_INTEGER_BLOB, CRYPTPROTECT_UI_FORBIDDEN, CryptProtectData, CryptUnprotectData,
@@ -144,15 +144,133 @@ pub(crate) fn download(root: &Path, source: &str) -> Result<(Profile, Value)> {
         let input = body.with_config().limit(MAX_PROFILE as u64).read_to_string()
             .map_err(|_| problem("Ответ подписки слишком большой или не читается."))?;
         let profile = Profile::parse(&input)?;
-        let title = parts.headers.get("profile-title").and_then(|value| value.to_str().ok())
-            .and_then(|value| match value.strip_prefix("base64:") {
-                Some(value) => STANDARD.decode(value).ok().and_then(|bytes| String::from_utf8(bytes).ok()),
-                None => Some(value.to_owned()),
-            }).unwrap_or_else(|| "Моя подписка".to_owned());
-        let announcement = parts.headers.get("announce").and_then(|value| value.to_str().ok()).unwrap_or_default();
-        return Ok((profile, json!({"title":title,"announcement":announcement})));
+        return Ok((profile, subscription_metadata(&parts.headers)));
     }
     Err(problem("Сервер вернул слишком много перенаправлений."))
+}
+
+const MAX_HEADER_TEXT: usize = 16 * 1024;
+const MAX_EXPIRY: u64 = 253_402_300_799;
+
+fn subscription_text(text: &str, limit: usize) -> Option<String> {
+    if text.len() > MAX_HEADER_TEXT { return None; }
+    let text = text.trim();
+    let decoded;
+    let text = if text.get(..7).is_some_and(|prefix| prefix.eq_ignore_ascii_case("base64:")) {
+        let encoded = text[7..].trim().replace('-', "+").replace('_', "/");
+        let bytes = if encoded.ends_with('=') { STANDARD.decode(encoded) } else { STANDARD_NO_PAD.decode(encoded) };
+        decoded = String::from_utf8(bytes.ok()?).ok()?;
+        decoded.as_str()
+    } else {
+        text
+    };
+    let clean = text.trim().chars().filter(|ch| !ch.is_control() || *ch == '\n').take(limit).collect::<String>();
+    (!clean.is_empty()).then_some(clean)
+}
+
+fn subscription_metadata(headers: &ureq::http::HeaderMap) -> Value {
+    let header = |name| headers.get(name).and_then(|value| std::str::from_utf8(value.as_bytes()).ok()).unwrap_or_default();
+    let checked_at = SystemTime::now().duration_since(UNIX_EPOCH).ok().and_then(|elapsed| u64::try_from(elapsed.as_millis()).ok());
+    let announcement = header("announce");
+    let mut metadata = json!({
+        "title": subscription_text(header("profile-title"), 256),
+        "announcement": (announcement.len() <= MAX_HEADER_TEXT).then_some(announcement),
+        "checkedAt": checked_at,
+    });
+    for field in header("subscription-userinfo").split(';') {
+        let Some((name, value)) = field.split_once('=') else { continue; };
+        let key = name.trim().to_ascii_lowercase();
+        let Ok(number) = value.trim().parse::<u64>() else { continue; };
+        match key.as_str() {
+            "upload" | "download" | "total" => metadata[key] = json!(number),
+            "expire" if (1..=MAX_EXPIRY).contains(&number) => metadata["expires"] = json!(number),
+            _ => {}
+        }
+    }
+    metadata
+}
+
+fn format_bytes(bytes: u128) -> String {
+    let mut number = bytes as f64;
+    let units = ["Б", "КБ", "МБ", "ГБ", "ТБ", "ПБ", "ЭБ"];
+    let mut unit = 0;
+    while number >= 1024.0 && unit + 1 < units.len() {
+        number /= 1024.0;
+        unit += 1;
+    }
+    let text = format!("{number:.1}");
+    format!("{} {}", text.trim_end_matches(".0").replace('.', ","), units[unit])
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ureq::http::{HeaderMap, HeaderValue};
+
+    #[test]
+    fn reads_encoded_provider_metadata_and_limits() {
+        let mut headers = HeaderMap::new();
+        let title = STANDARD.encode("🚀 Подписка");
+        let announcement = base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("🚀 Новость\r\nПроверь профиль");
+        headers.insert("profile-title", HeaderValue::from_str(&format!("base64:{title}")).unwrap());
+        headers.insert("announce", HeaderValue::from_str(&format!("BASE64:{announcement}")).unwrap());
+        headers.insert("subscription-userinfo", HeaderValue::from_static("upload=512; download=512; total=4096; expire=1788307200"));
+        let view = subscription_view(&subscription_metadata(&headers));
+        assert_eq!(view["title"], "🚀 Подписка");
+        assert_eq!(view["announcement"], "🚀 Новость\nПроверь профиль");
+        assert_eq!(view["trafficLabel"], "1 КБ / 4 КБ");
+        assert_eq!(view["usagePercent"], 25.);
+        assert_eq!(view["expiresAt"], 1_788_307_200_000_u64);
+        assert!(view["checkedAt"].as_u64().is_some());
+    }
+
+    #[test]
+    fn repairs_existing_rust_metadata_and_preserves_legacy_fields() {
+        let current = subscription_view(&json!({"title":"vpnUP", "announcement":"base64:0KLQtdGB0YI="}));
+        assert_eq!(current["announcement"], "Тест");
+        assert!(current["checkedAt"].is_null());
+        assert!(subscription_view(&json!({"announcement":"base64:?"}))["announcement"].is_null());
+
+        let legacy = subscription_view(&json!({"Title":"Старая подписка","Announcement":"base64: как текст",
+            "Download":1024,"Total":0,"CheckedAt":"2026-11-25T12:00:00Z","Expires":253_402_300_800_u64}));
+        assert_eq!(legacy["announcement"], "base64: как текст");
+        assert_eq!(legacy["trafficLabel"], "1 КБ / без лимита");
+        assert_eq!(legacy["checkedAt"], "2026-11-25T12:00:00Z");
+        assert!(legacy["expiresAt"].is_null());
+    }
+}
+
+pub(crate) fn subscription_view(metadata: &Value) -> Value {
+    let field = |key, legacy| metadata.get(key).or_else(|| metadata.get(legacy));
+    let counter = |key, legacy| field(key, legacy).and_then(Value::as_u64);
+    let title = field("title", "Title").and_then(Value::as_str);
+    // Older Rust builds stored the response header as-is. The C# build stored decoded text.
+    let announcement = metadata.get("announcement").and_then(Value::as_str)
+        .and_then(|text| subscription_text(text, 4096))
+        .or_else(|| metadata["Announcement"].as_str().map(str::to_owned));
+    let total = counter("total", "Total");
+    let used = match (counter("upload", "Upload"), counter("download", "Download")) {
+        (None, None) => None,
+        (upload, download) => Some(u128::from(upload.unwrap_or(0)) + u128::from(download.unwrap_or(0))),
+    };
+    let traffic = used.map(|used| {
+        let limit = match total {
+            Some(0) => "без лимита".to_owned(),
+            Some(total) => format_bytes(total.into()),
+            None => "лимит не указан".to_owned(),
+        };
+        format!("{} / {limit}", format_bytes(used))
+    });
+    let usage_percent = used.zip(total.filter(|total| *total > 0))
+        .map(|(used, total)| (100.0 * used as f64 / total as f64).min(100.0));
+    let expires_at = counter("expires", "Expires").filter(|expiry| (1..=MAX_EXPIRY).contains(expiry))
+        .map(|expiry| expiry * 1000);
+    json!({
+        "title": title, "announcement": announcement, "checkedAt": field("checkedAt", "CheckedAt"),
+        "trafficLabel": traffic.as_deref().or_else(|| field("trafficLabel", "TrafficLabel").and_then(Value::as_str)),
+        "usagePercent": usage_percent.or_else(|| field("usagePercent", "UsagePercent").and_then(Value::as_f64)),
+        "expiresAt": expires_at, "expiryLabel": field("expiryLabel", "ExpiryLabel"),
+    })
 }
 
 pub(crate) fn pick_file(window: isize, title: &str, save: bool) -> Result<Option<PathBuf>> {

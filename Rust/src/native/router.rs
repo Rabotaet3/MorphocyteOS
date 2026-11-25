@@ -548,13 +548,7 @@ impl Router {
             "autoConnectOnStartup":self.launch_at_sign_in && self.auto_connect(true),"autoReconnect":false,"profilePath":self.path.to_string_lossy(),
             "corePath":self.root.join("ThirdPartySource/Engine/sing-box.exe").to_string_lossy(),
             "updateMessage":self.update.message(),"atlasVersion":env!("CARGO_PKG_VERSION")});
-        let subscription = self.source().and_then(|value| value.get("Metadata")).cloned();
-        let subscription = subscription.map(|value| {
-            let pick = |lower, upper| value.get(lower).or_else(|| value.get(upper)).cloned();
-            json!({"title":pick("title","Title"),"announcement":pick("announcement","Announcement"),
-                "trafficLabel":pick("trafficLabel","TrafficLabel"),"expiryLabel":pick("expiryLabel","ExpiryLabel"),
-                "usagePercent":pick("usagePercent","UsagePercent"),"checkedAt":pick("checkedAt","CheckedAt")})
-        });
+        let subscription = self.source().and_then(|value| value.get("Metadata")).map(storage::subscription_view);
         let stats = self.stats.lock().expect("online statistics");
         let speed = self.speed.as_ref().map(speed::Test::display).unwrap_or_default();
         let mut state = json!({
